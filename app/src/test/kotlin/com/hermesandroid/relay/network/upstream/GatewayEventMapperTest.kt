@@ -741,6 +741,29 @@ class GatewayEventMapperTest {
         assertNull(event.durationSeconds)
     }
 
+    @Test
+    fun `subagent events preserve delegation identity independently of child identity`() {
+        val phases = listOf("spawn_requested", "start", "thinking", "tool", "progress", "complete")
+        phases.forEach { phase ->
+            val event = GatewayEventMapper.parseSubagentEvent(
+                "subagent.$phase",
+                obj("""{"delegation_id":"delegation-9","subagent_id":"child-17","child_session_id":"session-17"}"""),
+            )!!
+            assertEquals("delegation-9", event.delegationId)
+            assertEquals("child-17", event.subagentId)
+            assertEquals("session-17", event.childSessionId)
+        }
+    }
+
+    @Test
+    fun `older subagent emitters do not invent a delegation identity`() {
+        val event = GatewayEventMapper.parseSubagentEvent(
+            "subagent.complete",
+            obj("""{"subagent_id":"child-17","task_index":0,"task_count":1}"""),
+        )!!
+        assertNull(event.delegationId)
+    }
+
     // --- Usage translation (tui_gateway key names, not SSE names) ---
 
     @Test

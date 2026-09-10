@@ -1,0 +1,17 @@
+{
+  "name": "cold_start_observation",
+  "live_session_id": "fixture-cold-live",
+  "stored_session_id": "fixture-cold-stored",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.session_active_list"
+  ],
+  "initial_history": [],
+  "turns": [],
+  "active_list": {
+    "supported": true,
+    "snapshots": [
+      []
+    ]
+  }
+}

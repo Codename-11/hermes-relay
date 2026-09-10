@@ -34,6 +34,7 @@ SESSION_RESUME = "gateway.session_resume_durable"
 SESSION_ACTIVE_LIST = "gateway.session_active_list"
 SESSION_EXCLUSIVE_SUBMIT = "gateway.session_exclusive_submit"
 SUBAGENT_CHILD_WATCH = "gateway.subagent_child_watch"
+SESSION_INITIALIZATION = "gateway.session_initialization"
 API_BOUNDARY = "api.fallback_boundary"
 ALL_CONTRACTS = (
     GATEWAY_TERMINAL,
@@ -43,6 +44,7 @@ ALL_CONTRACTS = (
     SESSION_ACTIVE_LIST,
     SESSION_EXCLUSIVE_SUBMIT,
     SUBAGENT_CHILD_WATCH,
+    SESSION_INITIALIZATION,
     API_BOUNDARY,
 )
 
@@ -60,6 +62,7 @@ class CheckResult:
 
 class SourceFile:
     def __init__(self, root: Path, relative: str):
+        self.root = root
         self.relative = relative
         self.path = root / relative
         if not self.path.is_file():
@@ -181,6 +184,21 @@ def _check_gateway_terminal(server: SourceFile) -> CheckResult:
         )
     except ValueError as exc:
         return CheckResult(contract, False, (), str(exc))
+
+
+def _check_session_initialization(server: SourceFile) -> CheckResult:
+    try:
+        build = server.function("_start_agent_build")
+        if not _call_lines(build, "_emit", "error") or "agent init failed:" not in server.segment(build):
+            raise ValueError("deferred build no longer emits the initialization failure")
+        ready_owner = build
+        if _call_lines(build, "_announce_built_agent"):
+            ready_owner = server.function("_announce_built_agent")
+        if not _call_lines(ready_owner, "_emit", "session.info"):
+            raise ValueError("deferred build no longer emits the ready session.info")
+        return CheckResult(SESSION_INITIALIZATION, True, (server.evidence(build, "ready and initialization-failure events"),))
+    except ValueError as exc:
+        return CheckResult(SESSION_INITIALIZATION, False, (), str(exc))
 
 
 def _check_settled_info(server: SourceFile) -> CheckResult:
@@ -315,8 +333,18 @@ def _check_active_list(server: SourceFile, methods: SourceFile) -> CheckResult:
         missing_fields = sorted({"id", "session_key", "status"} - item_strings)
         if missing_fields:
             raise ValueError("active-list row missing field(s): " + ", ".join(missing_fields))
-        required_markers = ("_sessions_lock", "_sessions.items()", "_session_live_item(")
-        missing_markers = [marker for marker in required_markers if marker not in handler_text]
+        snapshot_node = handler
+        snapshot_text = handler_text
+        if "_snapshot_sessions(" in handler_text:
+            snapshot_node = methods.function("_snapshot_sessions")
+            snapshot_text = methods.segment(snapshot_node)
+        required_snapshot_markers = ("_sessions_lock", "_sessions.items()")
+        missing_snapshot_markers = [
+            marker for marker in required_snapshot_markers if marker not in snapshot_text
+        ]
+        missing_markers = list(missing_snapshot_markers)
+        if "_session_live_item(" not in handler_text:
+            missing_markers.append("_session_live_item(")
         if missing_markers or "sessions" not in _string_constants(handler):
             raise ValueError(
                 "session.active_list no longer snapshots the live registry: "
@@ -334,7 +362,7 @@ def _check_active_list(server: SourceFile, methods: SourceFile) -> CheckResult:
                 server.evidence(status, "starting, working, waiting, and idle derivation"),
                 server.evidence(item, "live row carries runtime and durable identities"),
                 methods.evidence(
-                    handler, "active list snapshots the process-wide in-memory registry"
+                    snapshot_node, "active list snapshots the process-wide in-memory registry"
                 ),
             ),
         )
@@ -386,6 +414,32 @@ def _check_subagent_child_watch(server: SourceFile, methods: SourceFile) -> Chec
     try:
         resume = methods.method_handler("session.resume")
         resume_segment = methods.segment(resume)
+        if "_resume_lazy(ctx)" in resume_segment:
+            lazy = methods.function("_resume_lazy")
+            child_history = methods.function("child_history")
+            constructor = next((
+                node for node in methods.tree.body
+                if isinstance(node, ast.ClassDef) and node.name == "_Resume"
+            ), None)
+            if constructor is None:
+                raise ValueError("missing _Resume context")
+            lazy_text = methods.segment(lazy)
+            history_text = methods.segment(child_history)
+            if not {"lazy", "close_on_disconnect"} <= _string_constants(constructor):
+                raise ValueError("resume context no longer carries lazy/close_on_disconnect")
+            if "ctx.child_history(" not in lazy_text or "lazy=True" not in lazy_text:
+                raise ValueError("lazy resume no longer creates a child-history watcher")
+            if "get_messages_as_conversation(self.target" not in history_text or "include_ancestors=True" in history_text:
+                raise ValueError("child history no longer uses the child-only conversation")
+            mirror = SourceFile(server.root, "tui_gateway/agent_callbacks.py")
+            mirror_fn = mirror.function("_mirror_subagent_to_child")
+            if not {"child_session_id", "subagent.text", "reasoning.delta", "message.delta"} <= _string_constants(mirror.tree):
+                raise ValueError("child mirror event contract missing")
+            return CheckResult(contract, True, (
+                methods.evidence(resume, "session.resume dispatches lazy watch"),
+                methods.evidence(lazy, "lazy child-only history and live status"),
+                mirror.evidence(mirror_fn, "child_session_id routes child mirror events"),
+            ))
         resume_strings = _string_constants(resume)
         server_strings = _string_constants(server.tree)
         missing_resume = sorted(
@@ -504,7 +558,10 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
         raise ValueError("fork marker(s) found in upstream source: " + ", ".join(fork_hits))
 
     checks = {
-        GATEWAY_TERMINAL: lambda: _check_gateway_terminal(server),
+        GATEWAY_TERMINAL: lambda: _check_gateway_terminal(
+            SourceFile(root, "tui_gateway/prompt_turn.py")
+            if (root / "tui_gateway/prompt_turn.py").is_file() else server
+        ),
         GATEWAY_SETTLED_INFO: lambda: _check_settled_info(server),
         SESSION_ACTIVATE: lambda: _check_activate(server, methods),
         SESSION_RESUME: lambda: _check_resume(methods),
@@ -513,6 +570,7 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
             server, methods, prompt_methods, active_sessions,
         ),
         SUBAGENT_CHILD_WATCH: lambda: _check_subagent_child_watch(server, methods),
+        SESSION_INITIALIZATION: lambda: _check_session_initialization(server),
         API_BOUNDARY: lambda: _check_api_boundary(api),
     }
     return [checks[requirement]() for requirement in requirements]

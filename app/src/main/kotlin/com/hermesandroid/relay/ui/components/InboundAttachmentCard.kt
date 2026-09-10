@@ -5,7 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.media.MediaMetadataRetriever
 import android.net.Uri
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
 import androidx.compose.ui.res.stringResource
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
@@ -616,7 +616,7 @@ fun SaveOverlayButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
 private suspend fun shareAttachment(context: Context, attachment: Attachment) {
     val bytes = attachmentBytes(context, attachment)
     if (bytes == null) {
-        attachmentToast(context, context.getString(R.string.inbound_attach_share_failed))
+        UiMessageBus.error(context.getString(R.string.inbound_attach_share_failed))
         return
     }
     val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
@@ -626,7 +626,7 @@ private suspend fun shareAttachment(context: Context, attachment: Attachment) {
 suspend fun saveAttachment(context: Context, attachment: Attachment) {
     val bytes = attachmentBytes(context, attachment)
     if (bytes == null) {
-        attachmentToast(context, context.getString(R.string.inbound_attach_share_failed))
+        UiMessageBus.error(context.getString(R.string.inbound_attach_share_failed))
         return
     }
     val result = if (attachment.renderMode == AttachmentRenderMode.IMAGE) {
@@ -636,13 +636,13 @@ suspend fun saveAttachment(context: Context, attachment: Attachment) {
     }
     when (result) {
         is MediaSaver.SaveResult.Saved ->
-            attachmentToast(context, context.getString(R.string.inbound_attach_saved, result.location))
+            UiMessageBus.success(context.getString(R.string.inbound_attach_saved, result.location))
         MediaSaver.SaveResult.UseShareInstead -> {
             val uri = MediaSaver.stageForShare(context, bytes, attachment.fileName, attachment.contentType)
             MediaSaver.share(context, uri, attachment.contentType)
         }
         is MediaSaver.SaveResult.Failed ->
-            attachmentToast(context, context.getString(R.string.inbound_attach_save_failed, result.message))
+            UiMessageBus.error(context.getString(R.string.inbound_attach_save_failed, result.message))
     }
 }
 
@@ -658,7 +658,7 @@ private suspend fun openAttachmentExternally(context: Context, attachment: Attac
     if (uri != null) {
         MediaSaver.open(context, uri, attachment.contentType)
     } else {
-        attachmentToast(context, context.getString(R.string.inbound_attach_open_failed))
+        UiMessageBus.error(context.getString(R.string.inbound_attach_open_failed))
     }
 }
 
@@ -772,10 +772,6 @@ internal suspend fun attachmentBytes(context: Context, attachment: Attachment): 
         }
         else -> null
     }
-}
-
-private fun attachmentToast(context: Context, message: String) {
-    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
 }
 
 @Composable

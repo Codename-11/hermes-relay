@@ -170,6 +170,12 @@ data class ChatMessage(
      * but server history never owns these presentation blocks.
      */
     val moaReferences: List<MoaReference> = emptyList(),
+    /** Exact upstream identity on a persisted activity-completion marker. */
+    val activitySourceId: String? = null,
+    val activityTaskCount: Int? = null,
+    val activityFailedCount: Int? = null,
+    /** Read-only UI projection; never sent as model history or voice input. */
+    val activityRecord: ChatActivityRecord? = null,
 )
 
 data class MessageReaction(

@@ -1525,10 +1525,14 @@ class DashboardApiClient(
         password: String,
         next: String = "/",
     ): Result<DashboardLoginResponse> = withContext(Dispatchers.IO) {
+        // Match the Dashboard's single-line HTML username/password controls:
+        // remove only forbidden line breaks and preserve every other code point.
+        val normalizedUsername = username.replace("\r", "").replace("\n", "")
+        val normalizedPassword = password.replace("\r", "").replace("\n", "")
         val payload = buildJsonObject {
             put("provider", provider)
-            put("username", username)
-            put("password", password)
+            put("username", normalizedUsername)
+            put("password", normalizedPassword)
             put("next", next)
         }
         val httpUrl = resolveUrl("/auth/password-login")

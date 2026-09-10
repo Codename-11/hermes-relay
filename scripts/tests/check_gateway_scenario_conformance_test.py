@@ -32,6 +32,7 @@ def _live_session_payload(sid, session):
 
 def _start_agent_build(sid, session):
     _emit("session.info", sid, {"lazy": False})
+    _emit("error", sid, {"message": "agent init failed: fixture"})
     ready.set()
 
 def _run_prompt_submit(sid, session, agent):
@@ -109,11 +110,16 @@ def _(rid, params):
     session, error = _sess_nowait(params, rid)
     return _live_session_payload(params["session_id"], session)
 
+def _snapshot_sessions(rid):
+    with _sessions_lock:
+        return list(_sessions.items()), None
+
 @method("session.active_list")
 def _(rid, params):
+    snapshot, error = _snapshot_sessions(rid)
+    if error:
+        return error
     current = str(params.get("current_session_id") or "")
-    with _sessions_lock:
-        snapshot = list(_sessions.items())
     rows = [_session_live_item(sid, session, current) for sid, session in snapshot]
     return _ok(rid, {"sessions": rows})
 '''
@@ -196,6 +202,36 @@ class GatewayScenarioConformanceTest(unittest.TestCase):
         self.assertFalse(results[0].passed)
         self.assertIn("message.complete", results[0].problem)
         self.assertTrue(results[1].passed)
+
+    def test_decomposed_child_watch_and_terminal_contracts(self):
+        prompt = self.root / "tui_gateway/prompt_turn.py"
+        prompt.write_text('def _run_prompt_submit():\n    _emit("message.complete", sid, {})\n', encoding="utf-8")
+        methods = self.root / module.SESSION_METHODS
+        source = '''
+class _Resume:
+    def __init__(self, params):
+        self.lazy = params.get("lazy")
+        self.close = params.get("close_on_disconnect")
+    def child_history(self):
+        return self.db.get_messages_as_conversation(self.target, include_row_ids=True)
+def _resume_lazy(ctx):
+    history = ctx.child_history()
+    return ctx.record(history, lazy=True)
+@method("session.resume")
+def resume(rid, params):
+    ctx = _Resume(params)
+    if ctx.lazy:
+        return _resume_lazy(ctx)
+'''
+        methods.write_text(source, encoding="utf-8")
+        mirror = self.root / "tui_gateway/agent_callbacks.py"
+        mirror.write_text('def _mirror_subagent_to_child():\n    return ("child_session_id", "subagent.text", "reasoning.delta", "message.delta")\n', encoding="utf-8")
+        requirements = (module.GATEWAY_TERMINAL, module.SUBAGENT_CHILD_WATCH)
+        self.assertTrue(all(result.passed for result in module.audit_sources(self.root, requirements)))
+        methods.write_text(source.replace('include_row_ids=True', 'include_ancestors=True'), encoding="utf-8")
+        self.assertFalse(module.audit_sources(self.root, requirements)[1].passed)
+        methods.write_text(source.replace('"lazy"', '"not_lazy"'), encoding="utf-8")
+        self.assertFalse(module.audit_sources(self.root, requirements)[1].passed)
 
     def test_settlement_must_clear_running_before_info(self):
         path = self.root / module.SERVER

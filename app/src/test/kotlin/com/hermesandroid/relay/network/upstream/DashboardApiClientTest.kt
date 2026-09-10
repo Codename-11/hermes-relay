@@ -12,6 +12,7 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -657,6 +658,40 @@ class DashboardApiClientTest {
         assertTrue(session.authenticated)
         assertEquals("bailey", session.username)
         assertEquals("basic", session.provider)
+    }
+
+    @Test
+    fun passwordLogin_stripsOnlyBrowserForbiddenLineBreaksFromCredentials() = runTest {
+        val preservedCredential = " \t\u00A0påss\u200B "
+        val cases = listOf(
+            listOf("user", "line\rbreak", "user", "linebreak"),
+            listOf("user", "line\nbreak", "user", "linebreak"),
+            listOf("user", "line\r\nbreak", "user", "linebreak"),
+            listOf("us\r\ner", "secret", "user", "secret"),
+            listOf(
+                preservedCredential,
+                preservedCredential,
+                preservedCredential,
+                preservedCredential,
+            ),
+        )
+        repeat(cases.size) {
+            server.enqueue(
+                MockResponse()
+                    .setResponseCode(200)
+                    .setHeader("Content-Type", "application/json")
+                    .setBody("""{"ok": true, "next": "/"}"""),
+            )
+        }
+
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        cases.forEach { (username, password, expectedUsername, expectedPassword) ->
+            client.loginPassword(username = username, password = password).getOrThrow()
+
+            val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+            assertEquals(expectedUsername, body["username"]?.jsonPrimitive?.content)
+            assertEquals(expectedPassword, body["password"]?.jsonPrimitive?.content)
+        }
     }
 
     private fun storedCookie(

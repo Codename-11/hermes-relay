@@ -4,7 +4,8 @@ import android.app.Application
 import android.content.Context
 import android.os.SystemClock
 import android.util.Log
-import android.widget.Toast
+import com.hermesandroid.relay.ui.UiMessageBus
+import com.hermesandroid.relay.ui.UiMessageSeverity
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.R
@@ -2639,28 +2640,23 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // route is unavailable. Runs outside the turn state machine so it
     // doesn't disturb uiState.
     //
-    // Three toasts so the user knows what's happening: "Testing voice…" on
-    // trigger, "Voice test successful" on completion, "Voice test failed" on
-    // any error. The trigger toast is held in [triggerToast] so it can be
-    // cancelled the moment the result toast fires — without that the two
-    // would briefly overlap on screen. viewModelScope.launch defaults to
-    // Main.immediate so Toast.show() is safe inline without a dispatcher
-    // switch.
+    // Keyed progress feedback is cleared before an outcome replaces it.
+    // Classified failures retain their existing error event/overlay flow.
     fun testVoice(
         sample: String = "Hello, this is Hermes. Voice mode is working.",
         onResult: (Result<Unit>) -> Unit = {},
     ) {
-        val app = getApplication<Application>()
         val audioClient = voiceAudioClient
         val relayClient = voiceClient
         val p = player
         if (audioClient == null || p == null) {
             onResult(Result.failure(IllegalStateException("Voice pipeline not initialized")))
-            Toast.makeText(app, "Voice test failed: pipeline not initialized", Toast.LENGTH_SHORT).show()
+            UiMessageBus.error("Voice test failed: pipeline not initialized")
             setError("Voice pipeline not initialized")
             return
         }
-        val triggerToast = Toast.makeText(app, "Testing voice…", Toast.LENGTH_SHORT).also { it.show() }
+        val feedbackKey = "voice-test-${System.nanoTime()}"
+        UiMessageBus.post("Testing voice…", severity = UiMessageSeverity.Status, ttlMillis = 0L, key = feedbackKey)
         viewModelScope.launch {
             val profileAwareResult = if (audioClient.route == VoiceAudioRoute.Relay && relayClient != null) {
                 testVoiceViaVoiceOutput(relayClient, sample)
@@ -2669,9 +2665,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             }
             val result = if (profileAwareResult != null) {
                 if (profileAwareResult.isSuccess) {
-                    triggerToast.cancel()
+                    UiMessageBus.clear(feedbackKey)
                     onResult(Result.success(Unit))
-                    Toast.makeText(app, "Voice test successful", Toast.LENGTH_SHORT).show()
+                    UiMessageBus.success("Voice test successful")
                     return@launch
                 }
                 Log.w(TAG, "profile-aware voice test failed; falling back to legacy synthesize: ${profileAwareResult.exceptionOrNull()?.message}")
@@ -2680,34 +2676,35 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 audioClient.synthesize(sample)
             }
             if (result.isFailure) {
-                triggerToast.cancel()
+                UiMessageBus.clear(feedbackKey)
                 val msg = result.exceptionOrNull()?.message ?: "synthesize failed"
                 onResult(Result.failure(result.exceptionOrNull() ?: IllegalStateException(msg)))
-                Toast.makeText(app, "Voice test failed: $msg", Toast.LENGTH_LONG).show()
                 surfaceError(result.exceptionOrNull(), context = "synthesize")
                 return@launch
             }
             val file = result.getOrNull()
             if (file == null) {
-                triggerToast.cancel()
+                UiMessageBus.clear(feedbackKey)
                 onResult(Result.failure(IllegalStateException("No audio returned")))
-                Toast.makeText(app, "Voice test failed: no audio returned", Toast.LENGTH_LONG).show()
+                UiMessageBus.error("Voice test failed: no audio returned")
                 return@launch
             }
             trackTtsFile(file)
             try {
                 p.play(file)
                 p.awaitCompletion()
-                triggerToast.cancel()
+                UiMessageBus.clear(feedbackKey)
                 onResult(Result.success(Unit))
-                Toast.makeText(app, "Voice test successful", Toast.LENGTH_SHORT).show()
+                UiMessageBus.success("Voice test successful")
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (e: Exception) {
                 Log.w(TAG, "test playback failed: ${e.message}")
-                triggerToast.cancel()
+                UiMessageBus.clear(feedbackKey)
                 onResult(Result.failure(e))
-                Toast.makeText(app, "Voice test failed: ${e.message ?: "playback error"}", Toast.LENGTH_LONG).show()
+                UiMessageBus.error("Voice test failed: ${e.message ?: "playback error"}")
             }
-        }
+        }.invokeOnCompletion { UiMessageBus.clear(feedbackKey) }
     }
 
     /**
@@ -2930,17 +2927,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         sample: String = "Say a short confirmation that Hermes Realtime Agent is working.",
         onResult: (Result<Unit>) -> Unit = {},
     ) {
-        val app = getApplication<Application>()
         val client = voiceClient
         val pcmPlayer = realtimePcmPlayer
         if (client == null || pcmPlayer == null) {
             onResult(Result.failure(IllegalStateException("Voice pipeline not initialized")))
-            Toast.makeText(app, "Realtime test failed: pipeline not initialized", Toast.LENGTH_SHORT).show()
+            UiMessageBus.error("Realtime test failed: pipeline not initialized")
             setError("Voice pipeline not initialized")
             return
         }
-        val triggerToast = Toast.makeText(app, "Testing Realtime Agent...", Toast.LENGTH_SHORT)
-            .also { it.show() }
+        val feedbackKey = "realtime-test-${System.nanoTime()}"
+        UiMessageBus.post("Testing Realtime Agent...", severity = UiMessageSeverity.Status, ttlMillis = 0L, key = feedbackKey)
         viewModelScope.launch {
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
@@ -2970,12 +2966,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 audioBytes.addAndGet(audio.size)
                 pcmPlayer.write(audio, rate)
             }
-            triggerToast.cancel()
+            UiMessageBus.clear(feedbackKey)
             if (result.isFailure) {
                 pcmPlayer.stop()
                 val msg = result.exceptionOrNull()?.message ?: "realtime agent failed"
                 onResult(Result.failure(result.exceptionOrNull() ?: IllegalStateException(msg)))
-                Toast.makeText(app, "Realtime test failed: $msg", Toast.LENGTH_LONG).show()
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Voice,
                     severity = DiagnosticSeverity.Error,
@@ -2988,7 +2983,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             if (audioBytes.get() <= 0) {
                 pcmPlayer.stop()
                 onResult(Result.failure(IllegalStateException("Provider returned no audio")))
-                Toast.makeText(app, "Realtime test failed: no audio returned", Toast.LENGTH_LONG).show()
+                UiMessageBus.error("Realtime test failed: no audio returned")
                 DiagnosticsLog.record(
                     category = DiagnosticCategory.Voice,
                     severity = DiagnosticSeverity.Error,
@@ -3002,14 +2997,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             delay(drainMs)
             pcmPlayer.stop()
             onResult(Result.success(Unit))
-            Toast.makeText(app, "Realtime test successful", Toast.LENGTH_SHORT).show()
+            UiMessageBus.success("Realtime test successful")
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
                 severity = DiagnosticSeverity.Info,
                 title = getApplication<Application>().getString(R.string.voice_status_test_complete),
                 detail = "${audioBytes.get()} bytes streamed",
             )
-        }
+        }.invokeOnCompletion { UiMessageBus.clear(feedbackKey) }
     }
 
     private suspend fun testVoiceViaVoiceOutput(
@@ -6673,7 +6668,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             voiceNoSpeechState(it)
         }
-        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        UiMessageBus.warning(message)
     }
 
     /**

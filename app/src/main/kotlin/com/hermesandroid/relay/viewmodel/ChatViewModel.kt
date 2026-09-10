@@ -94,6 +94,10 @@ import com.hermesandroid.relay.network.upstream.GatewayModelOptions
 import com.hermesandroid.relay.network.upstream.GatewayProcess
 import com.hermesandroid.relay.network.upstream.GatewayProcessCapability
 import com.hermesandroid.relay.network.upstream.GatewayProcessEvent
+import com.hermesandroid.relay.data.ChatActivityRecord
+import com.hermesandroid.relay.data.ChatActivityKind
+import com.hermesandroid.relay.data.ChatActivityStore
+import com.hermesandroid.relay.data.DataStoreChatActivityStore
 import com.hermesandroid.relay.network.upstream.GatewaySessionModel
 import com.hermesandroid.relay.network.upstream.ReasoningEffortAvailability
 import com.hermesandroid.relay.network.upstream.ReasoningEffortIdentity
@@ -2235,6 +2239,11 @@ class ChatViewModel : ViewModel() {
     private var gatewayProcessSource: GatewayProcessSource? = null
     private val gatewayProcessController = GatewayProcessController(viewModelScope)
     private val subagentActivityController = SubagentActivityController()
+    private val chatActivityController = ChatActivityController(viewModelScope)
+    internal val activityRecords = chatActivityController.records
+    private var activityStoreInitialized = false
+    private val _retainedActivityPreview = MutableStateFlow<RetainedChatActivityPreview?>(null)
+    internal val retainedActivityPreview = _retainedActivityPreview.asStateFlow()
     private val subagentChildPreviewController = SubagentChildPreviewController(viewModelScope)
     internal val subagentChildPreview: StateFlow<SubagentChildPreview?> =
         subagentChildPreviewController.state
@@ -2254,7 +2263,10 @@ class ChatViewModel : ViewModel() {
         subagentActivityController.activities
 
     fun openSubagentChildPreview(activityKey: String) {
-        val activity = subagentActivities.value.firstOrNull { it.stableKey == activityKey } ?: return
+        if (supervisedModePolicy.enabled) return
+        val history = _retainedActivityPreview.value
+        val candidates = history?.record?.previewActivities() ?: subagentActivities.value
+        val activity = candidates.firstOrNull { it.stableKey == activityKey } ?: return
         val parentSessionId = chatHandler?.currentSessionId?.value ?: return
         val parentScopeKey = activeProfileContextKey
         val client = gatewayClient
@@ -2274,6 +2286,49 @@ class ChatViewModel : ViewModel() {
 
     fun closeSubagentChildPreview() {
         subagentChildPreviewController.close()
+    }
+
+    internal fun setChatActivityStore(store: ChatActivityStore) {
+        activityStoreInitialized = true
+        chatActivityController.bindStore(store)
+    }
+
+    fun openCurrentActivityPreview() {
+        _retainedActivityPreview.value = null
+        closeSubagentChildPreview()
+        subagentActivityController.setPreviewOpen(true)
+    }
+
+    internal fun openRetainedActivity(record: ChatActivityRecord, processDetail: String? = null): Boolean {
+        if (record.scopeKey != activeProfileContextKey || record.sessionId != chatHandler?.currentSessionId?.value) return false
+        if (supervisedModePolicy.enabled && !supervisedModePolicy.visibility.resolved().showWorkingStatus) return false
+        closeSubagentChildPreview()
+        subagentActivityController.setPreviewOpen(false)
+        val process = if (record.kind == ChatActivityKind.PROCESS) {
+            val exact = backgroundProcesses.value.singleOrNull {
+                !supervisedModePolicy.enabled && record.processStartedAt != null &&
+                    it.id == record.processId && it.startedAt == record.processStartedAt
+            }
+            exact ?: GatewayProcess(
+                id = record.processId ?: record.sourceId,
+                command = if (supervisedModePolicy.enabled) {
+                    appContext?.getString(R.string.chat_activity_receipt_process) ?: "Background command"
+                } else record.title,
+                status = record.phase.name.lowercase(),
+                outputTail = if (supervisedModePolicy.enabled) null else processDetail?.take(4_000)
+                    ?: appContext?.getString(R.string.chat_activity_output_unavailable)
+                    ?: "Output is no longer available. This entry preserves the recorded process status.",
+                exitCode = record.exitCode,
+            )
+        } else null
+        _retainedActivityPreview.value = RetainedChatActivityPreview(record, listOfNotNull(process))
+        return true
+    }
+
+    fun closeActivityPreview() {
+        closeSubagentChildPreview()
+        subagentActivityController.setPreviewOpen(false)
+        _retainedActivityPreview.value = null
     }
 
     private val _messageReactionsSupported = MutableStateFlow(true)
@@ -2691,10 +2746,12 @@ class ChatViewModel : ViewModel() {
             previousClient?.setColdPrewarmSessionReadyListener(null)
             previousClient?.setUnmatchedTurnCompleteListener(null)
             previousClient?.setBackgroundInteractionListener(null)
+            previousClient?.setSubagentEventListener(null)
             previousClient?.setSessionDirectoryInvalidationListener(null)
         }
         gatewayClient = client
         if (changed) {
+            chatActivityController.markUnavailable()
             dismissChatFailure()
             resetApprovalModeState()
             _messageReactionsSupported.value = true
@@ -2736,6 +2793,29 @@ class ChatViewModel : ViewModel() {
         }
         client?.setUnsolicitedTurnProvider { storedSessionId ->
             createGatewayInboundTurnRegistration(client, storedSessionId)
+        }
+        client?.setSubagentEventListener { sessionId, profile, event ->
+            if (gatewayClient === client && streamingEndpoint == "gateway" &&
+                chatHandler?.currentSessionId?.value == sessionId &&
+                currentSessionProfileName() == profile
+            ) {
+                val owner = AgentDisplay.parseProfileContextKey(activeProfileContextKey)
+                val checkpointProfileKey = activeTurnCheckpointSeed?.takeIf {
+                    it.sessionId == sessionId && it.contextKey == activeProfileContextKey
+                }?.profileKey
+                val previousRevisions = subagentActivities.value.associate { it.stableKey to it.revision }
+                subagentActivityController.onSessionEvent(
+                    sessionId, activeProfileContextKey, event,
+                    when {
+                        checkpointProfileKey != null -> AgentDisplay.profileRequestName(checkpointProfileKey)
+                        owner != null -> owner.requestProfileName
+                        else -> profile
+                    },
+                )
+                chatActivityController.captureSubagents(subagentActivities.value.filter {
+                    previousRevisions[it.stableKey] != it.revision
+                })
+            }
         }
         client?.setSessionDirectoryInvalidationListener {
             // Gateway emits this only after durable session state changes. It
@@ -2826,6 +2906,8 @@ class ChatViewModel : ViewModel() {
         if (changed) {
             gatewayStateSyncJob?.cancel()
             gatewayStateSyncJob = null
+            _gatewayPreparingSessionId.value = null
+            _gatewaySocketState.value = GatewayConnectionState.Idle
             client?.let { startGatewayStateSync(it) }
             if (client != null) {
                 gatewayVisibleReattachJob = viewModelScope.launch {
@@ -2905,9 +2987,10 @@ class ChatViewModel : ViewModel() {
                 _reasoningDisplay.value = null
             }
         }
-        if (changed && client != null && streamRecovery != null &&
-            AppForegroundTracker.isForeground.value
-        ) {
+        // Visibility can arrive before the runtime binder publishes its client.
+        // Start the same socket-only warmup in either ordering; prewarmGateway
+        // retains the directory barrier and exact-checkpoint ownership rules.
+        if (changed && client != null && chatVisible) {
             prewarmGateway()
         }
         if (changed && client != null) requestSessionActivityRefresh()
@@ -2969,7 +3052,6 @@ class ChatViewModel : ViewModel() {
     ): GatewayInboundTurnRegistration? {
         val handler = chatHandler ?: return null
         val eventScopeKey = activeProfileContextKey
-        val eventProfile = currentSessionProfileName()
         fun matchesAdmissionContext(): Boolean =
             gatewayClient === client &&
                 streamingEndpoint == "gateway" &&
@@ -3128,13 +3210,6 @@ class ChatViewModel : ViewModel() {
             },
             onSubagentEvent = { event ->
                 if (acceptsEvent()) {
-                    subagentActivityController.onEvent(
-                        sessionId = storedSessionId,
-                        eventScopeKey = eventScopeKey,
-                        turnId = messageId,
-                        event = event,
-                        profile = eventProfile,
-                    )
                     handler.onSubagentEvent(messageId, event)
                 }
             },
@@ -3873,6 +3948,10 @@ class ChatViewModel : ViewModel() {
         sessionId: String?,
         scopeKey: String? = activeProfileContextKey,
     ) {
+        _retainedActivityPreview.value?.record?.let {
+            if (it.sessionId != sessionId || it.scopeKey != scopeKey) closeActivityPreview()
+        }
+        chatActivityController.selectSession(scopeKey, sessionId)
         subagentChildPreview.value?.let { preview ->
             if (preview.parentSessionId != sessionId || preview.parentScopeKey != scopeKey) {
                 closeSubagentChildPreview()
@@ -4136,6 +4215,10 @@ class ChatViewModel : ViewModel() {
     }
 
     private var gatewayStateSyncJob: Job? = null
+    private val _gatewayPreparingSessionId = MutableStateFlow<String?>(null)
+    val gatewayPreparingSessionId = _gatewayPreparingSessionId.asStateFlow()
+    private val _gatewaySocketState = MutableStateFlow(GatewayConnectionState.Idle)
+    val gatewaySocketState = _gatewaySocketState.asStateFlow()
 
     /**
      * Last credential_warning already surfaced as a system notice, so the
@@ -4158,7 +4241,18 @@ class ChatViewModel : ViewModel() {
     private fun startGatewayStateSync(client: GatewayChatClient) {
         gatewayStateSyncJob?.cancel()
         lastSurfacedCredentialWarning = null
+        gatewayProcessController.setSnapshotListener { processes ->
+            val sessionId = chatHandler?.currentSessionId?.value
+            if (gatewayClient === client && sessionId != null &&
+                gatewayProcessController.ownsSnapshot(sessionId, activeProfileContextKey)
+            ) chatActivityController.captureProcesses(processes)
+        }
         gatewayStateSyncJob = viewModelScope.launch {
+            launch {
+                client.preparingSessionId.collect {
+                    if (gatewayClient === client) _gatewayPreparingSessionId.value = it
+                }
+            }
             launch {
                 backgroundProcesses.collect {
                     if (gatewayClient !== client) return@collect
@@ -4172,6 +4266,10 @@ class ChatViewModel : ViewModel() {
             launch {
                 client.connectionState.collect { state ->
                     if (gatewayClient !== client) return@collect
+                    if (_gatewaySocketState.value == GatewayConnectionState.Ready && state != GatewayConnectionState.Ready) {
+                        chatActivityController.markUnavailable()
+                    }
+                    _gatewaySocketState.value = state
                     subagentActivityController.onConnectionReady(
                         state == com.hermesandroid.relay.network.upstream.GatewayConnectionState.Ready,
                     )
@@ -4662,6 +4760,7 @@ class ChatViewModel : ViewModel() {
         dashboardMediaClientProvider: () -> DashboardApiClient? = { null },
     ) {
         this.appContext = context.applicationContext
+        if (!activityStoreInitialized) setChatActivityStore(DataStoreChatActivityStore(context.applicationContext))
         if (chatTurnCheckpointStore == null) {
             chatTurnCheckpointStore = DataStoreChatTurnCheckpointStore(context.applicationContext)
         }
@@ -4689,6 +4788,7 @@ class ChatViewModel : ViewModel() {
     /** Route-owned Gateway chat setup without borrowing the active connection's Relay/media clients. */
     fun initializeGatewayOnly(context: Context) {
         appContext = context.applicationContext
+        if (!activityStoreInitialized) setChatActivityStore(DataStoreChatActivityStore(context.applicationContext))
         if (chatTurnCheckpointStore == null) {
             chatTurnCheckpointStore = DataStoreChatTurnCheckpointStore(context.applicationContext)
         }
@@ -6159,6 +6259,7 @@ class ChatViewModel : ViewModel() {
             } else {
                 client?.deleteSession(sessionId) == true
             }
+            if (success && contextKey != null) chatActivityController.removeSession(contextKey, sessionId)
             if (
                 activeProfileContextKey != contextKey ||
                 currentSessionProfileName() != profileName
@@ -8121,18 +8222,6 @@ class ChatViewModel : ViewModel() {
             },
             onSubagentEvent = { event ->
                 if (owns()) {
-                    subagentActivityController.onEvent(
-                        sessionId = checkpoint.sessionId,
-                        eventScopeKey = checkpoint.contextKey,
-                        turnId = messageId,
-                        event = event,
-                        profile = if (checkpoint.profileKey != null) {
-                            AgentDisplay.profileRequestName(checkpoint.profileKey)
-                        } else {
-                            AgentDisplay.parseProfileContextKey(checkpoint.contextKey)
-                                ?.requestProfileName
-                        },
-                    )
                     handler.onSubagentEvent(messageId, event)
                     scheduleCheckpointWrite(immediate = true)
                 }
@@ -10664,13 +10753,6 @@ class ChatViewModel : ViewModel() {
                         onSubagentEvent = { event ->
                             ensurePostInterimMessage()
                             streamDeltas.flushNow()
-                            subagentActivityController.onEvent(
-                                sessionId = handler.currentSessionId.value,
-                                eventScopeKey = activeProfileContextKey,
-                                turnId = currentMessageId,
-                                event = event,
-                                profile = currentSessionProfileName(),
-                            )
                             handler.onSubagentEvent(currentMessageId, event)
                             scheduleCheckpointWrite(immediate = true)
                         },
@@ -10831,6 +10913,10 @@ class ChatViewModel : ViewModel() {
 
     fun cancelStream() {
         intentionallyCancelled = true
+        if (activeStream != null) {
+            subagentActivityController.interrupt()
+            chatActivityController.captureSubagents(subagentActivities.value)
+        }
         currentQueueDestination()?.let { destination ->
             if (queuedMessageItems.any { it.contextKey to it.sessionId == destination }) {
                 pausedQueueDestinations += destination
@@ -11366,9 +11452,8 @@ class ChatViewModel : ViewModel() {
                         )
                     }
                 } catch (e: Exception) {
-                    // Classifier produces a specific label (disk full, bad
-                    // URI, permission, …) for both the in-card text and the
-                    // global snackbar — same event, two surfaces.
+                    // Attachment owns failure and retry. History hydration can
+                    // fetch many files; never queue a global popup per file.
                     val human = classifyError(e, context = "media_fetch", ctx = appContext)
                     updateAttachmentByToken(handler, messageId, fetchKey, expectedRole = expectedRole) { att ->
                         att.copy(
@@ -11376,7 +11461,6 @@ class ChatViewModel : ViewModel() {
                             errorMessage = human.body
                         )
                     }
-                    _errorEvents.tryEmit(human)
                 }
             },
             onFailure = { err ->
@@ -11396,7 +11480,6 @@ class ChatViewModel : ViewModel() {
                         errorMessage = human.body
                     )
                 }
-                _errorEvents.tryEmit(human)
             }
         )
     }
@@ -11661,6 +11744,7 @@ class ChatViewModel : ViewModel() {
         gatewayClient?.setColdPrewarmSessionReadyListener(null)
         gatewayClient?.setUnmatchedTurnCompleteListener(null)
         gatewayClient?.setBackgroundInteractionListener(null)
+        gatewayClient?.setSubagentEventListener(null)
         backgroundPendingInteractions.clear()
         backgroundNeedsInputKeys.clear()
         publishBackgroundSessionActivity()

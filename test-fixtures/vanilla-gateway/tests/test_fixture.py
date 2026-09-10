@@ -123,6 +123,49 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(["user", "assistant"], [row["role"] for row in history["messages"]])
         self.assertEqual(2, history["pagination"]["returned"])
 
+    async def test_initialization_failure_precedes_lazy_create_ack(self) -> None:
+        fixture, base_url = await self.start("session_initialization_failure")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "session.create", {"profile": "default"})
+        failure = await ws.receive_json()
+        self.assertEqual("error", failure["params"]["type"])
+        self.assertEqual(fixture.scenario.live_session_id, failure["params"]["session_id"])
+        ack = await ws.receive_json()
+        self.assertTrue(ack["result"]["info"]["lazy"])
+
+    async def test_child_activity_outlives_parent_before_completion_wake(self) -> None:
+        fixture, base_url = await self.start("subagent_child_preview")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "prompt.submit", {"text": "fixture"})
+        first = await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "message.complete")
+        later = await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "message.complete")
+        first_types = [f.get("params", {}).get("type") for f in first]
+        later_types = [f.get("params", {}).get("type") for f in later]
+        self.assertIn("subagent.start", first_types)
+        self.assertNotIn("subagent.complete", first_types)
+        self.assertIn("subagent.progress", later_types)
+        self.assertEqual(2, later_types.count("subagent.complete"))
+        self.assertLess(later_types.index("subagent.complete"), later_types.index("message.start"))
+        child_events = [
+            frame["params"]["payload"] for frame in first + later
+            if frame.get("params", {}).get("type", "").startswith("subagent.")
+        ]
+        self.assertTrue(child_events)
+        self.assertEqual({"delegation-fixture-1"}, {event["delegation_id"] for event in child_events})
+        async with self.session.get(
+            f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
+            params={"profile": "default", "limit": 500, "offset": 0, "order": "asc"},
+        ) as response:
+            history = (await response.json())["messages"]
+        self.assertEqual(["user", "assistant", "user", "assistant"], [row["role"] for row in history])
+        receipt = history[2]
+        self.assertEqual("async_delegation_complete", receipt["display_kind"])
+        self.assertEqual("delegation-fixture-1", receipt["display_metadata"]["delegation_id"])
+        self.assertEqual(2, receipt["display_metadata"]["task_count"])
+        self.assertEqual(1, receipt["display_metadata"]["completed_count"])
+        self.assertNotIn("child_session_id", receipt["display_metadata"])
+        self.assertEqual("Delegation complete.", history[3]["content"])
+
     async def test_ownership_rejection_is_terminal_without_persisted_turn(self) -> None:
         fixture, base_url = await self.start("ownership_rejection")
         ws, _ = await self.connect(base_url)
@@ -175,6 +218,7 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         active = (await observer.receive_json())["result"]["sessions"]
         self.assertEqual("working", active[0]["status"])
         self.assertNotIn("profile", active[0])
+
         async with self.session.get(
             f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages",
             params={"profile": "default", "limit": 500, "offset": 0, "order": "asc"},
@@ -200,6 +244,19 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(["session.active_list"], observer_methods)
         self.assertNotIn("session.interrupt", observer_methods)
+
+    async def test_cold_start_observer_opens_socket_without_control_rpc(self) -> None:
+        _, base_url = await self.start("cold_start_observation")
+        observer, _ = await self.connect(base_url)
+        await self.rpc(observer, 1, "session.active_list")
+        active = (await observer.receive_json())["result"]["sessions"]
+        self.assertEqual([], active)
+
+        async with self.session.get(f"{base_url}/__fixture__/evidence") as response:
+            evidence = await response.json()
+        methods = [entry["method"] for entry in evidence["entries"] if "method" in entry]
+        self.assertEqual({"session.active_list"}, set(methods))
+        self.assertTrue(any(entry.get("event_type") == "gateway.ready" for entry in evidence["entries"]))
 
     async def test_rapid_chunks_tools_and_interims_keep_wire_order(self) -> None:
         _, base_url = await self.start("rapid_tools_interims")
@@ -412,6 +469,7 @@ class ScenarioTestCase(unittest.TestCase):
             "active_status_lifecycle",
             "active_status_profile_scope",
             "active_status_unsupported",
+            "cold_start_observation",
             "cross_client_observation",
             "initial_history_bind",
             "ordinary_turn",
@@ -464,6 +522,10 @@ class ScenarioTestCase(unittest.TestCase):
         self.assertEqual(
             ("gateway.settled_session_info",),
             load_scenario("terminal_gap_session_info").contract_requirements,
+        )
+        self.assertEqual(
+            ("gateway.session_active_list",),
+            load_scenario("cold_start_observation").contract_requirements,
         )
         self.assertEqual(
             ("gateway.message_complete", "gateway.session_active_list"),

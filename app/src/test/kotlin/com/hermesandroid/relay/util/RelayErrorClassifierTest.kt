@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.util
 
+import com.hermesandroid.relay.network.upstream.DashboardHttpException
+
 import java.io.IOException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -11,6 +13,54 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RelayErrorClassifierTest {
+    @Test
+    fun dashboard404UsesTypedStatusAndNamesItsOwner() {
+        val error = classifyError(DashboardHttpException(404, "request failed"), context = "send_message")
+        assertEquals("Endpoint not found", error.title)
+        assertTrue(error.body.contains("Dashboard"))
+        assertFalse(error.body.contains("relay", ignoreCase = true))
+        assertFalse(error.retryable)
+    }
+
+    @Test
+    fun typedDashboardStatusWinsOverMisleadingResponseBody() {
+        val error = classifyError(DashboardHttpException(500, "HTTP 404 missing"))
+        assertFalse(error.title == "Endpoint not found")
+        assertTrue(error.body.contains("HTTP 500"))
+        assertTrue(error.retryable)
+    }
+
+    @Test
+    fun explicitLegacy404IsNeutralForVoiceAndChat() {
+        listOf("HTTP 404", "API error 404: Not found", "Relay responded HTTP 404").forEach { text ->
+            listOf("voice_config", "send_message").forEach { context ->
+                val error = classifyError(IOException(text), context)
+                assertEquals("Endpoint not found", error.title)
+                assertFalse(error.body.contains("relay", ignoreCase = true))
+                assertFalse(error.body.contains("older", ignoreCase = true))
+            }
+        }
+    }
+
+    @Test
+    fun incidental404NeverBecomesMissingEndpoint() {
+        listOf("file 404 not readable", "HTTP 4040", "request id=404", "See https://example.test/404", "Response body: HTTP 404").forEach { text ->
+            val error = classifyError(IOException(text))
+            assertEquals("Network error", error.title)
+            assertEquals(text, error.body)
+        }
+    }
+
+    @Test
+    fun typedDashboardAuthDoesNotSuggestRelayRepair() {
+        listOf(401, 403).forEach { code ->
+            val error = classifyError(DashboardHttpException(code, "request failed"), "media_fetch")
+            assertEquals(if (code == 401) "Dashboard sign-in required" else "Not allowed", error.title)
+            assertEquals(null, error.action)
+            assertFalse(error.body.contains("re-pair", ignoreCase = true))
+        }
+    }
+
     @Test
     fun gatewayDrainIsNotMisclassifiedAsProviderOutage() {
         val err = classifyError(

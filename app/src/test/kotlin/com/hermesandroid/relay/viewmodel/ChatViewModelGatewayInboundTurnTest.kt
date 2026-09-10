@@ -183,6 +183,55 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun coldGatewayClientBeforeVisibilityOpensObservationWithoutControlRpc() {
+        viewModel.setChatVisible(false)
+        replaceGatewayClient(ticketTimeoutMs = 5_000L)
+        val controlMethods = setOf(
+            "session.resume",
+            "session.activate",
+            "prompt.submit",
+            "session.interrupt",
+        )
+        val baseline = controlMethods.associateWith { method ->
+            gatewayHarness.rpcLog.count { it.first == method }
+        }
+        val ticketMintsBefore = gatewayHarness.ticketMints.get()
+
+        viewModel.setChatVisible(true)
+
+        awaitCondition { gatewayClient.connectionState.value == GatewayConnectionState.Ready }
+        assertEquals(ticketMintsBefore + 1, gatewayHarness.ticketMints.get())
+        controlMethods.forEach { method ->
+            assertEquals(baseline.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
+    }
+
+    @Test
+    fun coldGatewayVisibilityBeforeClientBindingOpensObservationWithoutControlRpc() {
+        viewModel.setChatVisible(false)
+        replaceGatewayClient(ticketTimeoutMs = 5_000L, bind = false)
+        val controlMethods = setOf(
+            "session.resume",
+            "session.activate",
+            "prompt.submit",
+            "session.interrupt",
+        )
+        val baseline = controlMethods.associateWith { method ->
+            gatewayHarness.rpcLog.count { it.first == method }
+        }
+        val ticketMintsBefore = gatewayHarness.ticketMints.get()
+
+        viewModel.setChatVisible(true)
+        viewModel.updateGatewayClient(gatewayClient)
+
+        awaitCondition { gatewayClient.connectionState.value == GatewayConnectionState.Ready }
+        assertEquals(ticketMintsBefore + 1, gatewayHarness.ticketMints.get())
+        controlMethods.forEach { method ->
+            assertEquals(baseline.getValue(method), gatewayHarness.rpcLog.count { it.first == method })
+        }
+    }
+
+    @Test
     fun offlineGatewaySendPublishesRetryableFailureAndKeepsPrompt() {
         DiagnosticsLog.clear()
         viewModel.updateGatewayClient(null)
@@ -2476,6 +2525,15 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun recoveredLegacyContextKeepsExplicitPersistedSubagentProfile() {
+        assertRecoveredSubagentWatchProfile(
+            contextKey = "connection-a/profile-default",
+            persistedProfileKey = "default",
+            expectedProfile = "default",
+        )
+    }
+
+    @Test
     fun currentServerDefaultCheckpointPersistsExplicitSentinel() {
         assertCurrentCheckpointProfileKey(
             profileName = null,
@@ -2551,6 +2609,37 @@ class ChatViewModelGatewayInboundTurnTest {
 
         val resume = gatewayHarness.awaitRpcCount("session.resume", 2).last()
         assertEquals(JsonPrimitive("default"), resume["profile"])
+    }
+
+    @Test
+    fun detachedChildRemainsPreviewableAfterParentCompletesAndAcceptsLateProgress() {
+        viewModel.sendMessage("Delegate work")
+        gatewayHarness.awaitRpc("prompt.submit")
+        val child = buildJsonObject {
+            put("subagent_id", "detached-child")
+            put("child_session_id", "detached-session")
+            put("goal", "Inspect")
+        }
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(gatewayHarness.eventFrame("message.interim", buildJsonObject { put("text", "Delegating now") }, "live-resumed"))
+        serverWs.send(gatewayHarness.eventFrame("subagent.start", child, "live-resumed"))
+        awaitCondition { viewModel.subagentActivities.value.size == 1 }
+        val key = viewModel.subagentActivities.value.single().stableKey
+        serverWs.send(gatewayHarness.eventFrame("message.complete", buildJsonObject { put("text", "Launched") }, "live-resumed"))
+        awaitCondition { !handler.isStreaming.value }
+        assertFalse(viewModel.subagentActivities.value.single().isTerminal)
+        serverWs.send(gatewayHarness.eventFrame("subagent.progress", buildJsonObject {
+            put("subagent_id", "detached-child")
+            put("text", "Still inspecting")
+        }, "live-resumed"))
+        awaitCondition { viewModel.subagentActivities.value.single().events.last().text == "Still inspecting" }
+        assertEquals(key, viewModel.subagentActivities.value.single().stableKey)
+        assertFalse(handler.isStreaming.value)
+        serverWs.send(gatewayHarness.eventFrame("subagent.complete", buildJsonObject {
+            put("subagent_id", "detached-child")
+            put("status", "completed")
+        }, "live-resumed"))
+        awaitCondition { viewModel.subagentActivities.value.single().phase == SubagentActivityPhase.COMPLETED }
     }
 
     @Test
@@ -4282,7 +4371,10 @@ class ChatViewModelGatewayInboundTurnTest {
         ),
     )
 
-    private fun replaceGatewayClient(ticketTimeoutMs: Long): GatewayChatClient {
+    private fun replaceGatewayClient(
+        ticketTimeoutMs: Long,
+        bind: Boolean = true,
+    ): GatewayChatClient {
         viewModel.updateGatewayClient(null)
         gatewayClient.shutdown()
         gatewayScope.cancel()
@@ -4300,7 +4392,7 @@ class ChatViewModelGatewayInboundTurnTest {
             scope = gatewayScope,
             reconnectJitterUnit = { Math.nextDown(1.0) },
         )
-        viewModel.updateGatewayClient(gatewayClient)
+        if (bind) viewModel.updateGatewayClient(gatewayClient)
         return gatewayClient
     }
 

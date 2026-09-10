@@ -292,34 +292,7 @@ class GatewayEventMapper(
             "subagent.progress", "subagent.complete",
             -> {
                 clearActivityStatuses()
-                val phase = when (type) {
-                    "subagent.spawn_requested" -> GatewaySubagentEvent.Phase.SPAWN_REQUESTED
-                    "subagent.start" -> GatewaySubagentEvent.Phase.START
-                    "subagent.thinking" -> GatewaySubagentEvent.Phase.THINKING
-                    "subagent.tool" -> GatewaySubagentEvent.Phase.TOOL
-                    "subagent.progress" -> GatewaySubagentEvent.Phase.PROGRESS
-                    else -> GatewaySubagentEvent.Phase.COMPLETE
-                }
-                callbacks.onSubagentEvent(
-                    GatewaySubagentEvent(
-                        phase = phase,
-                        taskIndex = payload.int("task_index") ?: 0,
-                        taskCount = payload.int("task_count") ?: 1,
-                        goal = payload.string("goal") ?: "",
-                        status = payload.string("status"),
-                        summary = payload.string("summary"),
-                        toolName = payload.string("tool_name"),
-                        // subagent.tool sets tool_preview AND mirrors it into
-                        // text; thinking/progress carry text only.
-                        preview = payload.string("tool_preview") ?: payload.string("text"),
-                        durationSeconds = payload.double("duration_seconds"),
-                        subagentId = payload.string("subagent_id"),
-                        childSessionId = payload.string("child_session_id"),
-                        parentId = payload.string("parent_id"),
-                        depth = payload.int("depth"),
-                        model = payload.string("model"),
-                    ),
-                )
+                parseSubagentEvent(type, payload)?.let(callbacks.onSubagentEvent)
             }
 
             "tool.output_risk" -> {
@@ -467,6 +440,42 @@ class GatewayEventMapper(
     }
 
     companion object {
+        /** Shared by turn transcripts and the session-owned activity stream. */
+        fun parseSubagentEvent(type: String, payload: JsonObject?): GatewaySubagentEvent? {
+            if (type !in setOf(
+                    "subagent.spawn_requested", "subagent.start", "subagent.thinking",
+                    "subagent.tool", "subagent.progress", "subagent.complete",
+                )) return null
+            val phase = when (type) {
+                "subagent.spawn_requested" -> GatewaySubagentEvent.Phase.SPAWN_REQUESTED
+                "subagent.start" -> GatewaySubagentEvent.Phase.START
+                "subagent.thinking" -> GatewaySubagentEvent.Phase.THINKING
+                "subagent.tool" -> GatewaySubagentEvent.Phase.TOOL
+                "subagent.progress" -> GatewaySubagentEvent.Phase.PROGRESS
+                else -> GatewaySubagentEvent.Phase.COMPLETE
+            }
+
+            return GatewaySubagentEvent(
+                phase = phase,
+                taskIndex = payload.int("task_index") ?: 0,
+                taskCount = payload.int("task_count") ?: 1,
+                goal = payload.string("goal") ?: "",
+                status = payload.string("status"),
+                summary = payload.string("summary"),
+                toolName = payload.string("tool_name"),
+                // subagent.tool sets tool_preview AND mirrors it into
+                // text; thinking/progress carry text only.
+                preview = payload.string("tool_preview") ?: payload.string("text"),
+                durationSeconds = payload.double("duration_seconds"),
+                subagentId = payload.string("subagent_id"),
+                childSessionId = payload.string("child_session_id"),
+                parentId = payload.string("parent_id"),
+                depth = payload.int("depth"),
+                model = payload.string("model"),
+                delegationId = payload.string("delegation_id"),
+            )
+        }
+
         const val PROVIDER_WAIT_STATUS_KIND = "provider_wait"
         const val COMPACTION_STATUS_KIND = "compacting"
         const val ERROR_STATUS_KIND = "error"

@@ -111,4 +111,8 @@ jobs:
             plugin/tests/test_git_state.py \
             plugin/tests/test_git_state_write.py \
             plugin/tests/test_git_state_extras.py \
-            plugin/tests/test_mobile_plugin_store.py
+            plugin/tests/test_mobile_plugin_store.py \
+            plugin/tests/test_android_tool.py \
+            plugin/tests/test_android_navigate.py \
+            plugin/tests/test_phone_platform.py \
+            plugin/tests/test_desktop_tool_availability.py

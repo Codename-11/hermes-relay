@@ -4277,4 +4277,14 @@
     <string name="chat_queue_paused">Cola pausada</string>
     <string name="chat_queue_resume">Reanudar</string>
     <string name="chat_queue_remove">Quitar mensaje de la cola</string>
+    <string name="chat_activity_receipt_subagents">Subagentes</string>
+    <string name="chat_activity_receipt_process">Comando en segundo plano</string>
+    <string name="chat_activity_receipt_view_activity">Ver actividad</string>
+    <string name="chat_activity_receipt_view_output">Ver salida</string>
+    <string name="chat_activity_receipt_count_phase">%1$d %2$s</string>
+    <string name="chat_activity_history_title">Actividad del chat</string>
+    <string name="chat_activity_history_empty">La actividad detallada no se guardó en este dispositivo. La entrada de finalización permanece en el chat.</string>
+    <string name="tool_progress_status_dispatched">Enviado</string>
+    <string name="chat_activity_history_notice">Actividad registrada. No se conservan las actualizaciones de progreso; el historial disponible de los subagentes se puede abrir en modo de solo lectura.</string>
+    <string name="chat_activity_output_unavailable">La salida ya no está disponible. Esta entrada conserva el estado registrado del proceso.</string>
 </resources>
