@@ -33,6 +33,7 @@ class GatewayFixture:
             [
                 web.post("/api/auth/ws-ticket", self._ticket),
                 web.get("/api/ws", self._websocket),
+                web.get("/api/sessions", self._sessions),
                 web.get("/api/sessions/{session_id}/messages", self._history),
                 web.get("/__fixture__/state", self._state),
                 web.get("/__fixture__/evidence", self._evidence),
@@ -287,6 +288,18 @@ class GatewayFixture:
     ) -> None:
         await socket.send_json(
             {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}},
+        )
+
+    async def _sessions(self, request: web.Request) -> web.Response:
+        profile = request.query.get("profile")
+        if profile not in (None, self.scenario.profile):
+            raise web.HTTPNotFound(text="profile not found")
+        self.evidence.add("directory", outcome="listed")
+        return web.json_response(
+            {
+                "sessions": [],
+                "pagination": {"limit": 50, "offset": 0, "returned": 0},
+            },
         )
 
     async def _history(self, request: web.Request) -> web.Response:

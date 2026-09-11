@@ -247,6 +247,18 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
 
     async def test_cold_start_observer_opens_socket_without_control_rpc(self) -> None:
         _, base_url = await self.start("cold_start_observation")
+
+        # Android's cold-start barrier hydrates the profile-scoped Dashboard
+        # directory before it opens the passive Gateway observation socket.
+        # The REST read is independent of gateway.ready and must not create or
+        # attach a live runtime.
+        async with self.session.get(
+            f"{base_url}/api/sessions",
+            params={"profile": "default", "limit": 50, "offset": 0},
+        ) as response:
+            self.assertEqual(200, response.status)
+            self.assertEqual([], (await response.json())["sessions"])
+
         observer, _ = await self.connect(base_url)
         await self.rpc(observer, 1, "session.active_list")
         active = (await observer.receive_json())["result"]["sessions"]
