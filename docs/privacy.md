@@ -17,7 +17,7 @@ Hermes-Relay has two Android tracks:
 
 | Track | Bridge scope | Sensitive Android APIs |
 |-------|--------------|------------------------|
-| Google Play | **Bridge Core**: chat, voice, terminal/TUI relay, notification companion, media handoff, relay sessions, status | No AccessibilityService, overlay permission, MediaProjection, wake-lock device-control service, or contacts/location/SMS/call permissions. Optional Android Assistant screen context is described below. |
+| Google Play | **Bridge Core**: chat, voice, terminal/TUI relay, notification companion, media handoff, relay sessions, status | Optional voice-only overlay. No AccessibilityService, MediaProjection, wake-lock device-control service, or contacts/location/SMS/call permissions. Optional Android Assistant screen context is described below. |
 | Sideload | **Device Control**: the full agent-driven phone-control bridge | AccessibilityService, foreground service, overlay chip, optional screenshots, and phone-utility permissions when enabled |
 
 The Google Play build cannot use Accessibility or MediaProjection to inspect or
@@ -118,3 +118,7 @@ Stats for Nerds tracks performance metrics such as time to first token, completi
 ## Open Source
 
 Hermes-Relay is MIT licensed. All source code is publicly available and auditable at [GitHub](https://github.com/Codename-11/hermes-relay).
+
+## Voice Overlay
+
+Voice Overlay is optional in both builds. Start it explicitly from Voice Focus while Hermes-Relay is visible and unlocked. It requires microphone access, display-over-other-apps access and an enabled microphone notification with Stop voice. Audio goes to the configured Hermes server; the overlay does not read or control other apps. Stop voice, closing the overlay, screen lock, task removal or loss of required access ends the overlay voice session. Returning to the app keeps foreground protection until the app is resumed. Granting permissions never starts a session.

@@ -22,6 +22,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,6 +33,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -81,6 +84,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
@@ -153,21 +157,72 @@ class VoiceOverlayHost(context: Context) {
     private var overlayView: View? = null
     private var overlayOwner: VoiceOverlayLifecycleOwner? = null
     private var overlayParams: WindowManager.LayoutParams? = null
+    private var generation = android.os.SystemClock.elapsedRealtimeNanos()
+    internal var sessionId: Long? = null
+        private set
+    private var callerLifecycle: Lifecycle? = null
+    private val callerObserver = LifecycleEventObserver { _, event ->
+        when (event) {
+            // Keep microphone protection until the real Activity is foreground again.
+            Lifecycle.Event.ON_RESUME -> if (overlayView != null) hide()
+            Lifecycle.Event.ON_DESTROY -> exitVoiceSession()
+            else -> Unit
+        }
+    }
 
     fun hasOverlayPermission(): Boolean = Settings.canDrawOverlays(appContext)
 
+    fun show(session: VoiceOverlaySession, lifecycle: Lifecycle): Boolean {
+        if (!com.hermesandroid.relay.data.BuildFlavor.voiceSystemOverlay ||
+            !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) ||
+            !VoiceOverlayAccess.read(appContext).ready || !session.uiState.value.voiceMode
+        ) {
+            return false
+        }
+        if (sessionId != null) return true
+        val id = ++generation
+        sessionId = id
+        fun guarded(action: () -> Unit): () -> Unit = {
+            if (canContinue(id)) action() else exitVoiceSession(id)
+        }
+        sessionState.value = session.copy(
+            onStartListening = guarded(session.onStartListening),
+            onStopListening = guarded(session.onStopListening),
+            onInterrupt = guarded(session.onInterrupt),
+            onPauseAutoMode = guarded(session.onPauseAutoMode),
+            onReturnToHermes = guarded {
+                session.onReturnToHermes()
+                // Already foreground: no lifecycle transition is needed for a safe handoff.
+                if (sessionId == id &&
+                    callerLifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true
+                ) hide()
+            },
+            onExit = { exitVoiceSession(id) },
+            onDismissOverlay = { exitVoiceSession(id) },
+            onResetPosition = { moveTo(24, 96) },
+        )
+        exitCallback = session.onExit
+        callerLifecycle = lifecycle
+        lifecycle.addObserver(callerObserver)
+        if (!VoiceOverlayForegroundService.start(appContext, id)) {
+            exitVoiceSession(id)
+            return false
+        }
+        return true
+    }
+
+    private var exitCallback: (() -> Unit)? = null
+
+    internal fun canStart(id: Long): Boolean = sessionId == id &&
+        callerLifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true && canContinue(id)
+
+    internal fun canContinue(id: Long): Boolean = sessionId == id &&
+        sessionState.value?.uiState?.value?.voiceMode == true && VoiceOverlayAccess.read(appContext).ready
+
+    /** Called only after startForeground succeeds; a queued service start is not readiness. */
     @SuppressLint("InflateParams")
-    fun show(session: VoiceOverlaySession): Boolean {
-        sessionState.value = session
-        if (!hasOverlayPermission()) {
-            Log.w(TAG, "show: SYSTEM_ALERT_WINDOW not granted")
-            return false
-        }
-        if (!VoiceOverlayForegroundService.start(appContext)) {
-            Log.w(TAG, "show: microphone foreground service could not start")
-            sessionState.value = null
-            return false
-        }
+    internal fun onServiceReady(id: Long): Boolean {
+        if (!canStart(id)) return false
         if (overlayView != null) return true
 
         val compose = ComposeView(appContext).apply {
@@ -191,9 +246,7 @@ class VoiceOverlayHost(context: Context) {
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.START
@@ -205,8 +258,6 @@ class VoiceOverlayHost(context: Context) {
             .onFailure { Log.w(TAG, "addView(voice overlay) failed", it) }
             .isSuccess
         if (!added) {
-            sessionState.value = null
-            VoiceOverlayForegroundService.stop(appContext)
             overlayOwner?.stop()
             overlayOwner = null
             return false
@@ -214,10 +265,17 @@ class VoiceOverlayHost(context: Context) {
 
         overlayView = compose
         overlayParams = params
+        compose.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            moveTo(params.x, params.y)
+        }
         return true
     }
 
     fun hide() {
+        sessionId = null
+        exitCallback = null
+        callerLifecycle?.removeObserver(callerObserver)
+        callerLifecycle = null
         val view = overlayView
         overlayView = null
         overlayParams = null
@@ -231,17 +289,29 @@ class VoiceOverlayHost(context: Context) {
         VoiceOverlayForegroundService.stop(appContext)
     }
 
-    fun exitVoiceSession() {
-        val onExit = sessionState.value?.onExit
+    fun exitVoiceSession(expectedId: Long? = sessionId) {
+        if (expectedId == null || sessionId != expectedId) return
+        val onExit = exitCallback
         hide()
         onExit?.invoke()
     }
 
     private fun moveBy(dx: Float, dy: Float) {
+        val params = overlayParams ?: return
+        moveTo(params.x + dx.roundToInt(), params.y + dy.roundToInt())
+    }
+
+    private fun moveTo(x: Int, y: Int) {
         val view = overlayView ?: return
         val params = overlayParams ?: return
-        params.x = (params.x + dx.roundToInt()).coerceAtLeast(0)
-        params.y = (params.y + dy.roundToInt()).coerceAtLeast(0)
+        val size = android.graphics.Point()
+        @Suppress("DEPRECATION")
+        wm.defaultDisplay.getSize(size)
+        val nextX = x.coerceIn(0, (size.x - view.width).coerceAtLeast(0))
+        val nextY = y.coerceIn(0, (size.y - view.height).coerceAtLeast(0))
+        if (params.x == nextX && params.y == nextY) return
+        params.x = nextX
+        params.y = nextY
         runCatching { wm.updateViewLayout(view, params) }
             .onFailure { Log.w(TAG, "updateViewLayout(voice overlay) failed", it) }
     }
@@ -280,10 +350,12 @@ data class VoiceOverlaySession(
     val onReturnToHermes: () -> Unit,
     val onDismissOverlay: () -> Unit,
     val onExit: () -> Unit,
+    val onResetPosition: () -> Unit = {},
+    val connectionLabel: String? = null,
 )
 
 @Composable
-private fun VoiceFloatingOverlayPill(
+internal fun VoiceFloatingOverlayPill(
     session: VoiceOverlaySession,
     onDragBy: (Float, Float) -> Unit,
 ) {
@@ -301,20 +373,31 @@ private fun VoiceFloatingOverlayPill(
         ?: stringResource(R.string.voice_overlay_label_default_profile)
     val stateText = voiceOverlayStateLabel(uiState.state)
     val overlayWidth = (LocalConfiguration.current.screenWidthDp - 24)
-        .coerceIn(280, 368)
+        .coerceIn(200, 368)
         .dp
 
     if (minimized) {
-        VoiceFloatingOverlayBubble(
-            uiState = uiState,
-            stateText = stateText,
-            onExpand = { minimized = false },
-            onStartListening = session.onStartListening,
-            onStopListening = session.onStopListening,
-            onInterrupt = session.onInterrupt,
-            onPauseAutoMode = session.onPauseAutoMode,
-            onDragBy = onDragBy,
-        )
+        Surface(
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                VoiceFloatingOverlayBubble(
+                    uiState = uiState,
+                    stateText = stateText,
+                    onExpand = { minimized = false },
+                    onStartListening = session.onStartListening,
+                    onStopListening = session.onStopListening,
+                    onInterrupt = session.onInterrupt,
+                    onPauseAutoMode = session.onPauseAutoMode,
+                    onDragBy = onDragBy,
+                )
+                TextButton(onClick = session.onExit) {
+                    Text(stringResource(R.string.voice_overlay_notification_stop))
+                }
+            }
+        }
         return
     }
 
@@ -329,6 +412,7 @@ private fun VoiceFloatingOverlayPill(
             },
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.98f),
+        contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 8.dp,
         shadowElevation = 10.dp,
     ) {
@@ -382,7 +466,9 @@ private fun VoiceOverlayHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(modifier = Modifier.size(50.dp), contentAlignment = Alignment.Center) {
+        if (LocalConfiguration.current.screenWidthDp >= 360) Box(
+            modifier = Modifier.size(50.dp), contentAlignment = Alignment.Center,
+        ) {
             OverlayCircularWaveformRing(
                 amplitude = uiState.amplitude,
                 state = uiState.state,
@@ -397,20 +483,27 @@ private fun VoiceOverlayHeader(
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(
+                text = listOfNotNull(session.connectionLabel, session.profileName).joinToString(" · "),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
                 text = stateText,
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold,
             )
-            Text(
-                text = overlayPrimaryText(uiState, stateText),
+            val primaryText = overlayPrimaryText(uiState, stateText)
+            if (primaryText != stateText) Text(
+                text = primaryText,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        IconButton(onClick = onToggleExpanded, modifier = Modifier.size(38.dp)) {
+        IconButton(onClick = onToggleExpanded, modifier = Modifier.size(48.dp)) {
             Icon(
                 imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
                 contentDescription = stringResource(
@@ -426,6 +519,9 @@ private fun VoiceOverlayHeader(
             onPauseAutoMode = session.onPauseAutoMode,
             size = 50.dp,
         )
+        IconButton(onClick = session.onExit, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Filled.Close, stringResource(R.string.voice_overlay_notification_stop))
+        }
     }
 }
 
@@ -439,7 +535,10 @@ private fun ExpandedVoiceOverlayBody(
     session: VoiceOverlaySession,
 ) {
     Column(
-        modifier = Modifier.padding(bottom = 8.dp),
+        modifier = Modifier
+            .heightIn(max = (LocalConfiguration.current.screenHeightDp - 120).coerceAtLeast(100).dp)
+            .verticalScroll(rememberScrollState())
+            .padding(bottom = 8.dp),
     ) {
         OverlayLinearWaveform(
             amplitude = uiState.amplitude,
@@ -515,9 +614,9 @@ private fun ExpandedVoiceOverlayBody(
                 modifier = Modifier.weight(1f),
             )
             VoiceOverlayAction(
-                icon = Icons.Filled.VisibilityOff,
-                label = stringResource(R.string.voice_overlay_hide),
-                onClick = session.onDismissOverlay,
+                icon = Icons.Filled.GraphicEq,
+                label = stringResource(R.string.voice_overlay_reset_position),
+                onClick = session.onResetPosition,
                 modifier = Modifier.weight(1f),
             )
             VoiceOverlayAction(
@@ -570,7 +669,7 @@ private fun VoiceOverlayAction(
 ) {
     TextButton(
         onClick = onClick,
-        modifier = modifier.height(54.dp),
+        modifier = modifier.heightIn(min = 72.dp),
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -584,7 +683,7 @@ private fun VoiceOverlayAction(
             Text(
                 text = label,
                 style = MaterialTheme.typography.labelSmall,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -1049,7 +1148,7 @@ private fun voiceEngineLabel(engineMode: String?): String = when (engineMode) {
         .replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
 }
 
-fun openHermesFromOverlay(context: Context) {
+fun openHermesFromOverlay(context: Context): Boolean {
     val appContext = context.applicationContext
     val launchIntent = appContext.packageManager.getLaunchIntentForPackage(appContext.packageName)
         ?: Intent().setPackage(appContext.packageName)
@@ -1057,8 +1156,9 @@ fun openHermesFromOverlay(context: Context) {
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
         .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-    runCatching { appContext.startActivity(launchIntent) }
+    return runCatching { appContext.startActivity(launchIntent) }
         .onFailure { Log.w("VoiceOverlayHost", "return to Hermes failed", it) }
+        .isSuccess
 }
 
 private class VoiceOverlayLifecycleOwner :

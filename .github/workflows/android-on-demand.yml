@@ -166,6 +166,9 @@ jobs:
       - name: Build debug APKs
         run: ./gradlew assembleDebug --console=plain
 
+      - name: Verify Play capability manifest
+        run: python3 scripts/check-android-capabilities.py --variant googlePlayDebug
+
       - name: Verify packaged native compatibility
         run: |
           python3 scripts/check-android-native-compat.py \
@@ -202,6 +205,9 @@ jobs:
 
       - name: Build release bundles and APKs
         run: ./gradlew bundleRelease assembleRelease --console=plain
+
+      - name: Verify Play release capability manifest
+        run: python3 scripts/check-android-capabilities.py --variant googlePlayRelease
 
       - name: Scan release DEX for unsupported collection APIs
         run: |

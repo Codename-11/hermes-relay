@@ -1673,64 +1673,52 @@ fun ChatScreen(
         voiceOutputConfig?.enabled
     }
 
-    val voiceSystemOverlayAvailable = BuildFlavor.isSideload
+    val voiceSystemOverlayAvailable = BuildFlavor.voiceSystemOverlay
     val showVoiceSystemOverlay: () -> Unit = {
-        if (!voiceSystemOverlayAvailable) {
-            pendingVoiceOverlayPermission = false
-        } else if (assistantSessionActive) {
-            voiceOverlayHost.hide()
-        } else if (!voiceOverlayHost.hasOverlayPermission()) {
+        if (voiceSystemOverlayAvailable && !assistantSessionActive) {
             pendingVoiceOverlayPermission = true
-            runCatching {
-                val intent = Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    Uri.parse("package:${context.packageName}"),
-                ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                context.startActivity(intent)
-            }
-            scope.launch {
-                snackbarHostState.showSnackbar(
-                    message = context.getString(R.string.chat_overlay_perm_enable),
-                    duration = SnackbarDuration.Short,
-                )
-            }
-        } else {
-            pendingVoiceOverlayPermission = false
-            val shown = voiceOverlayHost.show(
-                VoiceOverlaySession(
-                    uiState = voiceViewModel.uiState,
-                    engineMode = voiceStats.voiceEngineMode,
-                    provider = activeVoiceProvider,
-                    model = activeVoiceModel,
-                    voice = activeVoiceName,
-                    profileName = AgentDisplay.profileDisplayName(effectiveProfile),
-                    configScope = activeVoiceScope,
-                    outputEnabled = activeVoiceEnabled,
-                    fallbackEnabled = voiceOutputConfig?.fallback_enabled,
-                    onStartListening = { voiceViewModel.startListening() },
-                    onStopListening = { voiceViewModel.stopListening() },
-                    onInterrupt = { voiceViewModel.interruptSpeaking() },
-                    onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
-                    onReturnToHermes = {
-                        openHermesFromOverlay(context)
-                        voiceOverlayHost.hide()
-                    },
-                    onDismissOverlay = { voiceOverlayHost.hide() },
-                    onExit = {
-                        voiceOverlayHost.hide()
-                        voiceViewModel.exitVoiceMode()
-                    },
-                ),
-            )
-            if (!shown) {
-                scope.launch {
-                    snackbarHostState.showSnackbar(
-                        message = context.getString(R.string.chat_overlay_start_failed),
-                        duration = SnackbarDuration.Short,
-                    )
-                }
-            }
         }
+    }
+    if (pendingVoiceOverlayPermission && voiceUiState.voiceMode && !assistantSessionActive) {
+        com.hermesandroid.relay.voice.VoiceOverlaySetupDialog(
+            onDismiss = { pendingVoiceOverlayPermission = false },
+            onBeforePermission = { voiceViewModel.pauseContinuousMode() },
+            onStart = {
+                pendingVoiceOverlayPermission = false
+                val shown = voiceOverlayHost.show(
+                    VoiceOverlaySession(
+                        uiState = voiceViewModel.uiState,
+                        engineMode = voiceStats.voiceEngineMode,
+                        connectionLabel = activeConnection?.label,
+                        provider = activeVoiceProvider,
+                        model = activeVoiceModel,
+                        voice = activeVoiceName,
+                        profileName = AgentDisplay.profileDisplayName(effectiveProfile),
+                        configScope = activeVoiceScope,
+                        outputEnabled = activeVoiceEnabled,
+                        fallbackEnabled = voiceOutputConfig?.fallback_enabled,
+                        onStartListening = { voiceViewModel.startListening() },
+                        onStopListening = { voiceViewModel.stopListening() },
+                        onInterrupt = { voiceViewModel.interruptSpeaking() },
+                        onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
+                        onReturnToHermes = {
+                            if (!openHermesFromOverlay(context)) voiceOverlayHost.exitVoiceSession()
+                        },
+                        onDismissOverlay = { voiceOverlayHost.exitVoiceSession() },
+                        onExit = { voiceViewModel.exitVoiceMode() },
+                    ),
+                    lifecycleOwner.lifecycle,
+                )
+                if (!shown) {
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = context.getString(R.string.chat_overlay_start_failed),
+                            duration = SnackbarDuration.Short,
+                        )
+                    }
+                }
+            },
+        )
     }
 
     LaunchedEffect(voiceUiState.voiceMode) {
@@ -1745,37 +1733,6 @@ fun ChatScreen(
             voiceOverlayHost.hide()
             pendingVoiceOverlayPermission = false
         }
-    }
-
-    DisposableEffect(
-        lifecycleOwner,
-        pendingVoiceOverlayPermission,
-        voiceUiState.voiceMode,
-        voiceOutputConfig,
-        realtimeAgentConfig,
-        voiceStats.voiceEngineMode,
-    ) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME && pendingVoiceOverlayPermission) {
-                when {
-                    voiceOverlayHost.hasOverlayPermission() && voiceUiState.voiceMode -> {
-                        showVoiceSystemOverlay()
-                    }
-                    !voiceOverlayHost.hasOverlayPermission() -> {
-                        pendingVoiceOverlayPermission = false
-                        scope.launch {
-                            snackbarHostState.showSnackbar(
-                                message = context.getString(R.string.chat_overlay_perm_denied),
-                                duration = SnackbarDuration.Short,
-                            )
-                        }
-                    }
-                    else -> pendingVoiceOverlayPermission = false
-                }
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     LaunchedEffect(voiceClient, voiceUiState.voiceMode, selectedProfile?.name) {

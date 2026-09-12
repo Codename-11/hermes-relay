@@ -86,6 +86,10 @@ fun PermissionsStatusScreen(
     onBack: () -> Unit,
     onOpenBridge: () -> Unit = {},
 ) {
+    var showVoiceOverlaySetup by remember { mutableStateOf(false) }
+    if (showVoiceOverlaySetup) com.hermesandroid.relay.voice.VoiceOverlaySetupDialog(
+        onDismiss = { showVoiceOverlaySetup = false },
+    )
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var status by remember { mutableStateOf(AppPermissionStatusProbe.snapshot(context)) }
@@ -206,6 +210,21 @@ fun PermissionsStatusScreen(
                     statusLabel = optionalStatus(context, status.notificationListenerPermitted),
                     granted = status.notificationListenerPermitted,
                     onClick = { openNotificationListenerSettings(context) },
+                )
+            }
+
+            PermissionSection(
+                title = stringResource(R.string.voice_overlay_setup_title),
+                subtitle = stringResource(R.string.voice_overlay_settings_hint),
+            ) {
+                PermissionStatusRow(
+                    icon = Icons.Filled.PictureInPicture,
+                    title = stringResource(R.string.perms_display_over_apps),
+                    subtitle = stringResource(R.string.voice_overlay_setup_body),
+                    badge = stringResource(R.string.perms_badge_optional),
+                    statusLabel = optionalStatus(context, status.overlayPermitted),
+                    granted = status.overlayPermitted,
+                    onClick = { showVoiceOverlaySetup = true },
                 )
             }
 

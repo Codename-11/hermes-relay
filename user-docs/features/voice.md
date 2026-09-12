@@ -547,3 +547,9 @@ provider (ElevenLabs, OpenAI, Groq, Mistral), your audio goes to them. If you're
 using local providers (faster-whisper, NeuTTS, Edge TTS), nothing leaves your network.
 
 The mp3 files returned from `/voice/synthesize` are cached briefly in the app's cache directory and cleared automatically as new ones arrive (capped at 6 at a time). On the server side, the relay writes each `/voice/synthesize` render to a private temp file and deletes it after streaming, so relay synthesis no longer accumulates files in `~/voice-memos/` (other Hermes agent voice features may still use that directory).
+
+## Voice over other apps
+
+Voice Overlay is optional in both builds. Start it explicitly from Voice Focus while Hermes-Relay is visible and unlocked. It requires microphone access, display-over-other-apps access and an enabled microphone notification with Stop voice. Audio goes to the configured Hermes server; the overlay does not read or control other apps. Stop voice, closing the overlay, screen lock, task removal or loss of required access ends the overlay voice session. Returning to the app keeps foreground protection until the app is resumed. Granting permissions never starts a session.
+
+Open **Chat → Voice Focus → Overlay**. Review the explanation, grant only the missing permissions in Android, return, and tap **Start voice overlay**. Permission refusal leaves in-app voice available. Review access later in **Settings → Voice → Listening** or **Settings → Permissions**. The expanded panel can reset its position. Every panel size exposes Stop voice.

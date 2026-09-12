@@ -4521,4 +4521,11 @@
     <string name="chat_activity_history_notice">已记录的活动。进度更新不会保留；可用的子代理历史记录可以以只读方式打开。</string>
     <string name="chat_activity_output_unavailable">输出已不可用。此条目保留了记录的进程状态。</string>
     <string name="profile_follow_server_default">跟随服务器默认配置</string>
+
+    <!-- User-started voice overlay, independent of Device Control. -->
+    <string name="voice_overlay_setup_title">在其他应用上使用语音</string>
+    <string name="voice_overlay_setup_body">在其他应用上保持语音控件可见。音频会发送到你配置的 Hermes 服务器。这不会授权读取屏幕或控制手机。请在 Android 设置中允许显示在其他应用上层，然后返回此处。必须启用带有停止操作的麦克风通知。关闭悬浮窗或锁定屏幕会结束语音会话。</string>
+    <string name="voice_overlay_setup_start">启动语音悬浮窗</string>
+    <string name="voice_overlay_settings_hint">两个版本均可选择使用。在聊天的语音专注模式中选择悬浮窗。仅授予权限不会开始监听。</string>
+    <string name="voice_overlay_reset_position">重置位置</string>
 </resources>

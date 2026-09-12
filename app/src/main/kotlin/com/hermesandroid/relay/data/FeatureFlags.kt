@@ -96,7 +96,8 @@ object FeatureFlags {
  * flavor ships AccessibilityService-backed Device Control. The `googlePlay`
  * flavor is Bridge Core: relay pairing, chat, voice, terminal, notification
  * companion, media, and session-grant surfaces without screen reading, taps,
- * typing, screenshots, overlays, or unattended control.
+ * typing, MediaProjection screenshots, or unattended control. Voice-only overlay
+ * presentation is a separate capability shared by both flavors.
  *
  * Device Control tier definitions (see `Phase 3 — Bridge Channel.md`):
  *   1. baseline          — sideload only (app open, tap, navigate within app)
@@ -125,6 +126,9 @@ object BuildFlavor {
      * of crashing on a missing permission declaration.
      */
     val isSideload: Boolean get() = current == SIDELOAD
+
+    /** Voice presentation does not grant Device Control. Unknown distributions fail closed. */
+    val voiceSystemOverlay: Boolean get() = current == GOOGLE_PLAY || current == SIDELOAD
 
     val bridgeTier1: Boolean get() = current == SIDELOAD         // baseline device control
     val bridgeTier2: Boolean get() = current == SIDELOAD         // screen context

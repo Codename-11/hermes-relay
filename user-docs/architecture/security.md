@@ -95,7 +95,7 @@ On sideload, `/ping`, `/current_app`, and `/return_to_hermes` — liveness, intr
 
 ### Sideload-only permissions
 
-The `sideload` build ships a fourth tier of phone-utility tools (`/location`, `/search_contacts`, `/call`, `/send_sms`) that require runtime permissions Google Play's policy forbids without a default-dialer / default-SMS-app justification. These are compiled out of the `googlePlay` build entirely; picking which flavor to install is itself a trust decision.
+The `sideload` build ships a fourth tier of phone-utility tools (`/location`, `/search_contacts`, `/call`, `/send_sms`) that remain outside the Play product boundary. SMS has default-handler/approved-use restrictions; contacts, location and direct calling have separate permission requirements. These are compiled out of the `googlePlay` build entirely; picking which flavor to install is itself a trust decision.
 
 ### Activity log
 

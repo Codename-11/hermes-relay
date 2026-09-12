@@ -4597,4 +4597,11 @@
     <string name="chat_activity_history_notice">Gespeicherte Aktivität. Fortschrittsmeldungen werden nicht gespeichert; der verfügbare Verlauf der Unteragenten kann schreibgeschützt geöffnet werden.</string>
     <string name="chat_activity_output_unavailable">Die Ausgabe ist nicht mehr verfügbar. Dieser Eintrag enthält den gespeicherten Prozessstatus.</string>
     <string name="profile_follow_server_default">Serverstandard folgen</string>
+
+    <!-- User-started voice overlay, independent of Device Control. -->
+    <string name="voice_overlay_setup_title">Sprache über anderen Apps</string>
+    <string name="voice_overlay_setup_body">Sprachsteuerung bleibt über anderen Apps sichtbar. Audio geht an deinen konfigurierten Hermes-Server. Dies erlaubt weder Bildschirmlesen noch Telefonsteuerung. Erlaube die Anzeige über anderen Apps in den Android-Einstellungen und kehre zurück. Eine Mikrofonbenachrichtigung mit Stopp-Aktion ist erforderlich. Schließen des Overlays oder Sperren des Bildschirms beendet die Sprachsitzung.</string>
+    <string name="voice_overlay_setup_start">Sprach-Overlay starten</string>
+    <string name="voice_overlay_settings_hint">In beiden Versionen optional. Öffne den Sprachfokus im Chat und wähle Overlay. Berechtigungen allein starten kein Zuhören.</string>
+    <string name="voice_overlay_reset_position">Position zurücksetzen</string>
 </resources>

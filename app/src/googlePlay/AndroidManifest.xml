@@ -8,7 +8,7 @@
     Google Play ships Hermes Bridge Core only. It intentionally does not merge
     any Device Control services or permissions.
 
-    This file is intentionally kept as an empty overlay so future flavor-specific
+    This overlay owns the voice-only special access so future flavor-specific
     permissions / activities have an obvious home. Mirror structural additions
     in `app/src/sideload/AndroidManifest.xml` unless the change is intentionally
     track-specific.
@@ -21,6 +21,9 @@
     <uses-permission
         android:name="android.permission.WAKE_LOCK"
         tools:node="remove" />
+
+    <!-- User-started voice controls only; does not enable Device Control. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application />
 

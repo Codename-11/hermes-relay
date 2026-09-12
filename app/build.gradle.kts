@@ -100,9 +100,9 @@ android {
     }
 
     // ─── Bridge release tracks ─────────────────────────────────────────────────
-    // Google Play ships Bridge Core only: pairing, chat, voice, terminal/TUI,
+    // Google Play ships Bridge Core and user-started voice-only overlay: pairing, chat, voice, terminal/TUI,
     // media, notification companion, relay sessions, and status. It does not
-    // declare AccessibilityService, overlay, MediaProjection, wake-lock device
+    // declare AccessibilityService, MediaProjection, wake-lock device
     // control, SMS/call/contact/location, or unattended-control permissions.
     //
     //   googlePlay  — canonical Play Store install. Bridge Core only.

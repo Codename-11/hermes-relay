@@ -582,6 +582,7 @@ fun VoiceSettingsScreen(
                 }
 
                 VoiceSettingsSection.Listening -> {
+                    com.hermesandroid.relay.voice.VoiceOverlaySettingsCard()
                     GlobalVoiceControlsCard(
                         voiceSettings = voiceSettings,
                         prefsRepo = prefsRepo,
