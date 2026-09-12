@@ -601,30 +601,35 @@ private fun ExpandedVoiceOverlayBody(
         }
 
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.62f))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        val actions: @Composable (Modifier) -> Unit = { actionModifier ->
             VoiceOverlayAction(
                 icon = Icons.Filled.ExpandMore,
                 label = stringResource(R.string.voice_overlay_minimize),
                 onClick = onMinimize,
-                modifier = Modifier.weight(1f),
+                modifier = actionModifier,
             )
             VoiceOverlayAction(
                 icon = Icons.Filled.GraphicEq,
                 label = stringResource(R.string.voice_overlay_reset_position),
                 onClick = session.onResetPosition,
-                modifier = Modifier.weight(1f),
+                modifier = actionModifier,
             )
             VoiceOverlayAction(
                 icon = Icons.AutoMirrored.Filled.OpenInNew,
                 label = stringResource(R.string.voice_overlay_open_hermes),
                 onClick = session.onReturnToHermes,
-                modifier = Modifier.weight(1f),
+                modifier = actionModifier,
             )
+        }
+        val actionContainer = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)
+        val stackActions = androidx.compose.ui.platform.LocalDensity.current.fontScale > 1.2f &&
+            LocalConfiguration.current.screenWidthDp < 360
+        if (stackActions) {
+            Column(modifier = actionContainer) { actions(Modifier.fillMaxWidth()) }
+        } else {
+            Row(modifier = actionContainer, verticalAlignment = Alignment.CenterVertically) {
+                actions(Modifier.weight(1f))
+            }
         }
     }
 }
