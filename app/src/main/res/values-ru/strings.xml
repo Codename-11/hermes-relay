@@ -4336,4 +4336,11 @@
     <string name="chat_activity_history_notice">Сохранённая активность. Обновления хода работы не сохраняются; доступную историю субагентов можно открыть только для чтения.</string>
     <string name="chat_activity_output_unavailable">Вывод больше недоступен. Эта запись сохраняет зафиксированное состояние процесса.</string>
     <string name="profile_follow_server_default">Следовать профилю сервера по умолчанию</string>
+
+    <!-- User-started voice overlay, independent of Device Control. -->
+    <string name="voice_overlay_setup_title">Голос поверх других приложений</string>
+    <string name="voice_overlay_setup_body">Голосовые элементы управления видны поверх другого приложения. Аудио отправляется на настроенный сервер Hermes. Это не разрешает чтение экрана или управление телефоном. Разрешите показ поверх приложений в настройках Android и вернитесь сюда. Требуется уведомление микрофона с кнопкой остановки. Закрытие окна или блокировка экрана завершает голосовой сеанс.</string>
+    <string name="voice_overlay_setup_start">Начать голосовой оверлей</string>
+    <string name="voice_overlay_settings_hint">Необязательно в обеих сборках. Откройте голосовой фокус в чате и выберите оверлей. Одни разрешения никогда не включают прослушивание.</string>
+    <string name="voice_overlay_reset_position">Сбросить положение</string>
 </resources>

@@ -4,7 +4,7 @@ Hermes-Relay connects only to your own machines — no cloud accounts, no hosted
 
 ## Track split
 
-- **Google Play:** Bridge Core only — chat, voice, standard inbound files, terminal/TUI relay, notification companion, Relay media enhancements, relay sessions, and status. No AccessibilityService, screen reading, taps, typing, screenshots, SMS, calls, contacts, location, overlay, or unattended phone control.
+- **Google Play:** Bridge Core only — chat, voice, standard inbound files, terminal/TUI relay, notification companion, Relay media enhancements, relay sessions, and status. No AccessibilityService or MediaProjection Device Control, taps, typing, SMS, calls, contacts, location, or unattended phone control. Voice-only overlays and bounded user-invoked Android Assistant context are separate optional capabilities.
 - **Sideload:** Device Control — the separate sideload track can include AccessibilityService-backed phone control and the extra Android permissions needed for that surface.
 
 ## What stays on your phone
@@ -48,3 +48,9 @@ From **Settings**, you can export a full connection backup, import a backup, or 
 ## Open source
 
 All code is [MIT licensed](https://github.com/Codename-11/hermes-relay) and publicly auditable. See the full [privacy policy](https://hermes-relay.dev/privacy.html).
+
+## Voice Overlay
+
+Voice Overlay is optional in both builds. Start it explicitly from Voice Focus while Hermes-Relay is visible and unlocked. It requires microphone access, display-over-other-apps access and an enabled microphone notification with Stop voice. Audio goes to the configured Hermes server; the overlay does not read or control other apps. Stop voice, closing the overlay, screen lock, task removal or loss of required access ends the overlay voice session. Returning to the app keeps foreground protection until the app is resumed. Granting permissions never starts a session.
+
+If Hermes-Relay is selected as Android’s Digital Assistant, a compatible explicit unlocked assistant-button invocation may include bounded visible text and an available screenshot in one Standard voice turn sent to the configured Hermes server and AI provider. Ordinary wake and keyguard invocations do not request screen context.

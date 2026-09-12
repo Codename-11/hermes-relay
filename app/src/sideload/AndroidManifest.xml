@@ -17,11 +17,10 @@
     <!--
         Tier C (C1-C4) sideload-only permissions.
 
-        These are deliberately NOT declared in the main manifest: Google Play
-        policy forbids CALL_PHONE / SEND_SMS / READ_CONTACTS without a default-
-        dialer / default-SMS-app justification, and ACCESS_FINE_LOCATION is
-        flagged alongside auto-dial on the `googlePlay` track. The `sideload`
-        flavor is the only track that ships them.
+        These are deliberately kept outside Play's voice-only capability surface.
+        SMS permissions require an eligible default-handler/approved use on Play;
+        contacts, foreground location and CALL_PHONE have distinct requirements.
+        Their omission here is a product boundary, not a blanket permission ban.
 
         Each of the four `android_*` tools (location, search_contacts, call,
         send_sms) runtime-checks the corresponding permission in

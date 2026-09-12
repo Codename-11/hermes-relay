@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-DEFAULT_PACKAGE = "com.axiomlabs.hermesrelay.sideload"
+DEFAULT_PACKAGE = "com.axiomlabs.hermesrelay"
 REMOTE_UI = "/sdcard/hermes-fgs-demo.xml"
 REMOTE_VIDEO = "/sdcard/hermes-fgs-demo.mp4"
 
@@ -420,6 +420,8 @@ def main() -> int:
         demo.tap_selector(description="Start voice conversation", settle=1)
         demo.tap_selector(description="Expand voice controls", settle=0.7)
         demo.tap_selector(text="Overlay", settle=1.5)
+        # Grant required access manually before recording; never automate consent.
+        demo.tap_selector(text="Start voice overlay", settle=1.5)
         demo.home()
         demo.pause(3)
         nodes, _ = demo.wait_for_notification("Hermes voice overlay active")

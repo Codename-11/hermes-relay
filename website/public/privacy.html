@@ -31,15 +31,15 @@
   <body>
     <main>
       <h1>Privacy Policy</h1>
-      <p><strong>Hermes-Relay</strong> · Effective date: July 18, 2026</p>
+      <p><strong>Hermes-Relay</strong> · Effective date: September 12, 2026</p>
 
       <section class="summary">
         <h2>Summary</h2>
-        <p>Hermes-Relay does not collect, transmit, or share personal data with third parties. The app connects only to servers that you configure. There are no accounts, no hosted Hermes-Relay cloud service, and no externally transmitted analytics.</p>
+        <p>Hermes-Relay has no hosted cloud service and sends no analytics. Chat, voice, attachments, notifications and optional Android Assistant screen context are sent to servers you configure. Those servers may send content to your configured AI providers.</p>
       </section>
 
       <h2>Google Play build</h2>
-      <p>The Google Play build ships Hermes Bridge Core: chat, voice, standard inbound files, terminal and TUI relay, notification companion, Relay media enhancements, relay sessions, and status. It does not include AccessibilityService-based Device Control and cannot read your screen, tap, type, swipe, capture screenshots, send SMS, place calls, access contacts or location, or perform unattended phone control.</p>
+      <p>The Google Play build ships Hermes Bridge Core: chat, voice, standard inbound files, terminal and TUI relay, notification companion, Relay media enhancements, relay sessions, and status. It does not include AccessibilityService or MediaProjection Device Control and cannot tap, type, swipe, send SMS, place calls, access contacts or location, or perform unattended phone control. If Hermes-Relay is selected as Android’s Digital Assistant, a compatible explicit unlocked assistant-button invocation may include bounded visible text and an available screenshot in one Standard voice turn sent to the configured Hermes server and AI provider. Ordinary wake and keyguard invocations do not request screen context.</p>
       <p>The sideload build is a separate distribution track for users who intentionally install Device Control outside Google Play.</p>
 
       <h2>Data storage</h2>
@@ -51,6 +51,7 @@
           <tr><td>API keys and relay session tokens</td><td>AES-256-GCM encryption via Android Keystore</td></tr>
           <tr><td>Performance counters</td><td>Android DataStore (local only)</td></tr>
           <tr><td>Notification trigger rules and activity log</td><td>Android DataStore (local only)</td></tr>
+          <tr><td>Pending Android Assistant context</td><td>App-private cache until one turn is accepted, cancellation/session exit, or one-hour stale cleanup; failed preflight retains it for retry</td></tr>
         </tbody>
       </table>
       <p>Chat messages are not cached on your device. They are loaded from your Hermes server on demand and exist only in memory while the app is running.</p>
@@ -59,6 +60,9 @@
       <p>The app connects only to endpoints you configure: your Hermes Dashboard/Gateway for standard chat, management, voice, and inbound files; your optional API server for chat fallback; your relay server for terminal and TUI relay, Bridge Core status, explicit Relay media enhancements, notification companion, and session management; and your relay voice routes when you use enhanced Voice modes.</p>
       <p>No connections are made to Google, Anthropic, or any other third-party service by the app. There is no telemetry, advertising, external crash reporting, DNS prefetching, or background network activity to hosted Hermes-Relay services. Your Hermes server may separately connect to AI providers according to its configuration; that server-side activity is outside the scope of this app.</p>
 
+      <h2>Voice Overlay</h2>
+      <p>Voice Overlay is optional in both builds. Start it explicitly from Voice Focus while Hermes-Relay is visible and unlocked. It requires microphone access, display-over-other-apps access and an enabled microphone notification with Stop voice. Audio goes to the configured Hermes server; the overlay does not read or control other apps. Stop voice, closing the overlay, screen lock, task removal or loss of required access ends the overlay voice session. Returning to the app keeps foreground protection until the app is resumed. Granting permissions never starts a session.</p>
+
       <h2>Permissions</h2>
       <table>
         <thead><tr><th>Permission or access</th><th>Purpose</th><th>Required</th></tr></thead>
@@ -66,7 +70,9 @@
           <tr><td>Internet</td><td>Connect to your Hermes servers</td><td>Yes</td></tr>
           <tr><td>Network state</td><td>Detect connectivity for reconnect behavior</td><td>Yes</td></tr>
           <tr><td>Camera</td><td>QR code scanning for server pairing</td><td>No</td></tr>
-          <tr><td>Microphone</td><td>Voice mode speech-to-text</td><td>No</td></tr>
+          <tr><td>Microphone</td><td>Voice, Voice Overlay and opt-in local wake detection</td><td>No</td></tr>
+          <tr><td>Display over other apps</td><td>User-started voice controls only</td><td>No</td></tr>
+          <tr><td>Android Digital Assistant role</td><td>Optional assistant invocation and bounded one-turn screen context</td><td>No</td></tr>
           <tr><td>Notification access</td><td>Optional notification companion metadata forwarding to your paired relay</td><td>No</td></tr>
         </tbody>
       </table>

@@ -4288,4 +4288,11 @@
     <string name="chat_activity_history_notice">Actividad registrada. No se conservan las actualizaciones de progreso; el historial disponible de los subagentes se puede abrir en modo de solo lectura.</string>
     <string name="chat_activity_output_unavailable">La salida ya no está disponible. Esta entrada conserva el estado registrado del proceso.</string>
     <string name="profile_follow_server_default">Seguir el perfil predeterminado del servidor</string>
+
+    <!-- User-started voice overlay, independent of Device Control. -->
+    <string name="voice_overlay_setup_title">Voz sobre otras apps</string>
+    <string name="voice_overlay_setup_body">Mantén los controles de voz visibles sobre otra app. El audio se envía a tu servidor Hermes configurado. Esto no permite leer la pantalla ni controlar el teléfono. Permite mostrar sobre otras apps en los ajustes de Android y vuelve aquí. Se requiere una notificación del micrófono con Detener voz. Cerrar la ventana o bloquear la pantalla termina la sesión de voz.</string>
+    <string name="voice_overlay_setup_start">Iniciar ventana de voz</string>
+    <string name="voice_overlay_settings_hint">Opcional en ambas versiones. Abre el enfoque de voz en Chat y elige Superposición. Los permisos por sí solos nunca inician la escucha.</string>
+    <string name="voice_overlay_reset_position">Restablecer posición</string>
 </resources>

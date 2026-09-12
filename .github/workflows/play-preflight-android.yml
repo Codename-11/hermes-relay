@@ -106,6 +106,9 @@ jobs:
             :app:assembleSideloadRelease \
             --console=plain
 
+      - name: Verify Play capability manifest
+        run: python3 scripts/check-android-capabilities.py --variant googlePlayRelease
+
       - name: Scan final release DEX
         run: |
           python3 scripts/check-android-collection-apis.py \

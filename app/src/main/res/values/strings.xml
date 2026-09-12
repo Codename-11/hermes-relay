@@ -4655,4 +4655,11 @@
     <string name="dev_message_clear" translatable="false">Clear previews</string>
     <string name="dev_message_clear_desc" translatable="false">Dismiss only these samples; real app messages are preserved.</string>
     <string name="profile_follow_server_default">Follow server default</string>
+
+    <!-- User-started voice overlay, independent of Device Control. -->
+    <string name="voice_overlay_setup_title">Voice over other apps</string>
+    <string name="voice_overlay_setup_body">Keep voice controls visible while using another app. Audio goes to your configured Hermes server. This does not grant screen reading or phone control. Allow display over other apps in Android Settings, then return here. A microphone notification with Stop voice is required. Closing the overlay or locking the screen ends this voice session.</string>
+    <string name="voice_overlay_setup_start">Start voice overlay</string>
+    <string name="voice_overlay_settings_hint">Optional in both builds. Open Voice Focus in Chat and choose Overlay to start. Permissions alone never start listening.</string>
+    <string name="voice_overlay_reset_position">Reset position</string>
 </resources>

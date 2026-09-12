@@ -23,7 +23,7 @@ GOOGLE PLAY AND SIDELOAD
 
 The Google Play build includes Chat, voice, sessions, Manage, profiles, notifications, media, and Terminal/TUI when the Hermes-Relay plugin is paired.
 
-Google Play does not include Android Device Control. It cannot read the phone screen, tap, type, swipe, take device screenshots, send SMS, place calls, or access contacts or location.
+Google Play does not include Android Device Control. It cannot tap, type, swipe, send SMS, place calls, or access contacts or location. Optional Voice Overlay provides user-started voice controls over other apps, with microphone notification and Stop voice. Selecting Hermes as Android Digital Assistant can provide bounded screen text and a screenshot for an explicit unlocked assistant invocation; this context goes to your configured server and AI provider.
 
 Device Control is available only in the signed Sideload build on this project's GitHub Releases. It requires the Sideload app, a paired Hermes-Relay plugin, explicit Android accessibility permission, and the app's safety controls.
 
@@ -32,9 +32,6 @@ FEATURES
 - Streaming Chat with reasoning, markdown, tool progress, attachments, mid-turn steering, edit-and-resend, and searchable commands.
 - Manage models and provider keys, edit profiles, and browse, install, or update skills through the Hermes Dashboard.
 - Hands-free voice through your server's speech providers. Hermes-Relay pairing adds per-profile voices and an experimental realtime engine.
-- Create, switch, search, rename, pin, archive, and continue sessions.
-- Connect multiple Hermes servers and switch in one tap; add LAN, Tailscale, or public routes.
-- Pair the Hermes-Relay plugin for Terminal/TUI, notifications, media, enhanced voice, Relay sessions, and per-feature grants.
 - Inspect connection readiness, routes, response timing, token usage, and stream health without exposing credentials.
 
 SECURITY AND PRIVACY

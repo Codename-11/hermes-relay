@@ -4592,4 +4592,11 @@
     <string name="chat_activity_history_notice">記録されたアクティビティです。進捗の更新は保存されません。利用可能なサブエージェントの履歴は読み取り専用で開けます。</string>
     <string name="chat_activity_output_unavailable">出力は利用できなくなりました。この項目には記録されたプロセスの状態が残っています。</string>
     <string name="profile_follow_server_default">サーバーのデフォルトに従う</string>
+
+    <!-- User-started voice overlay, independent of Device Control. -->
+    <string name="voice_overlay_setup_title">他のアプリ上で音声を使用</string>
+    <string name="voice_overlay_setup_body">他のアプリ上に音声操作を表示します。音声は設定したHermesサーバーに送信されます。画面の読み取りや端末操作は許可されません。Androidの設定で他のアプリ上への表示を許可し、ここに戻ってください。停止操作付きのマイク通知が必要です。表示を閉じるか画面をロックすると音声セッションは終了します。</string>
+    <string name="voice_overlay_setup_start">音声オーバーレイを開始</string>
+    <string name="voice_overlay_settings_hint">両方のビルドで任意に利用できます。チャットの音声フォーカスでオーバーレイを選択します。権限の付与だけで録音は始まりません。</string>
+    <string name="voice_overlay_reset_position">位置をリセット</string>
 </resources>

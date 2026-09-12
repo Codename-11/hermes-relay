@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Optional voice controls over other apps in Google Play, with contextual permission setup, a persistent Stop voice notification, and session shutdown on screen lock or permission loss. Phone control remains sideload-only.
+
 ### Fixed
 
 - Android shows Hermes profile display names and groups the resolved server default under its agent identity, while preserving explicit profile selection and saved conversations.

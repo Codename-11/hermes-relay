@@ -34,6 +34,8 @@ on:
       - "scripts/check-android-locales.py"
       - "scripts/android-locale-harness.py"
       - "scripts/check-android-collection-apis.py"
+      - "scripts/check-android-capabilities.py"
+      - "scripts/tests/check_android_capabilities_test.py"
       - "scripts/check-android-native-compat.py"
       - "scripts/check-android-release-notes.py"
       - "scripts/tests/check_android_native_compat_test.py"
@@ -72,6 +74,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v6.3.0
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+
+      - name: Validate Play capability boundary
+        run: |
+          python3 scripts/check-android-capabilities.py
+          python3 -m unittest scripts.tests.check_android_capabilities_test
 
       - name: Validate translation catalogs
         run: python3 scripts/check-android-locales.py
@@ -116,6 +123,9 @@ jobs:
 
       - name: Build debug APK
         run: ./gradlew assembleDebug --console=plain
+
+      - name: Verify Play capability manifest
+        run: python3 scripts/check-android-capabilities.py --variant googlePlayDebug
 
       - name: Verify packaged ONNX Runtime compatibility
         run: |

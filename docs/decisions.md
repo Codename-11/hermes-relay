@@ -4411,3 +4411,36 @@ approval bypass.
 - `.github/workflows/approve-release-train.yml`
 - `scripts/android_release_artifacts.py`
 - `scripts/android-prepush.py`
+
+
+## ADR 74 — Play voice overlay is independent of phone control
+
+**Status:** Accepted (2026-09-12).
+
+Voice Focus and a user-started voice-only system overlay are shared presentation
+surfaces. `SYSTEM_ALERT_WINDOW` is special access, not permission to read or drive
+other apps. Play retains the no-op voice bridge handler, unsupported Device Control
+status, absent accessibility/projection services and closed bridge-command gate.
+
+The overlay requires a resumed, unlocked Activity action and microphone,
+notification and overlay access. Permission grants never start listening. Its
+session identifier fences queued starts and old notification actions. The window
+is attached only after microphone foreground promotion succeeds. The existing
+voice runtime remains the sole microphone owner; no second recorder is created.
+
+Stop/close, screen lock, task removal, permission loss and service/window failure
+end the voice session. Returning to the Activity releases overlay protection only
+after it resumes. The session is not persisted or restarted by background callers.
+Existing independent opt-in wake/Assistant settings are not changed by overlay use.
+
+Play's autonomous Accessibility Device Control boundary remains sideload-only.
+User-mediated MediaProjection and phone compose/picker actions are separate future
+features, not implicitly enabled by this decision. Standard voice remains upstream
+Dashboard/Gateway-owned and never requires Relay. Google Play declaration, live
+privacy/listing publication and physical-device certification are release gates,
+not consequences of merging this change.
+
+Source and merged-manifest validation enforce this boundary. Foreground-service
+lifecycle tests and rendered permission/Stop controls supplement, but do not
+replace, device tests or a reviewed Play test-track submission. See
+[Play declarations](play-store-listing.md#voice-overlay-review-before-production).

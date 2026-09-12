@@ -21,6 +21,9 @@ REQUIRED_MARKERS = (
     "Data export and deletion",
     "Children's privacy",
     "Hermes-Relay issue tracker",
+    "Voice Overlay",
+    "Android Digital Assistant",
+    "Stop voice",
 )
 
 
@@ -28,6 +31,9 @@ def validate_content(label: str, content: str) -> None:
     missing = [marker for marker in REQUIRED_MARKERS if marker not in content]
     if missing:
         raise ValueError(f"{label} is missing required markers: {', '.join(missing)}")
+    for obsolete in ("cannot read your screen", "does not collect, transmit, or share personal data"):
+        if obsolete in content:
+            raise ValueError(f"{label} has an obsolete blanket privacy claim: {obsolete}")
 
 
 def validate_repository() -> None:

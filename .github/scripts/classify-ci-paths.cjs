@@ -17,6 +17,7 @@ function classifyCiPaths(paths) {
     android: forceAll || under(['app/', 'gradle/']) || exact([
       'build.gradle.kts', 'settings.gradle.kts', 'gradle.properties', 'gradlew', 'gradlew.bat',
       'scripts/check-android-locales.py', 'scripts/android-locale-harness.py',
+      'scripts/check-android-capabilities.py', 'scripts/tests/check_android_capabilities_test.py',
       'scripts/check-android-collection-apis.py', 'scripts/check-android-native-compat.py',
       'scripts/check-android-release-notes.py',
       'scripts/android_release_artifacts.py',

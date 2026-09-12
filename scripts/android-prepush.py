@@ -21,6 +21,9 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 FOCUSED_TESTS = (
+    "com.hermesandroid.relay.voice.VoiceOverlayLifecycleTest",
+    "com.hermesandroid.relay.voice.VoiceOverlayForegroundServiceTest",
+    "com.hermesandroid.relay.voice.VoiceOverlayPresentationTest",
     "com.hermesandroid.relay.network.ArchitectureBoundaryTest",
     "com.hermesandroid.relay.network.relay.RelayUrlDeriverTest",
     "com.hermesandroid.relay.viewmodel.ConnectionSwitchTest",
@@ -45,6 +48,7 @@ RELEASE_PREP_TESTS = (
     "com.hermesandroid.relay.screenshots.WhatsNewToastScreenshotTest",
 )
 REPOSITORY_CHECKS = (
+    "check-android-capabilities.py",
     "check-android-locales.py",
     "check-user-docs-locales.py",
     "check-android-collection-apis.py",

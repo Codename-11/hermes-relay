@@ -6,7 +6,7 @@ description: Privacy policy for the Hermes-Relay Android app
 
 # Privacy Policy
 
-**Hermes-Relay** · Effective date: July 18, 2026
+**Hermes-Relay** · Effective date: September 12, 2026
 
 Hermes-Relay is a native Android app that connects to your own [Hermes Agent](https://github.com/NousResearch/hermes-agent) host. This policy describes how the app handles your data.
 
@@ -64,6 +64,7 @@ Google Play build:
 | Network State | Detect connectivity for reconnect behavior | Yes |
 | Camera | QR code scanning for server pairing | No |
 | Microphone | Voice mode speech-to-text and opt-in local “Hey Hermes” detection | No |
+| Display over other apps | Optional user-started Voice Overlay, with microphone notification and Stop voice | No |
 | Notification Access | Optional notification companion metadata forwarding to your paired relay | No |
 | Android Digital Assistant role | Optional assistant session; compatible unlocked assistant-button invocations may include one-turn screen context | No |
 
@@ -75,7 +76,9 @@ microphone while the mode is enabled. Pre-activation wake audio is not sent to
 Hermes, Relay, or a hosted service. The Digital Assistant listener and the
 notification-based experimental listener cannot be active together.
 
-Sideload Device Control builds may request additional permissions for overlay, foreground service, wake lock, screenshots, contacts, location, SMS, and calls. Those permissions are not present in the Google Play build.
+Both builds declare foreground-service permissions for user-started voice and connection tasks. Both offer an optional voice-only overlay. Sideload Device Control adds accessibility, wake lock, MediaProjection screenshots, contacts, location, SMS and calls; these Device Control permissions are absent from Play.
+
+Voice Overlay is optional in both builds. Start it explicitly from Voice Focus while Hermes-Relay is visible and unlocked. It requires microphone access, display-over-other-apps access and an enabled microphone notification with Stop voice. Audio goes to the configured Hermes server; the overlay does not read or control other apps. Stop voice, closing the overlay, screen lock, task removal or loss of required access ends the overlay voice session. Returning to the app keeps foreground protection until the app is resumed. Granting permissions never starts a session.
 
 ## Third-Party Services
 

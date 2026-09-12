@@ -128,3 +128,6 @@ assert.match(releaseTrainWorkflow, /name: Hermes-Relay Coordinated Release Appro
 assert.match(releaseTrainWorkflow, /Coordinated Android approval is stable-only/);
 
 console.log('CI path classification tests passed.');
+
+assert.deepEqual(classifyCiPaths(['scripts/check-android-capabilities.py']), { ...none, android: true });
+assert.deepEqual(classifyCiPaths(['scripts/tests/check_android_capabilities_test.py']), { ...none, android: true });
