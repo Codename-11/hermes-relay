@@ -351,14 +351,18 @@ internal class HermesRuntimeBinder(
                 connection.activeConnectionId,
                 connection.effectiveSessionProfileName,
                 connection.lastSessionId,
-                connection.activeEndpoint,
-            ) { ready, connectionId, profileName, sessionId, activeEndpoint ->
+                // The session directory belongs to the standard Dashboard
+                // route. connection.activeEndpoint is the optional Relay
+                // socket's selected candidate and stays null on a valid
+                // Dashboard-only LAN connection.
+                connection.effectiveDashboardUrl,
+            ) { ready, connectionId, profileName, sessionId, dashboardUrl ->
                 ProfileContextInputs(
                     ready,
                     connectionId,
                     profileName,
                     sessionId,
-                    dashboardRouteResolved = activeEndpoint != null,
+                    dashboardUrl = dashboardUrl,
                 )
             }
             combine(
@@ -374,7 +378,7 @@ internal class HermesRuntimeBinder(
                 )
             }.collectLatest { inputs ->
                 profileContextReady.value = false
-                if (!shouldRefreshSessionDirectory(inputs.chatReady, inputs.dashboardRouteResolved)) {
+                if (!shouldRefreshSessionDirectory(inputs.chatReady, inputs.dashboardUrl)) {
                     return@collectLatest
                 }
                 if (!inputs.profileSelectionSettled) {
@@ -600,7 +604,7 @@ internal class HermesRuntimeBinder(
         val connectionId: String?,
         val profileName: String?,
         val sessionId: String?,
-        val dashboardRouteResolved: Boolean,
+        val dashboardUrl: String,
         val profileSelectionSettled: Boolean = false,
         val profileLocked: Boolean = false,
         val hiddenSources: Set<String> = emptySet(),
@@ -632,12 +636,13 @@ internal class HermesRuntimeBinder(
 /**
  * Session browsing is Dashboard HTTP state, not Gateway-socket state. API-only
  * connections still use chat readiness; Dashboard connections can refresh once
- * the resolver has selected a live route, after the profile-settle fence.
+ * their persisted/resolved Dashboard origin publishes, after the profile-settle
+ * fence. The optional Relay endpoint is deliberately not part of this decision.
  */
 internal fun shouldRefreshSessionDirectory(
     chatReady: Boolean,
-    dashboardRouteResolved: Boolean,
-): Boolean = chatReady || dashboardRouteResolved
+    dashboardUrl: String,
+): Boolean = chatReady || dashboardUrl.isNotBlank()
 
 internal fun assistantCanTransmitScreenContext(engineMode: VoiceEngineMode): Boolean =
     engineMode == VoiceEngineMode.HermesVoiceOutput
