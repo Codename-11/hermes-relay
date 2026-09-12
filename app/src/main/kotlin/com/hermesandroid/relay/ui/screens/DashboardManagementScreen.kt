@@ -4475,7 +4475,8 @@ internal fun summarizeObjectItem(
         )
     }
 
-    val title = obj.stringField("name")
+    val title = obj.stringField("display_name")?.takeIf(String::isNotBlank)
+        ?: obj.stringField("name")
         ?: obj.stringField("id")
         ?: obj.stringField("title")
         ?: fallbackTitle

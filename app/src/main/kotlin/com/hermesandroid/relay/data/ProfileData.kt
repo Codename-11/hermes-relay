@@ -111,6 +111,8 @@ data class Profile(
     val hasAvatar: Boolean = false,
     @SerialName("ui_meta")
     val uiMeta: JsonObject = JsonObject(emptyMap()),
+    @SerialName("display_name")
+    val displayName: String = "",
 ) {
     val hasIsolatedApi: Boolean
         get() = !apiServerUrl.isNullOrBlank()

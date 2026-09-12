@@ -4654,4 +4654,5 @@
     <string name="dev_message_retry_result" translatable="false">Preview retry selected — no request sent.</string>
     <string name="dev_message_clear" translatable="false">Clear previews</string>
     <string name="dev_message_clear_desc" translatable="false">Dismiss only these samples; real app messages are preserved.</string>
+    <string name="profile_follow_server_default">Follow server default</string>
 </resources>

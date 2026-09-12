@@ -4591,4 +4591,5 @@
     <string name="tool_progress_status_dispatched">ディスパッチ済み</string>
     <string name="chat_activity_history_notice">記録されたアクティビティです。進捗の更新は保存されません。利用可能なサブエージェントの履歴は読み取り専用で開けます。</string>
     <string name="chat_activity_output_unavailable">出力は利用できなくなりました。この項目には記録されたプロセスの状態が残っています。</string>
+    <string name="profile_follow_server_default">サーバーのデフォルトに従う</string>
 </resources>

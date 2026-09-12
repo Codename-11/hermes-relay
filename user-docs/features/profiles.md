@@ -36,30 +36,44 @@ Or clone from an existing profile:
 hermes profile create coder --clone
 ```
 
-The phone doesn't create profiles — you do that on the server. The phone just picks them up on the next pairing (or the next `auth.ok` round-trip after a relay restart).
+Current Hermes gateways support profile creation in Manage. The upstream Dashboard
+and Gateway expose the profile catalog without requiring Relay.
 
-## What "switching profile" does on the phone
+## What switching profile does on the phone
 
-When a profile is selected, the phone first checks whether the relay advertised that profile's own Hermes API server.
+Standard connections use the selected profile's upstream Dashboard/Gateway
+session namespace. Switching restores its last compatible conversation or opens
+a fresh draft. It preserves the old conversation and does not change its agent.
+The optional API-only compatibility path can use an advertised profile API route.
 
-- **With a profile API server:** chat, session browsing, memory, tools, model, and SOUL come from that profile's routed API. The chat session drawer clears and refetches through that profile route, so you see that profile's sessions instead of the default agent's sessions.
-- **Without a profile API server:** the app falls back to the compatibility overlay. It sends the profile `model.default` and `SOUL.md` on each chat turn, but memory, sessions, tools, and provider auth still come from the active Connection.
-- **Voice:** relay-owned voice routes receive the selected profile too. Voice Settings shows whether TTS/STT, streaming voice output, or realtime voice came from profile config or fell back to relay/global defaults. Saving voice output or experimental realtime settings while a named profile is active writes that profile's `voice_output:` / `realtime_voice:` section, so profiles like `mizuki` and `victor` can keep different voices.
+## Identity and server default
 
-**If you want true profile isolation,** run that profile's gateway as its own service on its own port:
+Android uses Hermes `display_name`, then the exact profile request name.
+Descriptions summarize a profile; they are not names. A connection name identifies
+the server and does not become the agent name. Without a known profile or
+personality identity, Android shows **Hermes**. Local display aliases remain
+phone-only overrides.
 
-```bash
-hermes -p mizu platform start api --port 8643
-```
+**Server default** is a role. The switcher shows the resolved agent once with that
+role as secondary text. **Follow server default** switches between following the
+server setting and explicitly selecting that agent. It never changes the server
+setting. Both choices retain independent conversation, draft, lock, and local
+presentation keys.
 
-Then make sure the relay advertises that API server in the profile metadata, or add that gateway as a separate **Connection** on the phone. Each routed profile API has its own sessions, memory, and state because it is a distinct gateway.
+The exact name `default` addresses the root profile and remains selectable when
+another profile is the server default. Hermes' sticky `active` setting may differ
+from the running server's `current` launch profile. Android resolves the sticky
+setting when available. Older hosts without that metadata retain launch-profile
+behavior and an unresolved **Server default** choice. A missing catalog does not
+justify borrowing root profile metadata or its avatar. Shared-avatar changes
+require a resolved default or an explicit profile selection.
 
 ## Profile Shelf behaviour
 
 - **Collapsible and compact.** Tap the avatar/name in the Chat header to expand or collapse the shelf. The hamburger still opens only the active profile's Session Drawer.
 - **Active capsule.** The active avatar/name/chevron opens Agent Passport. Inactive agents are 48 dp avatar targets; the fixed overflow opens the same full switcher used by Passport's **Switch agent** control.
 - **Hidden for one effective identity.** The shelf takes no space when only one visible identity remains. Saved ordering and hidden preferences are honored, but a hidden active profile stays visible until you switch away.
-- **Server default is distinct.** The home-glyph **Server default** choice follows the server's sticky default without changing it. A profile literally named `default` is a separate explicit profile with its own session and presentation state.
+- **Server default is a role.** The resolved agent carries a home badge. Its follow-default control preserves implicit and explicit selections.
 - **Transport-safe switching.** Gateway turns can continue in the background and reconcile to their original conversation, so profile switching remains available. SSE switching is disabled only while an SSE turn is live.
 - **No live-session hot swap.** Switching restores the destination profile's last compatible Gateway or SSE session, or opens a fresh draft. It never changes the agent inside the conversation currently on screen.
 - **Session controls reset.** Model, personality, reasoning, approval, Fast, and YOLO choices from the old session do not leak into the new profile.
@@ -106,8 +120,8 @@ Very large files (SOUL or a memory entry) are still truncated server-side; when 
 
 The Profile Shelf and its canonical full switcher use these conventions:
 
-- **Server default** — the no-override row with a home glyph. It follows the server's current sticky default without changing that setting.
-- Actual profiles use their configured display description when available, then their profile name. A local agent icon wins over the display initial, and the full switcher can show the profile's model without inventing presence or activity state.
+- **Server default** is secondary status on the resolved agent. Grouping uses exact request names, never matching display labels.
+- Profiles use upstream display names, then exact request names. Supporting text disambiguates a display name from its request name. Shared avatars and phone-local overrides retain their existing precedence and scope.
 - When the server emits a `profiles.updated` push (profile added, renamed, or removed on the server side), the app applies the new list immediately and shows a brief "Profiles updated" snackbar. A profile you had selected that the server then removes falls back to Server default automatically.
 
 The Settings card is visible whether or not a profile is currently active; when there's no active profile, the card renders at half opacity with "No active agent" and does nothing when tapped.
@@ -130,7 +144,7 @@ If you select a profile AND a personality, the **profile wins** — its `SOUL.md
 ## At a glance
 
 - **Connection** = a whole Hermes server.
-- **Profile** = a named agent *on* that server, discovered from `~/.hermes/profiles/`. Picking one overlays its model + SOUL for chat turns.
+- **Profile** = a named agent *on* that server, discovered from `~/.hermes/profiles/`. Picking one selects its upstream session namespace on standard connections.
 - **Personality** = a system-prompt preset *within* the agent's config.
 
 See [Connections](./connections.md) for the server-level concept and [Personalities](./personalities.md) for the preset-prompt layer.

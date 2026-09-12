@@ -1287,7 +1287,7 @@ private fun ProfileLockDialog(
                     HorizontalDivider()
                     // Server default option.
                     ProfileLockOptionRow(
-                        label = stringResource(R.string.settings_server_default),
+                        label = stringResource(R.string.profile_follow_server_default),
                         secondary = stringResource(R.string.settings_use_default_profile),
                         selected = lockedIsServerDefault,
                         onSelect = { onLock(null) },

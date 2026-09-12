@@ -34,9 +34,7 @@ object AgentDisplay {
         profiles: List<Profile>,
     ): Profile? = selectedProfile
 
-    // Display can use the root default profile's metadata without making it a
-    // request/session override. Verbose SOUL summaries are filtered by
-    // profileDisplayName below, so this is safe for headers/cards.
+    // Display resolution never changes selection or persistence identity.
     fun effectiveDisplayProfile(
         selectedProfile: Profile?,
         profiles: List<Profile>,
@@ -44,36 +42,22 @@ object AgentDisplay {
     ): Profile? {
         selectedProfile?.let { return it }
         val resolvedServerDefault = profileRequestName(serverDefaultProfileName)
-        return resolvedServerDefault
-            ?.let { activeName ->
-                profiles.firstOrNull { it.name.equals(activeName, ignoreCase = true) }
-            }
-            ?: profiles.firstOrNull { it.name.equals("default", ignoreCase = true) }
+        // An absent roster row is not authority to substitute the root profile.
+        // Retain the confirmed name while its display metadata is loading.
+        return resolvedServerDefault?.let { activeName ->
+            profiles.firstOrNull { it.name == activeName }
+                ?: Profile(name = activeName, model = "")
+        }
     }
 
-    // The NAME goes in the name slot. Non-default profiles use their profile
-    // name first. The synthetic default profile uses its description only when
-    // that description looks like a concise human agent name ("Victor"), not a
-    // verbose SOUL summary.
+    // Match upstream Desktop: presentation-only display_name, then exact request name.
     fun profileDisplayName(profile: Profile?): String? {
         if (profile == null) return null
-        if (profile.name.equals("default", ignoreCase = true)) {
-            return defaultProfileDisplayName(profile)
-        }
-        return when {
-            profile.name.isNotBlank() -> titleCase(profile.name.trim())
-            profile.description.isNotBlank() -> profile.description.trim()
-            else -> null
-        }
+        return profile.displayName.trim().takeIf(String::isNotEmpty)
+            ?: profile.name.trim().takeIf(String::isNotEmpty)
     }
 
-    fun defaultProfileDisplayName(profile: Profile?): String? =
-        profile
-            ?.description
-            ?.trim()
-            ?.takeIf { it.looksLikeConciseAgentName() }
-            ?.let(::titleCase)
-
+    @Suppress("UNUSED_PARAMETER") // connectionLabel retained for source compatibility.
     fun agentName(
         profile: Profile?,
         selectedPersonality: String,
@@ -86,7 +70,7 @@ object AgentDisplay {
 
         // "none"/"neutral" are the upstream "cleared overlay" aliases — treat
         // them like "default" for identity: fall through to the server default
-        // (or the base connection identity) rather than rendering the literal
+        // identity rather than rendering the literal
         // word as an agent name.
         val personalityName = if (
             isClearedPersonality(selectedPersonality) &&
@@ -102,7 +86,6 @@ object AgentDisplay {
         return when {
             personalityName.isNotBlank() && personalityName != "default" ->
                 titleCase(personalityName.trim())
-            !connectionLabel.isNullOrBlank() -> connectionLabel.trim()
             else -> "Hermes"
         }
     }
@@ -198,16 +181,6 @@ object AgentDisplay {
             ?.trim()
             ?.replace(Regex("\\s+"), " ")
             ?.takeIf { it.isNotEmpty() }
-
-    private fun String.looksLikeConciseAgentName(): Boolean {
-        if (isBlank() || length > 40 || contains('\n') || contains('\r')) {
-            return false
-        }
-        if (any { it == '.' || it == ':' || it == ';' }) {
-            return false
-        }
-        return trim().split(Regex("\\s+")).size <= 4
-    }
 
     private fun titleCase(value: String): String =
         value.replaceFirstChar { it.uppercase() }

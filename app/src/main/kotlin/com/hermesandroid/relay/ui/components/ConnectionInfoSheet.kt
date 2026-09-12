@@ -3625,7 +3625,7 @@ internal fun ProfileDisplayManagerDialog(
                     val isServerDefault = key == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY
                     val profile = profiles.firstOrNull { it.name == key }
                     val label = if (isServerDefault) {
-                        stringResource(R.string.conn_info_server_default)
+                        stringResource(R.string.profile_follow_server_default)
                     } else {
                         profile?.let(AgentDisplay::profileDisplayName)
                             ?: key.replaceFirstChar { it.uppercase() }

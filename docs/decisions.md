@@ -2896,7 +2896,10 @@ the selected-hidden exception. Local icons remain connection/profile scoped.
 Compose renders state and invokes ViewModel actions; it never writes a store.
 
 Server default is represented only by `SERVER_DEFAULT_PROFILE_KEY`/a null
-selection and uses a home glyph. A profile literally named `default` retains its
+selection. Its resolved agent is grouped once with a home badge and a follow-default
+control; the selected request key remains unchanged. Upstream `display_name` is
+presentation-only. Descriptions and connection names are not profile names, and
+an unresolved default never assumes root identity. A profile named `default` retains its
 own request, lock, icon, presentation, and session keys. Selecting either does
 not call the upstream sticky-default mutation.
 

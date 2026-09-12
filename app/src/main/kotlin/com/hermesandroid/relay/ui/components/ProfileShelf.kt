@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -41,6 +42,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -80,9 +83,10 @@ object ProfileShelfPolicy {
         profiles: List<Profile>,
         presentation: ProfilePresentation,
         selectedProfileName: String?,
+        serverDefaultProfileName: String? = null,
     ): List<ProfileChoice> {
         val selectedKey = AgentDisplay.profileSessionKey(selectedProfileName)
-        return ProfilePresentationPolicy
+        val choices = ProfilePresentationPolicy
             .visibleKeys(profiles, presentation, selectedKey)
             .mapNotNull { key ->
                 if (key == AgentDisplay.SERVER_DEFAULT_PROFILE_KEY) {
@@ -91,6 +95,17 @@ object ProfileShelfPolicy {
                     profiles.firstOrNull { it.name == key }?.let { ProfileChoice(key, it) }
                 }
             }
+        // Group only exact upstream identities, never matching display labels.
+        // Keep the selected choice's request/presentation key unchanged.
+        val hasDefault = choices.any { it.isServerDefault }
+        val hasResolved = choices.any { it.key == serverDefaultProfileName }
+        if (!hasDefault || !hasResolved) return choices
+        val omittedKey = if (selectedProfileName == serverDefaultProfileName) {
+            AgentDisplay.SERVER_DEFAULT_PROFILE_KEY
+        } else {
+            serverDefaultProfileName
+        }
+        return choices.filterNot { it.key == omittedKey }
     }
 
     fun canSwitch(isStreaming: Boolean, streamingEndpoint: String): Boolean =
@@ -124,8 +139,9 @@ fun ProfileShelf(
     onHide: (String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val choices = remember(profiles, presentation, selectedProfile?.name) {
-        ProfileShelfPolicy.choices(profiles, presentation, selectedProfile?.name)
+    val serverDefaultProfile by connectionViewModel.serverDefaultDisplayProfile.collectAsState()
+    val choices = remember(profiles, presentation, selectedProfile?.name, serverDefaultProfile) {
+        ProfileShelfPolicy.choices(profiles, presentation, selectedProfile?.name, serverDefaultProfile?.name)
     }
     if (choices.size <= 1) return
 
@@ -157,7 +173,7 @@ fun ProfileShelf(
                         val label = if (selected) {
                             activeDisplayName
                         } else {
-                            profileChoiceLabel(choice, resolvedProfile)
+                            profileChoiceLabel(choice, serverDefaultProfile)
                         }
                         if (selected) {
                             val openPassportDescription = stringResource(R.string.profile_shelf_open_passport)
@@ -191,7 +207,7 @@ fun ProfileShelf(
                                         ProfileChoiceAvatar(
                                             connectionViewModel,
                                             choice,
-                                            resolvedProfile,
+                                            serverDefaultProfile,
                                             label,
                                             36,
                                         )
@@ -238,7 +254,7 @@ fun ProfileShelf(
                                 ProfileChoiceAvatar(
                                     connectionViewModel,
                                     choice,
-                                    resolvedProfile,
+                                    serverDefaultProfile,
                                     label,
                                     36,
                                 )
@@ -275,8 +291,8 @@ fun ProfileShelf(
 
     actionChoice?.let { choice ->
         val selected = ProfileShelfPolicy.isSelected(choice, selectedProfile?.name)
-        val target = choice.profile ?: resolvedProfile
-        val label = profileChoiceLabel(choice, resolvedProfile)
+        val target = choice.profile ?: serverDefaultProfile
+        val label = profileChoiceLabel(choice, serverDefaultProfile)
         ProfileShelfActionsDialog(
             label = label,
             canSwitch = switchEnabled && !isProfileLocked,
@@ -319,10 +335,14 @@ fun ProfileSwitcherSheet(
     onManageDisplay: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val choices = remember(profiles, presentation, selectedProfile?.name) {
-        ProfileShelfPolicy.choices(profiles, presentation, selectedProfile?.name)
+    val serverDefaultProfile by connectionViewModel.serverDefaultDisplayProfile.collectAsState()
+    val choices = remember(profiles, presentation, selectedProfile?.name, serverDefaultProfile) {
+        ProfileShelfPolicy.choices(profiles, presentation, selectedProfile?.name, serverDefaultProfile?.name)
     }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -346,8 +366,15 @@ fun ProfileSwitcherSheet(
             }
             choices.forEach { choice ->
                 val selected = ProfileShelfPolicy.isSelected(choice, selectedProfile?.name)
-                val label = profileChoiceLabel(choice, resolvedProfile)
-                val model = choice.profile?.model?.takeIf { it.isNotBlank() }
+                val label = profileChoiceLabel(choice, serverDefaultProfile)
+                val target = if (choice.isServerDefault) serverDefaultProfile else choice.profile
+                val defaultGroup = serverDefaultProfile != null &&
+                    (choice.isServerDefault || choice.key == serverDefaultProfile?.name)
+                val detail = listOfNotNull(
+                    stringResource(R.string.conn_info_server_default).takeIf { defaultGroup },
+                    target?.name?.takeIf { it != label },
+                    target?.model?.takeIf { it.isNotBlank() },
+                ).joinToString(" · ")
                 ListItem(
                     modifier = Modifier.selectable(
                         selected = selected,
@@ -361,13 +388,13 @@ fun ProfileSwitcherSheet(
                     headlineContent = {
                         Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     },
-                    supportingContent = if (model != null) {
-                        { Text(model, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    supportingContent = if (detail.isNotBlank()) {
+                        { Text(detail, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                     } else {
                         null
                     },
                     leadingContent = {
-                        ProfileChoiceAvatar(connectionViewModel, choice, resolvedProfile, label, 42)
+                        ProfileChoiceAvatar(connectionViewModel, choice, serverDefaultProfile, label, 42)
                     },
                     trailingContent = if (selected) {
                         { Icon(Icons.Filled.Check, contentDescription = null) }
@@ -375,6 +402,27 @@ fun ProfileSwitcherSheet(
                         null
                     },
                 )
+                if (defaultGroup && selected) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                            .toggleable(
+                                value = choice.isServerDefault,
+                                enabled = switchEnabled && !isProfileLocked,
+                                role = Role.Checkbox,
+                                onValueChange = {
+                                    onSelect(if (choice.isServerDefault) serverDefaultProfile else null)
+                                    onDismiss()
+                                },
+                            ).padding(start = 64.dp, end = 24.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = choice.isServerDefault, onCheckedChange = null,
+                            enabled = switchEnabled && !isProfileLocked)
+                        Spacer(Modifier.size(8.dp))
+                        Text(stringResource(R.string.profile_follow_server_default),
+                            style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
             }
             HorizontalDivider(modifier = Modifier.padding(top = 8.dp))
             TextButton(
@@ -518,7 +566,8 @@ private fun ProfileActionRow(
 @Composable
 private fun profileChoiceLabel(choice: ProfileChoice, resolvedProfile: Profile?): String =
     if (choice.isServerDefault) {
-        stringResource(R.string.conn_info_server_default)
+        AgentDisplay.profileDisplayName(resolvedProfile)
+            ?: stringResource(R.string.conn_info_server_default)
     } else {
         choice.profile?.let(AgentDisplay::profileDisplayName)
             ?: choice.profile?.name?.replaceFirstChar { it.uppercase() }

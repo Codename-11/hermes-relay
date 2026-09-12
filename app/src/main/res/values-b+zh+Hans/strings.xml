@@ -4520,4 +4520,5 @@
     <string name="tool_progress_status_dispatched">已分派</string>
     <string name="chat_activity_history_notice">已记录的活动。进度更新不会保留；可用的子代理历史记录可以以只读方式打开。</string>
     <string name="chat_activity_output_unavailable">输出已不可用。此条目保留了记录的进程状态。</string>
+    <string name="profile_follow_server_default">跟随服务器默认配置</string>
 </resources>

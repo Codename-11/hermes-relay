@@ -2357,6 +2357,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         get() = profileController.effectiveSessionProfileName
     val effectiveDisplayProfile: StateFlow<Profile?>
         get() = profileController.effectiveDisplayProfile
+    val serverDefaultDisplayProfile: StateFlow<Profile?>
+        get() = profileController.serverDefaultDisplayProfile
 
     fun refreshDashboardProfiles() = profileController.refreshDashboardProfiles()
     fun refreshDeferredProfileMetadata() = profileController.refreshDeferredProfileMetadata()

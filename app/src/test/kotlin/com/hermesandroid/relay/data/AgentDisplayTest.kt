@@ -43,13 +43,13 @@ class AgentDisplayTest {
     }
 
     @Test
-    fun effectiveDisplayProfile_usesDefaultProfileForDisplayOnly() {
+    fun effectiveDisplayProfile_doesNotAssumeRootWhenScopeIsUnknown() {
         val effective = AgentDisplay.effectiveDisplayProfile(
             selectedProfile = null,
             profiles = listOf(mizu, defaultProfile),
         )
 
-        assertEquals(defaultProfile, effective)
+        assertNull(effective)
     }
 
     @Test
@@ -86,7 +86,7 @@ class AgentDisplayTest {
     fun agentName_usesProfileNameNotVerboseDescription() {
         // The name slot shows the NAME, even when a (verbose) description exists.
         assertEquals(
-            "Mizu",
+            "mizu",
             AgentDisplay.agentName(
                 profile = mizu.copy(description = "Builds and maintains the codebase"),
                 selectedPersonality = "friendly",
@@ -96,7 +96,7 @@ class AgentDisplayTest {
         )
 
         assertEquals(
-            "Coder",
+            "coder",
             AgentDisplay.agentName(
                 profile = mizu.copy(name = "coder", description = ""),
                 selectedPersonality = "friendly",
@@ -107,11 +107,11 @@ class AgentDisplayTest {
     }
 
     @Test
-    fun agentName_usesConciseDefaultDescriptionNotVerboseSummary() {
+    fun agentName_usesDisplayNameAndNeverInfersIdentityFromDescription() {
         assertEquals(
             "Victor",
             AgentDisplay.agentName(
-                profile = defaultProfile.copy(description = "victor"),
+                profile = defaultProfile.copy(displayName = "Victor", description = "Summary"),
                 selectedPersonality = "default",
                 defaultPersonality = "",
                 connectionLabel = "Lab",
@@ -119,7 +119,7 @@ class AgentDisplayTest {
         )
 
         assertEquals(
-            "Lab",
+            "default",
             AgentDisplay.agentName(
                 profile = defaultProfile.copy(description = "Builds and maintains the codebase."),
                 selectedPersonality = "default",
@@ -175,7 +175,7 @@ class AgentDisplayTest {
             ),
         )
         assertEquals(
-            "Lab",
+            "Hermes",
             AgentDisplay.agentName(
                 profile = null,
                 selectedPersonality = "default",
@@ -218,7 +218,7 @@ class AgentDisplayTest {
             ),
         )
         assertEquals(
-            "Lab",
+            "Hermes",
             AgentDisplay.agentName(
                 profile = null,
                 selectedPersonality = "none",
@@ -253,6 +253,18 @@ class AgentDisplayTest {
         assertEquals("default", AgentDisplay.effectiveSessionProfileName(null, "default"))
         assertEquals("mizu", AgentDisplay.effectiveSessionProfileName("mizu", "victor"))
         assertNull(AgentDisplay.effectiveSessionProfileName(null, null))
+    }
+
+    @Test
+    fun confirmedDefaultKeepsItsNameWhileRosterLoadsAndDoesNotBorrowRootMetadata() {
+        val effective = AgentDisplay.effectiveDisplayProfile(null, listOf(defaultProfile), "victor")
+        assertEquals("victor", effective?.name)
+        assertEquals("victor", AgentDisplay.profileDisplayName(effective))
+        assertEquals("default", AgentDisplay.profileDisplayName(defaultProfile))
+        val victor = Profile("victor", "", displayName = "Victor")
+        assertEquals("Victor", AgentDisplay.profileDisplayName(
+            AgentDisplay.effectiveDisplayProfile(null, listOf(defaultProfile, victor), "victor")))
+        assertEquals(defaultProfile, AgentDisplay.effectiveDisplayProfile(defaultProfile, listOf(victor), "victor"))
     }
 
     @Test
