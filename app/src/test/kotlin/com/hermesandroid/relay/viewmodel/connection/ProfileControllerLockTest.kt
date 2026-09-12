@@ -254,7 +254,7 @@ class ProfileControllerLockTest {
     }
 
     @Test
-    fun connectionSwitchRejectsOldDefaultIdentityEvenWithMatchingProfileNames() {
+    fun connectionSwitchRejectsOldDefaultIdentity() {
         dashboardUrl = "https://dashboard.example"
         val started = CompletableDeferred<Unit>()
         val old = CompletableDeferred<DashboardProfileScope>()
@@ -273,6 +273,25 @@ class ProfileControllerLockTest {
         old.complete(DashboardProfileScope(active = "victor", current = "default"))
         assertEquals("other", awaitFlow(controller.effectiveSessionProfileName) { it == "other" })
         assertNull(controller.selectedProfile.value)
+    }
+
+    @Test
+    fun unresolvedDefaultDoesNotBorrowRootAvatarFromGatewayRoster() = runBlocking {
+        gatewayClient = mockk(relaxed = true)
+        coEvery { gatewayClient!!.petInfo(any(), any()) } returns Result.failure(
+            IllegalStateException("Pet metadata temporarily unavailable"))
+        coEvery { gatewayClient!!.listProfiles() } returns Result.success(
+            listOf(literalDefault.copy(isDefault = true, hasAvatar = true)))
+        coEvery { gatewayClient!!.getProfileAvatar("default") } returns Result.failure(
+            IllegalStateException("Avatar temporarily unavailable"))
+        controller.refreshGatewayProfiles()
+        awaitFlow(controller.agentProfiles) { it.any { profile -> profile.name == "default" } }
+        controller.profileIconStore.setServerAvatar(connectionId, "default", "root-avatar.png")
+        assertNull(controller.profileIconFlow(null).first())
+        assertEquals("root-avatar.png", controller.profileIconFlow("default").first())
+        assertNull(controller.serverDefaultDisplayProfile.value)
+        controller.clearSharedProfileAvatar()
+        coVerify(exactly = 0) { gatewayClient!!.clearProfileAvatar(any()) }
     }
 
     @After

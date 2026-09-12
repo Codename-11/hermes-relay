@@ -418,6 +418,7 @@ fun ProfileSwitcherSheet(
                     ) {
                         Checkbox(checked = choice.isServerDefault, onCheckedChange = null,
                             enabled = switchEnabled && !isProfileLocked)
+                        Spacer(Modifier.size(8.dp))
                         Text(stringResource(R.string.profile_follow_server_default),
                             style = MaterialTheme.typography.bodyMedium)
                     }

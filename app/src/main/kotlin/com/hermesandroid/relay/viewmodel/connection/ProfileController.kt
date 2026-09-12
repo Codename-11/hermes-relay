@@ -368,12 +368,8 @@ class ProfileController(
         activeConnectionId,
         selectedProfile,
         serverDefaultProfileScope,
-        _gatewayProfiles,
-    ) { connectionId, selected, serverDefault, gatewayProfiles ->
-        connectionId to (
-            selected?.name ?: serverDefault?.active
-                ?: gatewayProfiles.firstOrNull(Profile::isDefault)?.name
-        )
+    ) { connectionId, selected, serverDefault ->
+        connectionId to (selected?.name ?: serverDefault?.active)
     }
 
     /** Cached bytes fetched from Hermes; always preferred over the local fallback. */
@@ -405,12 +401,8 @@ class ProfileController(
     fun profileIconFlow(profileName: String?): Flow<String?> = combine(
         activeConnectionId,
         serverDefaultProfileScope,
-        _gatewayProfiles,
-    ) { connectionId, serverDefault, gatewayProfiles ->
-        connectionId to (
-            profileName ?: serverDefault?.active
-                ?: gatewayProfiles.firstOrNull(Profile::isDefault)?.name
-        )
+    ) { connectionId, serverDefault ->
+        connectionId to (profileName ?: serverDefault?.active)
     }
         .flatMapLatest { (connectionId, serverProfileName) ->
             if (connectionId == null) return@flatMapLatest flowOf(null)
@@ -1289,7 +1281,6 @@ class ProfileController(
 
     private fun resolveSharedAssetProfileName(): String? =
         resolveSessionProfileName()
-            ?: _gatewayProfiles.value.firstOrNull(Profile::isDefault)?.name
 
     private companion object {
         const val LOCAL_PROFILE_ICON_MAX_BYTES = 8_000_000

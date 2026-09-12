@@ -64,7 +64,7 @@ metadata retains its request name rather than borrowing root metadata.
 | Manage profile catalog | Uses upstream display name while preserving the raw name for actions. |
 | Bot Mode | Already prioritizes Bot title, then display name, then request name; parsing now also retains display name in its Profile metadata. Route keys and connection-qualified handles stay unchanged. |
 | Restoration and diagnostics | Raw profile/session/connection keys remain authoritative. No display-label parsing, normalization, session deletion, or routing changes. |
-| Supervised mode, avatars, pets | Existing lock gates and asset ownership remain unchanged. The follow control is disabled under a lock. |
+| Supervised mode, avatars, pets | Lock gates and exact asset keys remain unchanged. An unresolved default cannot borrow or modify the root avatar from `is_default`; shared-avatar actions require a resolved or explicit profile. The follow control is disabled under a lock. |
 | Legacy private agent sheet | Not the canonical switcher; retained without a separate routing/model rewrite. |
 
 ## Rendered evidence
@@ -78,4 +78,19 @@ screenshots or live-server certification.
 | --- | --- |
 | ![Three apparent identities](assets/profile-identity/before.png) | ![Resolved identity and follow-default control](assets/profile-identity/after.png) |
 
-Verification results and device limits are recorded with the PR.
+The rendered checks cover 360 x 720 dp, 720 x 360 dp landscape, and
+840 x 720 dp expanded layouts, plus 1.5x system font scale and a long display
+name. Text truncates with ellipsis, the request name remains available as
+supporting text, and the follow control preserves checkbox state and a 48 dp
+minimum target. Landscape opens fully expanded with scrollable content.
+
+- [Large text](assets/profile-identity/large-text.png)
+- [Landscape](assets/profile-identity/landscape.png)
+- [Expanded layout](assets/profile-identity/expanded.png)
+- [Long name](assets/profile-identity/long-name.png)
+
+Focused sideload and Google Play suites each passed 497 tests with no failures
+or skips. Lint and build results are recorded with the PR. Live-server,
+physical-device, screen-reader, and fold-posture transition behavior remain
+separate verification gaps. No APK was installed and no server profile was
+modified.

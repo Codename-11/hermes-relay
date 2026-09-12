@@ -65,7 +65,8 @@ another profile is the server default. Hermes' sticky `active` setting may diffe
 from the running server's `current` launch profile. Android resolves the sticky
 setting when available. Older hosts without that metadata retain launch-profile
 behavior and an unresolved **Server default** choice. A missing catalog does not
-justify borrowing root profile metadata.
+justify borrowing root profile metadata or its avatar. Shared-avatar changes
+require a resolved default or an explicit profile selection.
 
 ## Profile Shelf behaviour
 

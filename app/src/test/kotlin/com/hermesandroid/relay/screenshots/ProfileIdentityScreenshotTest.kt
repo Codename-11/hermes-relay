@@ -6,12 +6,17 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
 import org.junit.Assert.assertEquals
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -68,16 +73,19 @@ class ProfileIdentityScreenshotTest {
             }
         }
         compose.onAllNodesWithText(displayName, substring = false).assertCountEquals(1)
-        compose.onNodeWithText("Follow server default").assertIsDisplayed()
+        compose.onNodeWithText("Follow server default").assertIsDisplayed().assertIsOn()
+            .assertHeightIsAtLeast(48.dp)
         val output = File("build/ui-evidence/$file.png")
         output.parentFile?.mkdirs()
         compose.onRoot().captureRoboImage(output.absolutePath)
         compose.onNodeWithText("Follow server default").performClick()
         compose.runOnIdle { assertEquals("guide", selected.value?.name) }
+        compose.onNodeWithText("Follow server default").assertIsOff()
         compose.onNodeWithText("Follow server default").performClick()
         compose.runOnIdle { assertEquals(null, selected.value) }
         // Scrollable even in landscape or at enlarged text sizes.
         compose.onNodeWithText("default", substring = false).performScrollTo().performClick()
         compose.runOnIdle { assertEquals("default", selected.value?.name) }
+        compose.onNodeWithText("default", substring = false).assertIsSelected()
     }
 }

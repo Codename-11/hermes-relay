@@ -87,8 +87,6 @@ data class Profile(
     val model: String,
     val provider: String = "",
     val description: String = "",
-    @SerialName("display_name")
-    val displayName: String = "",
     @SerialName("system_message")
     val systemMessage: String? = null,
     @SerialName("gateway_running")
@@ -113,6 +111,8 @@ data class Profile(
     val hasAvatar: Boolean = false,
     @SerialName("ui_meta")
     val uiMeta: JsonObject = JsonObject(emptyMap()),
+    @SerialName("display_name")
+    val displayName: String = "",
 ) {
     val hasIsolatedApi: Boolean
         get() = !apiServerUrl.isNullOrBlank()
