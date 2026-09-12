@@ -6,9 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.16.1] - 2026-09-12
+
 ### Fixed
 
-- Android Dashboard-only connections start the profile-scoped session directory before Gateway readiness, so a cold LAN launch cannot leave both the directory and the passive Gateway socket waiting on each other. (#495, #528)
+- Android Dashboard-only connections start the profile-scoped session directory before Gateway readiness, so a cold launch no longer leaves both the directory and passive Gateway socket waiting on each other. (#495, #528)
 
 ## [Android 1.16.0] - 2026-09-10
 
