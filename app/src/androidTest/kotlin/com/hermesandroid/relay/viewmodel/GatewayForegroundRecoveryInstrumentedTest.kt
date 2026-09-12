@@ -31,9 +31,11 @@ import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.GatewayConnectionState
 import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.ui.components.GatewayBackgroundProcessStrip
 import com.hermesandroid.relay.ui.components.SubagentPreviewVisibility
 import com.hermesandroid.relay.ui.screens.shouldOwnVisibleGateway
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -216,6 +218,75 @@ class GatewayForegroundRecoveryInstrumentedTest {
         controlMethods.forEach { method ->
             assertEquals(
                 "cold observation sent $method",
+                baseline.getValue(method),
+                fixture.rpcCount(method),
+            )
+        }
+    }
+
+    @Test
+    fun dashboardOnlyColdLaunch_waitsForExactDirectoryThenOpensObservationSocket() {
+        viewModel.setChatVisible(false)
+        viewModel.updateGatewayClient(null)
+        gatewayClient.shutdown()
+        gatewayScope.cancel()
+
+        val directoryStarted = CompletableDeferred<Unit>()
+        val directoryResult = CompletableDeferred<Result<List<SessionItem>>>()
+        viewModel.setProfileSessionLister { profile ->
+            assertEquals(PROFILE_NAME, profile)
+            directoryStarted.complete(Unit)
+            directoryResult.await()
+        }
+        handler.setSessionId(null)
+        viewModel.switchProfileContext(
+            AgentDisplay.profileContextKey("fixture-connection", PROFILE_NAME),
+            STORED_SESSION_ID,
+        )
+
+        val controlMethods = setOf(
+            "session.resume",
+            "session.activate",
+            "prompt.submit",
+            "session.interrupt",
+        )
+        val baseline = controlMethods.associateWith(fixture::rpcCount)
+        val ticketMintsBefore = fixture.requestsTo("/api/auth/ws-ticket")
+        gatewayScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val okHttp = OkHttpClient()
+        gatewayClient = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(
+                baseUrl = fixture.server.url("/").toString().trimEnd('/'),
+                okHttpClient = okHttp,
+            ),
+            okHttpClient = okHttp,
+            callbackDispatcher = { block -> Handler(Looper.getMainLooper()).post(block) },
+            scope = gatewayScope,
+            reconnectJitterUnit = { 0.0 },
+        )
+        viewModel.setChatTurnCheckpointStore(null)
+        viewModel.updateGatewayClient(gatewayClient)
+        viewModel.setChatVisible(true)
+
+        // This is the production binder's Dashboard/profile hydration edge.
+        // The socket must stay passive and closed until the exact-owner REST
+        // directory publishes, then open without a lifecycle bounce.
+        viewModel.refreshSessions()
+        compose.waitUntil(5_000) { directoryStarted.isCompleted }
+        assertEquals(ticketMintsBefore, fixture.requestsTo("/api/auth/ws-ticket"))
+
+        directoryResult.complete(
+            Result.success(listOf(SessionItem(id = STORED_SESSION_ID, title = "Fixture session"))),
+        )
+
+        compose.waitUntil(5_000) {
+            gatewayClient.connectionState.value == GatewayConnectionState.Ready
+        }
+        serverSocket = fixture.awaitServerSocket()
+        assertEquals(ticketMintsBefore + 1, fixture.requestsTo("/api/auth/ws-ticket"))
+        controlMethods.forEach { method ->
+            assertEquals(
+                "directory-gated cold observation sent $method",
                 baseline.getValue(method),
                 fixture.rpcCount(method),
             )

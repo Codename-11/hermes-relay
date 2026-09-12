@@ -6,23 +6,29 @@ import org.junit.Test
 
 class HermesRuntimeBinderSessionDirectoryPolicyTest {
     @Test
-    fun `session directory can refresh from either standard route owner`() {
+    fun `session directory starts from dashboard publication before Gateway readiness`() {
         assertTrue(
             shouldRefreshSessionDirectory(
                 chatReady = true,
-                dashboardRouteResolved = false,
+                dashboardUrl = "",
             ),
         )
         assertTrue(
             shouldRefreshSessionDirectory(
                 chatReady = false,
-                dashboardRouteResolved = true,
+                dashboardUrl = "https://dashboard.example.test",
             ),
         )
         assertFalse(
             shouldRefreshSessionDirectory(
                 chatReady = false,
-                dashboardRouteResolved = false,
+                dashboardUrl = "",
+            ),
+        )
+        assertFalse(
+            shouldRefreshSessionDirectory(
+                chatReady = false,
+                dashboardUrl = "   ",
             ),
         )
     }

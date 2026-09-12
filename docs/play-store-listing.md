@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.16.0 - Safer startup, connections, and activity
+v1.16.1 - Dashboard-only cold starts recover
 
-Gateway chat now opens reliably on a cold launch. Saved Dashboard sign-ins stay bound to the correct connection, pasted credentials ignore accidental line breaks, and network changes no longer race the route cache. Bot Mode supports duplicate profile names across gateways, while delegated work, session setup, attachment errors, and feedback remain visible and easier to review.
+Dashboard-only connections now prepare the selected profile before Gateway readiness, fixing a remaining cold-start path that could stay on waking or waiting for Gateway until the app resumed or its network route changed.
 ```
 ## Category
 
