@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Relay Dashboard WebSockets work with current Hermes authentication helpers while preserving older-host compatibility, single-use tickets, Host/Origin/IP checks, and Relay session authentication.
+
 ## [Android 1.16.0] - 2026-09-09
 
 ### Fixed

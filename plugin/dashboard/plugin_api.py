@@ -364,8 +364,17 @@ def _dashboard_ws_guards() -> tuple[Any, Any] | None:
     The current upstream plugin contract mounts routers but does not inject an
     auth dependency for WebSockets.  Using the host's already-loaded helpers
     keeps ticket consumption and Host/Origin/IP policy identical to `/api/ws`.
-    If upstream moves either helper, this ingress fails closed.
+    Current hosts own both guards in web_server_chat; older hosts expose them
+    on web_server. Prefer the current owner and never combine guards from
+    different modules. A loaded current owner with an incomplete contract must
+    fail closed rather than fall back to potentially stale facade helpers.
     """
+    chat = sys.modules.get("hermes_cli.web_server_chat")
+    if chat is not None:
+        allowed = getattr(chat, "_ws_request_is_allowed", None)
+        authed = getattr(chat, "_ws_auth_ok", None)
+        return (allowed, authed) if callable(allowed) and callable(authed) else None
+
     candidates = [sys.modules.get("hermes_cli.web_server")]
     candidates.extend(
         module for name, module in tuple(sys.modules.items())

@@ -63,6 +63,46 @@ Verified upstream source snapshot:
 | `hermes relay doctor` | Hermes-Relay plugin CLI | No for diagnostics | Operator/agent diagnostics | Reports vanilla upstream Hermes route reachability (including `/v1/toolsets`), dashboard Nous/topology state, sanitized gateway event-loop heartbeat state, plugin layout, Relay loopback state, and legacy bootstrap presence. |
 | `hermes_relay_bootstrap` routes | Legacy compatibility monkeypatch | No, but non-upstream | Fallback only | Installed via `.pth` by legacy installer. Injects only compatibility-only gaps: session search, memory, legacy skill detail/toggle, config, available-models, slash middleware. Sessions CRUD and skill/toolset lists are native upstream and retired from the bootstrap. Retained session-database work is offloaded (`AsyncSessionDB` when available, `asyncio.to_thread` fallback), and memory mutations reset newer upstream's request-local consolidation-failure budget. |
 
+## Dashboard Relay WebSocket guard compatibility
+
+The optional Relay ingress reuses the host's already-loaded
+`_ws_request_is_allowed` and `_ws_auth_ok` pair. Current Hermes owns both in
+`hermes_cli.web_server_chat`; older hosts expose them on `hermes_cli.web_server`
+(or its legacy module alias). The current owner takes precedence. If it is
+loaded but either guard is missing or non-callable, admission fails closed;
+guards are never combined across modules or retried through a weaker fallback.
+No Dashboard modules are imported just to discover guards.
+
+Plugin enablement still uses the facade's `_get_dashboard_plugins` and the
+host's enabled/disabled sets. A disabled plugin or rejected Host/Origin/IP is
+checked before ticket consumption. Guard exceptions deny the upgrade, tickets
+remain single-use, and Dashboard admission never replaces Relay's own
+pairing/session authentication.
+
+Run the hermetic transport regressions with:
+
+```bash
+python -m pytest plugin/dashboard/test_plugin_api.py plugin/tests/test_dashboard_ingress.py -q
+```
+
+An opt-in conformance lane exercises real current-upstream imports and ticket
+consumption through FastAPI and an ephemeral loopback Relay, using a temporary
+Hermes home rather than an installed service. Use a Python environment with the
+Dashboard dependencies, provide the upstream checkout on `PYTHONPATH`, and run
+this lane in its own process:
+
+```bash
+test_home=$(mktemp -d)
+env -i PATH="$PATH" HOME="$test_home" HERMES_HOME="$test_home" \
+  HERMES_RELAY_TEST_UPSTREAM=1 PYTHONPATH="$PWD:/path/to/hermes-agent" \
+  python -m pytest plugin/dashboard/test_upstream_ws_guards.py -q
+```
+
+The explicit opt-in fails on missing upstream dependencies instead of silently
+skipping. It covers query/subprotocol tickets, replay/expiry, policy and plugin
+rejection before forwarding, loopback-only token auth, and inner Relay auth.
+It does not certify a live reverse proxy or restart any installed service.
+
 ## Client capability gate (build flavor)
 
 Route ownership above is a *server-side* contract. The Android client adds a

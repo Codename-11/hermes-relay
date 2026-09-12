@@ -293,6 +293,68 @@ class TransportIngressTests(PluginApiTestCase):
         self.assertIn("size limit", response.json()["detail"])
 
 
+class DashboardWebSocketGuardDiscoveryTests(unittest.TestCase):
+    def test_loaded_chat_guards_admit_without_legacy_facade_exports(self) -> None:
+        allowed = Mock(return_value=True)
+        authed = Mock(return_value=True)
+        modules = {
+            "hermes_cli.web_server": SimpleNamespace(),
+            "hermes_cli.web_server_chat": SimpleNamespace(
+                _ws_request_is_allowed=allowed, _ws_auth_ok=authed,
+            ),
+        }
+        with patch.object(plugin_api.sys, "modules", modules):
+            self.assertEqual(plugin_api._dashboard_ws_guards(), (allowed, authed))
+
+    def test_legacy_hosts_retain_complete_guard_pair(self) -> None:
+        for name in ("hermes_cli.web_server", "legacy.web_server"):
+            with self.subTest(name=name):
+                guards = (Mock(), Mock())
+                module = SimpleNamespace(
+                    _ws_request_is_allowed=guards[0], _ws_auth_ok=guards[1],
+                )
+                with patch.object(plugin_api.sys, "modules", {name: module}):
+                    self.assertEqual(plugin_api._dashboard_ws_guards(), guards)
+
+    def test_current_owner_takes_precedence_over_stale_facade(self) -> None:
+        guards = (Mock(return_value=False), Mock(return_value=False))
+        modules = {
+            "hermes_cli.web_server_chat": SimpleNamespace(
+                _ws_request_is_allowed=guards[0], _ws_auth_ok=guards[1],
+            ),
+            "hermes_cli.web_server": SimpleNamespace(
+                _ws_request_is_allowed=Mock(return_value=True),
+                _ws_auth_ok=Mock(return_value=True),
+            ),
+        }
+        with patch.object(plugin_api.sys, "modules", modules):
+            self.assertEqual(plugin_api._dashboard_ws_guards(), guards)
+
+    def test_missing_or_partial_contracts_fail_closed_without_mixing(self) -> None:
+        complete = SimpleNamespace(_ws_request_is_allowed=Mock(), _ws_auth_ok=Mock())
+        for modules in (
+            {},
+            {"hermes_cli.web_server_chat": SimpleNamespace()},
+            {
+                "hermes_cli.web_server_chat": SimpleNamespace(_ws_auth_ok=Mock()),
+                "hermes_cli.web_server": complete,
+            },
+            {
+                "hermes_cli.web_server_chat": SimpleNamespace(
+                    _ws_auth_ok=True, _ws_request_is_allowed=Mock(),
+                ),
+                "hermes_cli.web_server": complete,
+            },
+            {
+                "hermes_cli.web_server": SimpleNamespace(_ws_auth_ok=Mock()),
+                "legacy.web_server": SimpleNamespace(_ws_request_is_allowed=Mock()),
+            },
+        ):
+            with self.subTest(modules=tuple(modules)):
+                with patch.object(plugin_api.sys, "modules", modules):
+                    self.assertIsNone(plugin_api._dashboard_ws_guards())
+
+
 class TransportWebSocketAdmissionTests(unittest.IsolatedAsyncioTestCase):
     class _Socket:
         def __init__(self) -> None:
@@ -329,6 +391,30 @@ class TransportWebSocketAdmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(socket.closed)
         request_allowed.assert_called_once_with(socket)
         auth_ok.assert_called_once_with(socket)
+
+    async def test_request_denial_does_not_consume_ticket(self) -> None:
+        socket = self._Socket()
+        auth = Mock(return_value=True)
+        with patch.object(plugin_api, "_dashboard_plugin_is_enabled", return_value=True), patch.object(
+            plugin_api, "_dashboard_ws_guards", return_value=(lambda _ws: False, auth)
+        ):
+            self.assertIsNone(await plugin_api._admit_transport_websocket(socket))  # type: ignore[arg-type]
+        self.assertEqual(socket.closed[0], 1008)  # type: ignore[index]
+        auth.assert_not_called()
+
+    async def test_guard_exception_fails_closed_without_auth_fallback(self) -> None:
+        for failing_guard in (0, 1):
+            with self.subTest(failing_guard=failing_guard):
+                socket = self._Socket()
+                guards = [Mock(return_value=True), Mock(return_value=True)]
+                guards[failing_guard].side_effect = RuntimeError("guard unavailable")
+                with patch.object(plugin_api, "_dashboard_plugin_is_enabled", return_value=True), patch.object(
+                    plugin_api, "_dashboard_ws_guards", return_value=tuple(guards)
+                ):
+                    self.assertIsNone(await plugin_api._admit_transport_websocket(socket))  # type: ignore[arg-type]
+                self.assertEqual(socket.closed[0], 1011)  # type: ignore[index]
+                if failing_guard == 0:
+                    guards[1].assert_not_called()
 
     async def test_failed_dashboard_ticket_is_policy_close(self) -> None:
         socket = self._Socket()
