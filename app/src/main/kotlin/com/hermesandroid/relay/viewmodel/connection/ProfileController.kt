@@ -193,6 +193,13 @@ class ProfileController(
     private val _serverDefaultProfileScope = MutableStateFlow<DashboardProfileScope?>(null)
     val serverDefaultProfileScope: StateFlow<DashboardProfileScope?> =
         _serverDefaultProfileScope.asStateFlow()
+    /** Default identity independent of the explicit selection; never a routing override. */
+    val serverDefaultDisplayProfile: StateFlow<Profile?> = combine(
+        agentProfiles,
+        serverDefaultProfileScope,
+    ) { profiles, serverDefault ->
+        AgentDisplay.effectiveDisplayProfile(null, profiles, serverDefault?.active)
+    }.stateIn(scope, SharingStarted.Eagerly, null)
     private val _serverDefaultProfileSettled = MutableStateFlow(false)
 
     private fun pendingProfileNameForActiveConnection(): String? {

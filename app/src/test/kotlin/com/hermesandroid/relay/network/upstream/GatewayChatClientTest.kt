@@ -197,6 +197,7 @@ class GatewayClientHarness(
             put("model", "gpt-5.6")
             put("provider", "openai")
             put("description", "Android operator")
+            put("display_name", "Guide")
             put("skill_count", 3)
             put("has_avatar", true)
             put("ui_meta", buildJsonObject { put("accent", "#ff5500") })
@@ -1009,6 +1010,7 @@ class GatewayChatClientTest {
 
         assertEquals(1, profiles.size)
         assertEquals("operator", profiles.single().name)
+        assertEquals("Guide", profiles.single().displayName)
         assertEquals("openai", profiles.single().provider)
         assertTrue(profiles.single().hasAvatar)
         assertEquals("#ff5500", (profiles.single().uiMeta["accent"] as JsonPrimitive).content)

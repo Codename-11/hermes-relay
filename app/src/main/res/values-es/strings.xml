@@ -4287,4 +4287,5 @@
     <string name="tool_progress_status_dispatched">Enviado</string>
     <string name="chat_activity_history_notice">Actividad registrada. No se conservan las actualizaciones de progreso; el historial disponible de los subagentes se puede abrir en modo de solo lectura.</string>
     <string name="chat_activity_output_unavailable">La salida ya no está disponible. Esta entrada conserva el estado registrado del proceso.</string>
+    <string name="profile_follow_server_default">Seguir el perfil predeterminado del servidor</string>
 </resources>

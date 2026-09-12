@@ -29,6 +29,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
@@ -1506,7 +1507,7 @@ class DashboardApiClient(
             val patched = buildJsonObject {
                 obj.forEach { (k, v) -> put(k, v) }
                 if (obj["name"] == null && !nameOverride.isNullOrBlank()) put("name", nameOverride)
-                if (obj["model"] == null) put("model", "")
+                if (obj["model"] == null || obj["model"] == JsonNull) put("model", "")
             }
             json.decodeFromJsonElement(Profile.serializer(), patched)
         }.getOrNull()

@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Android shows Hermes profile display names and groups the resolved server default under its agent identity, while preserving explicit profile selection and saved conversations.
 - Android Dashboard-only connections start the profile-scoped session directory before Gateway readiness, so a cold LAN launch cannot leave both the directory and the passive Gateway socket waiting on each other. (#495, #528)
 
 ## [Android 1.16.0] - 2026-09-10

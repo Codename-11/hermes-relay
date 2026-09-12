@@ -4596,4 +4596,5 @@
     <string name="tool_progress_status_dispatched">Übergeben</string>
     <string name="chat_activity_history_notice">Gespeicherte Aktivität. Fortschrittsmeldungen werden nicht gespeichert; der verfügbare Verlauf der Unteragenten kann schreibgeschützt geöffnet werden.</string>
     <string name="chat_activity_output_unavailable">Die Ausgabe ist nicht mehr verfügbar. Dieser Eintrag enthält den gespeicherten Prozessstatus.</string>
+    <string name="profile_follow_server_default">Serverstandard folgen</string>
 </resources>

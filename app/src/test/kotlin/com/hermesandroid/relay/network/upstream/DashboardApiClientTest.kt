@@ -1071,6 +1071,18 @@ class DashboardApiClientTest {
     }
 
     @Test
+    fun listProfiles_keepsDisplayIdentitySeparateAndAcceptsUnconfiguredRoot() = runTest {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(
+            """{"profiles":[{"name":"default","model":null,"is_default":true},
+                {"name":"guide","model":"model","display_name":"Guide","description":"Summary"}]}"""))
+        val profiles = DashboardApiClient(baseUrl = server.url("/").toString()).listProfiles().getOrThrow()
+        assertEquals(listOf("default", "guide"), profiles.map { it.name })
+        assertEquals("", profiles[0].model)
+        assertEquals("Guide", profiles[1].displayName)
+        assertEquals("Summary", profiles[1].description)
+    }
+
+    @Test
     fun listProfiles_parsesObjectMapShapeWithInjectedName() = runTest {
         server.enqueue(
             MockResponse()

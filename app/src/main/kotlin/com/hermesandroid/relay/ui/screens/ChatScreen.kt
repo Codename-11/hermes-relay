@@ -1012,6 +1012,7 @@ fun ChatScreen(
     // of available profiles itself now lives entirely inside the sheet.
     val selectedProfile by connectionViewModel.selectedProfile.collectAsState()
     val effectiveProfile by connectionViewModel.effectiveDisplayProfile.collectAsState()
+    val serverDefaultDisplayProfile by connectionViewModel.serverDefaultDisplayProfile.collectAsState()
     val profilePresentation by connectionViewModel.profilePresentation.collectAsState()
     val isProfileLocked by connectionViewModel.isProfileLocked.collectAsState()
     val lockedProfileName by connectionViewModel.lockedProfileName.collectAsState()
@@ -2479,11 +2480,12 @@ fun ChatScreen(
         }
     }
     val selectedProfileKey = AgentDisplay.profileSessionKey(selectedProfile?.name)
-    val profileShelfAvailable = !supervised && ProfilePresentationPolicy.shouldShowShelf(
+    val profileShelfAvailable = !supervised && com.hermesandroid.relay.ui.components.ProfileShelfPolicy.choices(
         profiles = agentProfiles,
         presentation = profilePresentation,
-        selectedKey = selectedProfileKey,
-    )
+        selectedProfileName = selectedProfile?.name,
+        serverDefaultProfileName = serverDefaultDisplayProfile?.name,
+    ).size > 1
     val profileSwitchEnabled = com.hermesandroid.relay.ui.components.ProfileShelfPolicy.canSwitch(
         isStreaming = isStreaming,
         streamingEndpoint = chatViewModel.streamingEndpoint,

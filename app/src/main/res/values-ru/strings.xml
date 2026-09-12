@@ -4335,4 +4335,5 @@
     <string name="tool_progress_status_dispatched">Отправлено</string>
     <string name="chat_activity_history_notice">Сохранённая активность. Обновления хода работы не сохраняются; доступную историю субагентов можно открыть только для чтения.</string>
     <string name="chat_activity_output_unavailable">Вывод больше недоступен. Эта запись сохраняет зафиксированное состояние процесса.</string>
+    <string name="profile_follow_server_default">Следовать профилю сервера по умолчанию</string>
 </resources>

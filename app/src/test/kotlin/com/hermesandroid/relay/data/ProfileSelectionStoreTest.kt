@@ -21,6 +21,22 @@ import kotlinx.coroutines.sync.withLock
  * raw DataStore shape that its Context constructor resolves in production.
  */
 class ProfileSelectionStoreTest {
+    @Test
+    fun restartedStoreRetainsIndependentDefaultAndNamedChoicesAcrossConnections() = runBlocking {
+        val data = InMemoryPreferencesDataStore()
+        val first = ProfileSelectionStore(data)
+        first.setSelectedProfile("a", AgentDisplay.SERVER_DEFAULT_PROFILE_KEY)
+        first.setSelectedProfile("b", "default")
+        first.setSelectedProfile("c", "victor")
+        val restarted = ProfileSelectionStore(data)
+        assertEquals(AgentDisplay.SERVER_DEFAULT_PROFILE_KEY, restarted.selectedProfileFlow("a").first())
+        assertEquals("default", restarted.selectedProfileFlow("b").first())
+        assertEquals("victor", restarted.selectedProfileFlow("c").first())
+        restarted.setSelectedProfile("a", "victor")
+        assertEquals("default", restarted.selectedProfileFlow("b").first())
+        assertEquals("victor", restarted.selectedProfileFlow("c").first())
+    }
+
 
     private val store = ProfileSelectionStore(InMemoryPreferencesDataStore())
 
