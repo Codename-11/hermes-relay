@@ -1,24 +1,11 @@
-v1.16.0 - Safer startup, connections, and activity
+v1.16.1 - Dashboard-only cold starts recover
 
 Summary
-* Gateway chat opens reliably from a cold launch, saved sign-ins stay with the correct connection, and network changes no longer race the route cache. Bot Mode and delegated-work feedback also remain stable across multiple gateways and later review.
+* Dashboard-only connections can now prepare the selected profile and open Gateway chat without waiting for a background, resume, or network-route change.
 
 Highlights
-* Open Gateway chat on the first launch — An authenticated Gateway wakes and opens from a cold foreground start instead of waiting for the app to background and resume.
-* Keep saved sign-ins with their connection — Switching gateways cannot reuse an outgoing resolver route to invalidate another connection's saved Dashboard session.
-* Recover safely when the network changes — Route-probe completion and endpoint-cache invalidation are serialized so Wi-Fi, mobile-data, VPN, or Tailscale changes do not trigger the reported crash.
-* Review delegated work after it finishes — Compact, bounded activity receipts survive parent replies and remain available read-only, while the live strip appears only during active work.
-
-Improved
-* Keep feedback with the surface that owns it — Themed banners and action cards replace platform popups, global actions stay clear of the composer, and local Developer previews make feedback states inspectable.
-* See session preparation and initialization failures — Chat distinguishes session preparation from response streaming, retains early initialization errors, and opens session diagnostics from the agent header.
-
-Fixed
-* Open same-named bots from multiple gateways — Bot Mode and Active Now keep connection and profile identity together, avoiding duplicate list keys and opening progress on the selected bot.
-* Retry missing attachments in place — A missing attachment keeps its error and Retry action in the attachment card without producing repeated global messages.
-* Paste Dashboard credentials without hidden line breaks — Username and password fields remove pasted carriage returns and line feeds while preserving every other credential character.
+* Open Gateway chat from a Dashboard-only cold start — The selected profile's session directory starts before Gateway readiness, so it cannot wait on the same passive socket that depends on its result.
 
 Compatibility
-* Standard Chat, sessions, profiles, Manage, voice, Bot Mode, and delegated activity continue to use current upstream Hermes without requiring the optional Hermes-Relay Plugin.
-* Hermes-Relay Plugin 1.11.2 is the matching optional release for Relay tools. Existing erased or revoked Dashboard credentials still require a legitimate sign-in.
-* Granular Device Control and the system Voice Focus overlay remain sideload-only.
+* Standard Dashboard and Gateway chat continue to use current upstream Hermes without requiring the optional Hermes-Relay Plugin.
+* Hermes-Relay Plugin 1.11.2 remains the matching optional release for Relay tools.

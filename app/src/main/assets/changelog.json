@@ -2,6 +2,27 @@
  "schema": 3,
  "versions": [
   {
+   "version": "1.16.1",
+   "title": "Dashboard-only cold starts recover",
+   "date": "2026-09-12",
+   "summary": "Dashboard-only connections can now prepare the selected profile and open Gateway chat without waiting for a background, resume, or network-route change.",
+   "changes": [
+    {
+     "id": "gateway-directory-bootstrap",
+     "kind": "fixed",
+     "title": "Open Gateway chat from a Dashboard-only cold start",
+     "summary": "The selected profile's session directory starts before Gateway readiness, so it cannot wait on the same passive socket that depends on its result.",
+     "highlight": true
+    }
+   ],
+   "compatibility": [
+    "Standard Dashboard and Gateway chat continue to use current upstream Hermes without requiring the optional Hermes-Relay Plugin.",
+    "Hermes-Relay Plugin 1.11.2 remains the matching optional release for Relay tools."
+   ],
+   "playNotes": "Dashboard-only connections now prepare the selected profile before Gateway readiness, fixing a remaining cold-start path that could stay on waking or waiting for Gateway until the app resumed or its network route changed.",
+   "sections": []
+  },
+  {
    "version": "1.16.0",
    "title": "Safer startup, connections, and activity",
    "date": "2026-09-10",
