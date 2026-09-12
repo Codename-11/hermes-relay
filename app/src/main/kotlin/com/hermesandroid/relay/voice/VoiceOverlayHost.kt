@@ -164,7 +164,7 @@ class VoiceOverlayHost(context: Context) {
     private val callerObserver = LifecycleEventObserver { _, event ->
         when (event) {
             // Keep microphone protection until the real Activity is foreground again.
-            Lifecycle.Event.ON_RESUME -> if (overlayView != null) hide()
+            Lifecycle.Event.ON_RESUME -> if (overlayView != null) handoffToApp()
             Lifecycle.Event.ON_DESTROY -> exitVoiceSession()
             else -> Unit
         }
@@ -195,11 +195,11 @@ class VoiceOverlayHost(context: Context) {
                 // Already foreground: no lifecycle transition is needed for a safe handoff.
                 if (sessionId == id &&
                     callerLifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true
-                ) hide()
+                ) handoffToApp()
             },
             onExit = { exitVoiceSession(id) },
             onDismissOverlay = { exitVoiceSession(id) },
-            onResetPosition = { moveTo(24, 96) },
+            onResetPosition = guarded { moveTo(24, 96) },
         )
         exitCallback = session.onExit
         callerLifecycle = lifecycle
@@ -212,6 +212,12 @@ class VoiceOverlayHost(context: Context) {
     }
 
     private var exitCallback: (() -> Unit)? = null
+
+    private fun handoffToApp() {
+        val id = sessionId ?: return
+        // A fast return from Android Settings must not bypass revocation teardown.
+        if (canContinue(id)) hide() else exitVoiceSession(id)
+    }
 
     internal fun canStart(id: Long): Boolean = sessionId == id &&
         callerLifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true && canContinue(id)

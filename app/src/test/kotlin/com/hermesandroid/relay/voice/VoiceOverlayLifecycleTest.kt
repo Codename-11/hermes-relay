@@ -113,4 +113,14 @@ class VoiceOverlayLifecycleTest {
         assertEquals(0, exits)
         assertTrue(state.value.voiceMode)
     }
+
+    @Test fun revocationBeforeResumeEndsVoiceInsteadOfHandingItBack() {
+        host.show(session(), owner.lifecycle)
+        assertTrue(host.onServiceReady(host.sessionId!!))
+        owner.lifecycle.currentState = Lifecycle.State.STARTED
+        access = access.copy(overlay = false)
+        owner.lifecycle.currentState = Lifecycle.State.RESUMED
+        assertNull(host.sessionId)
+        assertEquals(1, exits)
+    }
 }
