@@ -780,6 +780,9 @@ class ChatViewModel : ViewModel() {
 
     /** Callback to persist session ID — set by RelayApp */
     var onSessionChanged: ((String?) -> Unit)? = null
+
+    /** Capture a voice-session receipt at live admission, never during history replay. */
+    internal var gatewayInboundSpeechReceiver: (() -> ((String) -> Unit)?)? = null
     var onFreshDraftSelected: ((String?, SessionTransport) -> Unit)? = null
 
     /**
@@ -3070,6 +3073,7 @@ class ChatViewModel : ViewModel() {
         var boundHandle: ActiveTurnHandle? = null
         var inputTokens: Int? = null
         var outputTokens: Int? = null
+        var speechReceiver: ((String) -> Unit)? = null
 
         fun ownsTranscriptSession(): Boolean =
             chatHandler === handler && handler.currentSessionId.value == storedSessionId
@@ -3148,9 +3152,9 @@ class ChatViewModel : ViewModel() {
             onTurnComplete = {
                 if (acceptsEvent()) handler.onTurnComplete(messageId)
             },
-            // Server-initiated turns already take the bounded durable-history
-            // reconcile below on every completion.
-            onReconcileRequired = { },
+            // Recovery can settle a partial live bubble before durable history
+            // arrives. That history repairs Chat, but is not a speech receipt.
+            onReconcileRequired = { speechReceiver = null },
             onComplete = {
                 val canWriteTranscript = acceptsEvent()
                 val expectedText = handler.messages.value
@@ -3168,7 +3172,9 @@ class ChatViewModel : ViewModel() {
                     } else {
                         finalizeTurnSideEffects(handler, messageId)
                         AppAnalytics.onStreamComplete(inputTokens, outputTokens)
+                        speechReceiver?.invoke(expectedText.orEmpty())
                     }
+                    speechReceiver = null
                     scheduleGatewayHistoryReconcile(
                         storedSessionId = storedSessionId,
                         expectedAssistantText = expectedText,
@@ -3270,6 +3276,9 @@ class ChatViewModel : ViewModel() {
                     // turn before its queued completion callback has settled.
                     baselineAssistantCount = handler.messages.value.count {
                         it.role == MessageRole.ASSISTANT && !it.clientOnly
+                    }
+                    if (queuedRecovery == null) {
+                        speechReceiver = gatewayInboundSpeechReceiver?.invoke()
                     }
                     boundHandle = handle
                     accepted = true

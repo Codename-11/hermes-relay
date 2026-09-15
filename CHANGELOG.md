@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android Standard Voice speaks live background completions in its active conversation after the original reply finishes. Stop and conversation changes discard pending speech. (#545)
+
 ## [Android 1.17.0] - 2026-09-13
 
 ### Added

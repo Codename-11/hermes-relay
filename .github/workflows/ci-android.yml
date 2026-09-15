@@ -188,6 +188,9 @@ jobs:
             --tests com.hermesandroid.relay.util.IssueReportAndDiagnosticsTest \
             --tests com.hermesandroid.relay.data.AppLanguageTest \
             --tests com.hermesandroid.relay.viewmodel.ChatStreamRecoveryTest \
+            --tests com.hermesandroid.relay.viewmodel.ChatViewModelGatewayInboundTurnTest \
+            --tests com.hermesandroid.relay.viewmodel.VoiceInboundCompletionTest \
+            --tests com.hermesandroid.relay.voice.VoiceViewModelBargeInTest \
             --tests com.hermesandroid.relay.viewmodel.ChatViewModelRealtimeTurnTest \
             --tests com.hermesandroid.relay.network.relay.RealtimeVoiceEventParsingTest \
             --tests com.hermesandroid.relay.voice.VoiceCommandInterpreterTest \

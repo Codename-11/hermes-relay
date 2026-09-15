@@ -218,6 +218,21 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("child_session_id", receipt["display_metadata"])
         self.assertEqual("Delegation complete.", history[3]["content"])
 
+    async def test_unsolicited_voice_turns_follow_one_submit(self) -> None:
+        _, base_url = await self.start("unsolicited_voice_completions")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "prompt.submit", {"text": "fixture"})
+        frames = await self.frames_until(ws, lambda f: (
+            f.get("params", {}).get("type") == "message.complete"
+            and f.get("params", {}).get("payload", {}).get("text") == "Delegated work finished."
+        ))
+        answers = [f["params"]["payload"]["text"] for f in frames
+                   if f.get("params", {}).get("type") == "message.complete"]
+        self.assertEqual([
+            "Work started.", "Process finished.", "Process finished.",
+            "Watch matched.", "Delegated work finished.",
+        ], answers)
+
     async def test_ownership_rejection_is_terminal_without_persisted_turn(self) -> None:
         fixture, base_url = await self.start("ownership_rejection")
         ws, _ = await self.connect(base_url)
@@ -537,6 +552,7 @@ class ScenarioTestCase(unittest.TestCase):
             "cross_client_observation",
             "initial_history_bind",
             "ordinary_turn",
+            "unsolicited_voice_completions",
             "ownership_rejection",
             "rapid_tools_interims",
             "subagent_child_preview",

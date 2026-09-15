@@ -900,6 +900,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      *  we don't re-process older turns when the history list updates. */
     private var assistantSpeechCursor: AssistantSpeechCursor? = null
     private var voiceTurnSessionFence: VoiceTurnSessionFence? = null
+    private var inboundSpeechGeneration = 0L
+    private var inboundSpeechOwner: Pair<ConversationBinding, String?>? = null
+    private var inboundSpeechObserver: Job? = null
+    private val pendingInboundSpeech = ArrayDeque<Pair<() -> Boolean, String>>()
+    private var inboundSpeechPlaying = false
     private var sentenceBuffer: StringBuilder = StringBuilder()
     private val realtimeSpeechCoalescer = BalancedRealtimeTtsCoalescer()
     private val brokeredToolSpeechKeys = mutableSetOf<String>()
@@ -1199,9 +1204,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         voiceHandoffReporter: ((VoiceHandoffEvent) -> Unit)? = null,
     ) {
         cancelStandardSpeechStream("voice dependencies rewired")
+        retireInboundSpeech()
+        this.chatViewModel?.gatewayInboundSpeechReceiver = null
         this.voiceClient = voiceClient
         this.voiceAudioClient = voiceAudioClient ?: RelayVoiceAudioClientAdapter(voiceClient)
         this.chatViewModel = chatViewModel
+        chatViewModel.gatewayInboundSpeechReceiver = ::captureInboundSpeechReceiver
         this.recorder = recorder
         this.player = player
         this.realtimePcmPlayer = realtimePcmPlayer
@@ -1537,6 +1545,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun applyVoiceSettingsSnapshot(settings: com.hermesandroid.relay.data.VoiceSettings) {
         val nextEngineMode = VoiceEngineMode.fromStorage(settings.engineMode)
+        if (voiceEngineMode != nextEngineMode) {
+            if (inboundSpeechPlaying) interruptSpeaking(cancelActiveTurn = false)
+            else retireInboundSpeech()
+        }
         val finalAnswerPolicyChanged = finalAnswerOnly != settings.finalAnswerOnly
         val realtimeSelectionChanged =
             realtimeModel != settings.realtimeModel || realtimeVoice != settings.realtimeVoice
@@ -1675,6 +1687,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 backgroundRun = if (orphanedRun != null) null else it.backgroundRun,
             )
         }
+        if (freshEntry) bindInboundSpeechOwner()
         prewarmRealtimeSession()
     }
 
@@ -1885,6 +1898,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun exitVoiceMode() {
+        retireInboundSpeech()
         cancelPendingListeningStart()
         // Idempotence guard — added 2026-04-21 after logcat showed the voice-
         // exit chime playing on every Add-connection tap.
@@ -2291,6 +2305,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * listening turn; until then, idle queue-drain callbacks are ignored.
      */
     fun pauseContinuousMode() {
+        retireInboundSpeech()
         cancelPendingListeningStart()
         continuousLoopArmed = false
         continuousListeningPaused = _uiState.value.interactionMode == InteractionMode.Continuous
@@ -2427,6 +2442,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * new turn on the next mic tap).
      */
     fun interruptSpeaking(cancelActiveTurn: Boolean = true): Job? {
+        retireInboundSpeech()
         cancelPendingListeningStart()
         Log.i(
             TAG,
@@ -3584,6 +3600,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         voiceTurnSessionFence?.bindSubmittedUser(submittedUserUiKey)
+        if (inboundSpeechOwner == null) bindInboundSpeechOwner()
         beginBargeInTurnIfEnabled()
         startStreamObserver(chatVm)
     }
@@ -4738,6 +4755,99 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         standardSpeechStreamBargeInStarted.set(false)
     }
 
+    /** The voice overlay owns live completions only for the conversation it entered. */
+    private fun bindInboundSpeechOwner() {
+        val chat = chatViewModel ?: return
+        retireInboundSpeech()
+        inboundSpeechOwner = chat.conversationBinding.value to chat.currentSessionId.value
+        inboundSpeechObserver = viewModelScope.launch {
+            combine(chat.conversationBinding, chat.currentSessionId, _uiState) { binding, id, state ->
+                Triple(binding, id, state)
+            }.collect { (binding, id, _) ->
+                val owner = inboundSpeechOwner ?: return@collect
+                if (owner != (binding to id)) {
+                    // The first voice submission may create/adopt a durable session.
+                    if (owner.second == null && owner.first.contextKey == binding.contextKey &&
+                        voiceTurnSessionFence?.accepts(id, chat.messages.value) == true
+                    ) {
+                        inboundSpeechOwner = binding to id
+                    } else {
+                        val wasPlaying = inboundSpeechPlaying
+                        retireInboundSpeech()
+                        if (wasPlaying) interruptSpeaking(cancelActiveTurn = false)
+                        return@collect
+                    }
+                }
+                drainInboundSpeech()
+            }
+        }
+    }
+
+    private fun retireInboundSpeech() {
+        inboundSpeechGeneration++
+        inboundSpeechOwner = null
+        inboundSpeechObserver?.cancel()
+        inboundSpeechObserver = null
+        pendingInboundSpeech.clear()
+        inboundSpeechPlaying = false
+    }
+
+    /** Called on Main before Chat installs the new live assistant placeholder. */
+    private fun captureInboundSpeechReceiver(): ((String) -> Unit)? {
+        val chat = chatViewModel ?: return null
+        val owner = inboundSpeechOwner ?: return null
+        val generation = inboundSpeechGeneration
+        fun current(): Boolean =
+            generation == inboundSpeechGeneration && _uiState.value.voiceMode &&
+                voiceEngineMode == VoiceEngineMode.HermesVoiceOutput &&
+                inboundSpeechOwner == owner &&
+                owner == (chat.conversationBinding.value to chat.currentSessionId.value)
+        if (owner.second == null || !current()) return null
+
+        // A fast unsolicited start can overtake combine's final local-turn snapshot.
+        // Consume that final snapshot before the new placeholder exists so the two
+        // speech paths cannot narrate the same assistant bubble.
+        if (streamObserverJob?.isActive == true && !chat.isStreaming.value) {
+            assistantSpeechCursor?.let { cursor ->
+                consumeAssistantSpeech(cursor.poll(chat.messages.value), runActive = false)
+            }
+            streamObserverJob?.cancel()
+        }
+        var consumed = false
+        return { text ->
+            if (!consumed) {
+                consumed = true
+                if (current() && sanitizeForTts(text).isNotBlank()) {
+                    pendingInboundSpeech.addLast(::current to text)
+                    drainInboundSpeech()
+                }
+            }
+        }
+    }
+
+    /** Wait for a capture/earlier reply to settle; use the configured output renderer. */
+    private fun drainInboundSpeech(): Boolean {
+        if (pendingInboundSpeech.isEmpty()) return false
+        if (_uiState.value.state != VoiceState.Idle || isMicCaptureActive() ||
+            streamObserverJob?.isActive == true ||
+            chatViewModel?.isStreaming?.value == true ||
+            !agentAudioCompletionDecision().finishNow
+        ) return false
+        while (pendingInboundSpeech.isNotEmpty()) {
+            val (current, text) = pendingInboundSpeech.removeAt(0)
+            if (!current()) continue
+            cancelPendingListeningStart()
+            streamComplete = true
+            inboundSpeechPlaying = true
+            resetTtsTurnStats()
+            clearSpokenChunksState()
+            speakSettledFinalAnswer(text)
+            scheduleAgentAudioCompletionCheck()
+            return true
+        }
+        return false
+    }
+
     /**
      * Observe every assistant bubble created by the active Hermes run. A tool
      * turn can finalize one bubble while the run is still active and later
@@ -4770,37 +4880,40 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         return@collect
                     }
 
-                    val batch = cursor.poll(messages)
-                    if (finalAnswerOnly) {
-                        if (batch.deltas.isNotEmpty()) {
-                            onVisualStreamDelta(batch.aggregateText)
-                        }
-                    } else {
-                        batch.deltas.forEach { update ->
-                            if (update.startsNewBubble) {
-                                beginAssistantSpeechBubble()
-                            }
-                            onStreamDelta(update.text, batch.aggregateText)
-                        }
-                    }
-                    // Tool state can change without text growth.
-                    if (!finalAnswerOnly) {
-                        batch.assistantMessages.forEach(::observeHermesToolLoopForSpeech)
-                    }
-
-                    if (!runActive && batch.hasTurnAssistant) {
-                        streamComplete = true
-                        idleFlushJob?.cancel()
-                        idleFlushJob = null
-                        if (finalAnswerOnly) {
-                            speakSettledFinalAnswer(batch.finalAnswerText)
-                        } else if (!finishStandardSpeechStream()) {
-                            flushRemainingBuffer()
-                        }
-                        streamObserverJob?.cancel()
-                        scheduleAgentAudioCompletionCheck()
-                    }
+                    consumeAssistantSpeech(cursor.poll(messages), runActive)
                 }
+        }
+    }
+
+    private fun consumeAssistantSpeech(batch: AssistantSpeechBatch, runActive: Boolean) {
+        if (finalAnswerOnly) {
+            if (batch.deltas.isNotEmpty()) {
+                onVisualStreamDelta(batch.aggregateText)
+            }
+        } else {
+            batch.deltas.forEach { update ->
+                if (update.startsNewBubble) {
+                    beginAssistantSpeechBubble()
+                }
+                onStreamDelta(update.text, batch.aggregateText)
+            }
+        }
+        // Tool state can change without text growth.
+        if (!finalAnswerOnly) {
+            batch.assistantMessages.forEach(::observeHermesToolLoopForSpeech)
+        }
+
+        if (!runActive && batch.hasTurnAssistant) {
+            streamComplete = true
+            idleFlushJob?.cancel()
+            idleFlushJob = null
+            if (finalAnswerOnly) {
+                speakSettledFinalAnswer(batch.finalAnswerText)
+            } else if (!finishStandardSpeechStream()) {
+                flushRemainingBuffer()
+            }
+            streamObserverJob?.cancel()
+            scheduleAgentAudioCompletionCheck()
         }
     }
 
@@ -5800,6 +5913,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun finishAgentAudioOutput() {
+        inboundSpeechPlaying = false
         continuousResumeJob = null
         _responseSpeechActive.value = false
         stopBargeInListener()
@@ -5825,6 +5939,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(amplitude = 0f, outputAudioActive = false) }
         }
 
+        if (drainInboundSpeech()) return
         if (_uiState.value.interactionMode == InteractionMode.Continuous &&
             continuousLoopArmed &&
             _uiState.value.state == VoiceState.Idle
@@ -6686,6 +6801,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        retireInboundSpeech()
+        chatViewModel?.gatewayInboundSpeechReceiver = null
         super.onCleared()
         voicePreviewJob?.cancel()
         voicePreviewJob = null

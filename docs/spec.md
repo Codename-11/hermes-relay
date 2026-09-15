@@ -1199,7 +1199,7 @@ utilities.
   transfers ownership so assistant-process cleanup cannot cancel the main-app flow.
   While keyguard is active, the surface keeps only generic phase and retry copy;
   transcript, response, route-specific errors, and screen context remain hidden.
-- Stable voice integrates with `ChatViewModel` by **observing** `messages: StateFlow`; transcribed text goes through normal `chatVm.sendMessage(text)` so voice utterances appear as regular user messages in chat history. Experimental Realtime Agent creates a mirrored chat turn and applies broker events directly so tool state, transcript text, assistant deltas, and final responses appear without leaving voice mode.
+- Stable voice observes the submitted run through `messages: StateFlow`; transcribed text uses the normal Chat pipeline. While voice remains active, successful live unsolicited Gateway turns in that exact conversation also deliver their settled answer once through the configured voice output. Delivery waits for current capture/playback; Stop, exit, engine changes, and conversation changes invalidate pending speech. History/reconnect replay and passive observation never create speech. Experimental Realtime Agent retains its separate mirrored chat turn and broker events.
 - `VoiceModeOverlay` — full-screen UI with the MorphingSphere at 60% height in `voiceMode=true`, transcribed + response text, mic button supporting Tap / Hold / Continuous interaction modes.
 - The optional `SYSTEM_ALERT_WINDOW` Voice control is user-invoked from an
   active in-app turn. It starts as a wide compact bar, expands for transcript,

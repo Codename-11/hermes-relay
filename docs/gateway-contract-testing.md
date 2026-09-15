@@ -68,6 +68,7 @@ the upstream contract identifiers it depends on.
 |---|---|
 | `initial_history_bind` | Durable, profile-scoped history is already available when the client resumes and first binds its rendered transcript |
 | `ordinary_turn` | Normal message start, deltas, completion, and persisted history |
+| `unsolicited_voice_completions` | One submitted turn followed by live same-session process, watch, and delegation answers, including duplicate start/terminal frames; Standard Voice receives each admitted answer once |
 | `clarify_legacy` | Top-level single question and unkeyed `clarify.respond` |
 | `clarify_normalized_single` | One normalized `questions[]` entry still requires its exact `qid` |
 | `clarify_batch` | Independent qid responses, partial acknowledgement, and answered-question replay on reconnect |
@@ -178,6 +179,35 @@ history read, and authoritative settled state. Evidence output is bounded and
 redacted.
 
 ## Current-upstream conformance
+
+Standard Voice receives successful unsolicited assistant answers from live Chat
+admission, with a receipt captured before the new assistant placeholder exists.
+The receipt belongs to the active voice generation and conversation binding;
+history reads, passive Desktop observation, unmatched terminal recovery, and
+queued-checkpoint restoration do not create speech receipts. Stop, voice exit,
+engine changes, and conversation changes invalidate pending receipts. An active
+microphone capture or earlier spoken answer finishes before queued speech starts.
+The existing Continuous microphone release barrier still owns rearming.
+
+Process completion/watch notifications and async delegation wakes enter upstream's
+ordinary prompt runner (`tui_gateway/session_notifications.py` and `prompt_turn.py`
+in current split upstream sources). The resulting assistant answer uses the same
+live admission contract, regardless of its trigger. Raw process output, child
+previews, and `background.complete` side-agent events are not assistant answers
+and do not independently trigger narration. Reconnect history remains silent;
+new live turns after reconnect can receive new receipts for the same owner.
+
+`VoiceInboundCompletionTest` exercises the voice receipt and configured synthesis
+path; `ChatViewModelGatewayInboundTurnTest` exercises real WebSocket admission.
+The `unsolicited_voice_completions` manifest certifies the upstream terminal
+contract without making provider or physical-audio claims.
+
+For emulator lifecycle coverage, start that fixture on host loopback and run
+`GatewayExternalFixtureInstrumentedTest#unsolicitedVoiceCompletions_surviveActivityPauseWithoutHistorySpeech`
+on `standardPhoneApi36`, passing its emulator-accessible URL through
+`gatewayFixtureBaseUrl`. The test uses production Chat/Voice view models and a
+synthetic Standard audio client returning silent WAVs; it asserts three synthesis
+requests across Activity pause/resume, with no provider calls or microphone capture.
 
 Run against a clean checkout of `NousResearch/hermes-agent`:
 
