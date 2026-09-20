@@ -1186,6 +1186,8 @@
     <string name="drawer_new_chat">New Chat</string>
     <string name="drawer_search_placeholder">Search sessions or id...</string>
     <string name="drawer_search_sessions">Search sessions</string>
+    <string name="drawer_pin_sidebar">Pin sessions sidebar</string>
+    <string name="drawer_unpin_sidebar">Unpin sessions sidebar</string>
     <string name="drawer_activity_working">Working</string>
     <string name="drawer_activity_needs_input">Needs input</string>
     <string name="drawer_activity_starting">Starting</string>
