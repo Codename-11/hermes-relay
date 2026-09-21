@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
@@ -53,6 +54,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -199,6 +201,37 @@ internal fun resolveSessionDrawerFilter(
     else -> filter
 }
 
+/**
+ * Where the Sessions surface renders for a given available width and pin
+ * intent. Pure function so the 840dp threshold behavior is JVM-testable.
+ *
+ * - Pinned intent only takes effect at wide widths (>= [SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP]).
+ * - Below the threshold the modal drawer renders (and the pin affordance is
+ *   hidden) while the persisted intent survives for the next wide layout.
+ */
+enum class SessionSidebarLayout { Sidebar, Modal }
+
+const val SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP = 840
+const val SESSIONS_SIDEBAR_WIDTH_DP = 320
+
+fun resolveSessionSidebarLayout(availableWidthDp: Int, pinned: Boolean): SessionSidebarLayout =
+    if (pinned && availableWidthDp >= SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP) {
+        SessionSidebarLayout.Sidebar
+    } else {
+        SessionSidebarLayout.Modal
+    }
+
+/**
+ * Whether the modal drawer's edge-swipe gestures should be active. Pure so the
+ * supervised rule stays JVM-testable. Edge-swipe opens the modal drawer, so it
+ * must be off when the pinned sidebar is already the sessions surface —
+ * otherwise a swipe stacks a second sessions UI on top of the sidebar.
+ */
+fun resolveDrawerGesturesEnabled(
+    supervisedHistoryAllowed: Boolean,
+    pinnedSidebar: Boolean,
+): Boolean = supervisedHistoryAllowed && !pinnedSidebar
+
 internal enum class SessionDrawerLoadPresentation {
     Loading,
     Unavailable,
@@ -269,6 +302,16 @@ fun SessionDrawerContent(
     onRenameProfileSession: ((String, String, String) -> Unit)? = null,
     onSetProfileSessionPinned: ((String, String, Boolean) -> Unit)? = null,
     onSetProfileSessionArchived: ((String, String, Boolean) -> Unit)? = null,
+    /**
+     * True renders the sessions UI as a persistent 320dp sidebar (wide layout);
+     * false keeps the existing modal drawer sheet presentation. Default false
+     * preserves the compact drawer behavior and every existing call site.
+     */
+    asSidebar: Boolean = false,
+    /** Pin/unpin affordance in the panel header. Null hides the control. */
+    onTogglePin: (() -> Unit)? = null,
+    /** Whether the sidebar pin is currently active (drives the control's state). */
+    pinned: Boolean = false,
 ) {
     var renameDialogTarget by remember { mutableStateOf<Pair<ProfileSessionRow, Boolean>?>(null) }
     var newThreadDialog by remember { mutableStateOf(false) }
@@ -434,11 +477,7 @@ fun SessionDrawerContent(
         }
     }
 
-    ModalDrawerSheet(
-        modifier = Modifier.width(320.dp),
-        drawerContainerColor = RelayRefresh.Background,
-        drawerContentColor = RelayRefresh.Ink,
-    ) {
+    val panel: @Composable () -> Unit = {
         Column(modifier = Modifier.padding(16.dp)) {
             // Header
             Row(
@@ -558,6 +597,30 @@ fun SessionDrawerContent(
                             Icons.Filled.Refresh,
                             contentDescription = stringResource(R.string.drawer_refresh_sessions),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+                // Pin/unpin: keeps the sessions panel docked beside the chat on
+                // wide layouts instead of opening it as a modal drawer. The
+                // control is only supplied where the pin can take effect
+                // (available width >= 840dp), so it never appears uselessly.
+                onTogglePin?.let { togglePin ->
+                    IconButton(onClick = togglePin, modifier = Modifier.size(36.dp)) {
+                        Icon(
+                            Icons.Filled.PushPin,
+                            contentDescription = stringResource(
+                                if (pinned) {
+                                    R.string.drawer_unpin_sidebar
+                                } else {
+                                    R.string.drawer_pin_sidebar
+                                },
+                            ),
+                            tint = if (pinned) {
+                                RelayRefresh.Amber
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                             modifier = Modifier.size(20.dp),
                         )
                     }
@@ -959,6 +1022,28 @@ fun SessionDrawerContent(
                 }
             }
         }
+        }
+    }
+
+    // Present the identical sessions panel either as the modal drawer sheet
+    // (compact layouts, unchanged) or as a persistent 320dp leading sidebar
+    // (wide layouts with the pin active). Filters, search, rows, and dialogs
+    // are defined once above so both presentations stay behaviorally identical.
+    if (asSidebar) {
+        Surface(
+            modifier = Modifier.width(320.dp).fillMaxHeight(),
+            color = RelayRefresh.Background,
+            contentColor = RelayRefresh.Ink,
+        ) {
+            panel()
+        }
+    } else {
+        ModalDrawerSheet(
+            modifier = Modifier.width(320.dp),
+            drawerContainerColor = RelayRefresh.Background,
+            drawerContentColor = RelayRefresh.Ink,
+        ) {
+            panel()
         }
     }
 

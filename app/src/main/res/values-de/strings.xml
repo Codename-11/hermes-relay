@@ -993,6 +993,8 @@
     <string name="drawer_new_chat">Neuer Chat</string>
     <string name="drawer_search_placeholder">Sitzungen oder ID suchen...</string>
     <string name="drawer_search_sessions">Sitzungen durchsuchen</string>
+    <string name="drawer_pin_sidebar">Sitzungsleiste anheften</string>
+    <string name="drawer_unpin_sidebar">Sitzungsleiste lösen</string>
     <string name="drawer_activity_working">Wird bearbeitet</string>
     <string name="drawer_activity_needs_input">Eingabe erforderlich</string>
     <string name="drawer_activity_starting">Wird gestartet</string>
