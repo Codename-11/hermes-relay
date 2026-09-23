@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Desktop tray notices, screenshot evidence, and grant prompts stay reusable after dismissal; screenshot evidence keeps the most recently selected image. (#606)
 - Proactive phone Thread messages render relay-token and host-path media as attachments while preserving multiline text; notification previews omit media markers. (#485)
 - Desktop computer screenshots attach validated image bytes to the host tool result instead of returning base64 as plain text.
 - Relay-owned media uploads are removed on token expiry, eviction, and shutdown; media activity logs omit tokens, file paths, and screenshot bytes.

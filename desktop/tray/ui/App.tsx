@@ -286,16 +286,20 @@ function EvidenceWindow() {
   const [evidenceId, setEvidenceId] = useState<string | null>(null)
   const [source, setSource] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const requestGeneration = useRef(0)
   useEffect(() => {
     const receive = (event: Event) => {
       const id = (event as CustomEvent<{ evidenceId: string }>).detail.evidenceId
+      const generation = ++requestGeneration.current
       setEvidenceId(id); setSource(null); setError(null)
-      void call<string>('get_activity_screenshot', { evidenceId: id }).then(setSource).catch(value => setError(String(value)))
+      void call<string>('get_activity_screenshot', { evidenceId: id })
+        .then(value => { if (generation === requestGeneration.current) setSource(value) })
+        .catch(value => { if (generation === requestGeneration.current) setError(String(value)) })
     }
     const close = (event: KeyboardEvent) => { if (event.key === 'Escape') void getCurrentWindow().hide() }
     window.addEventListener('hermes-screenshot-evidence', receive)
     window.addEventListener('keydown', close)
-    return () => { window.removeEventListener('hermes-screenshot-evidence', receive); window.removeEventListener('keydown', close) }
+    return () => { requestGeneration.current++; window.removeEventListener('hermes-screenshot-evidence', receive); window.removeEventListener('keydown', close) }
   }, [])
   return <div className="evidence-shell">
     <header><span><Eye /><strong>Screenshot evidence</strong><small>Stored locally with this activity event</small></span><button aria-label="Close screenshot" onClick={() => getCurrentWindow().hide()}><X /></button></header>
