@@ -1540,9 +1540,6 @@ fun ChatScreen(
     // Pinned Sessions sidebar intent (persisted). Only takes effect when the
     // available chat width is wide enough; see resolveSessionSidebarLayout.
     val sessionsSidebarPinned by connectionViewModel.sessionsSidebarPinned.collectAsState()
-    val toggleSessionsSidebarPin: () -> Unit = {
-        connectionViewModel.setSessionsSidebarPinned(!sessionsSidebarPinned)
-    }
     LaunchedEffect(chatViewModel, drawerState) {
         chatViewModel.sessionDirectoryRefreshRequests.collect {
             if (drawerState.isOpen || allProfileSessions.isNotEmpty()) {
@@ -2486,6 +2483,13 @@ fun ChatScreen(
     val hasLiveConversationSurface = messages.isNotEmpty() || isStreaming
     val isChatConnecting = chatConnectState == ChatConnectState.Connecting &&
         !hasLiveConversationSurface
+    val sessionsHistoryAllowed = !supervised || supervisedPolicy.capabilities.conversationHistory
+    val toggleSessionsSidebarPin: () -> Unit = {
+        scope.launch {
+            if (!sessionsSidebarPinned) drawerState.close()
+            connectionViewModel.setSessionsSidebarPinned(!sessionsSidebarPinned)
+        }
+    }
 
     BoxWithConstraints {
         // Available chat width in dp drives the wide-layout threshold; the
@@ -2496,6 +2500,7 @@ fun ChatScreen(
         val sidebarLayout = resolveSessionSidebarLayout(
             availableWidthDp,
             sessionsSidebarPinned,
+            historyAllowed = sessionsHistoryAllowed,
         )
         val isPinnedSidebar = sidebarLayout == SessionSidebarLayout.Sidebar
         val sessionsDrawerContent: @Composable (Boolean) -> Unit = { renderAsSidebar ->
@@ -2573,7 +2578,7 @@ fun ChatScreen(
                 isLoadingMore = isLoadingMoreSessions,
                 hasMore = hasMoreSessions,
                 loadMoreFailed = sessionPageLoadFailed,
-                isOpen = drawerState.isOpen,
+                isOpen = drawerState.isOpen || isPinnedSidebar,
                 activityStates = sessionActivityStates,
                 animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
@@ -2766,10 +2771,10 @@ fun ChatScreen(
                     }
                 },
                 asSidebar = renderAsSidebar,
-                // Pin affordance lives in the panel header; shown only
+                // Pin affordance lives below the panel header; shown only
                 // where the pin can take effect (wide layout).
-                onTogglePin = if (isWideLayout) toggleSessionsSidebarPin else null,
-                pinned = sessionsSidebarPinned,
+                onTogglePin = if (isWideLayout && sessionsHistoryAllowed) toggleSessionsSidebarPin else null,
+                pinned = isPinnedSidebar,
             )
         }
         // A pinned sidebar behaves as an always-open drawer: entering the
@@ -2778,8 +2783,9 @@ fun ChatScreen(
         // sessions surface, so a drawer left open at pin time is closed —
         // otherwise it overlays a duplicate sessions panel.
         LaunchedEffect(isPinnedSidebar) {
+            // Unpinning returns to the closed, on-demand drawer as well.
+            drawerState.close()
             if (isPinnedSidebar) {
-                drawerState.close()
                 chatViewModel.setSessionActivityDrawerOpen(true)
                 chatViewModel.refreshSessionsIfStale()
             }
@@ -2802,11 +2808,13 @@ fun ChatScreen(
                 // Edge-swipe is also disabled while the pinned sidebar owns the
                 // leading edge, so a swipe can't open a second sessions surface.
                 gesturesEnabled = resolveDrawerGesturesEnabled(
-                    supervisedHistoryAllowed =
-                        !supervised || supervisedPolicy.capabilities.conversationHistory,
+                    supervisedHistoryAllowed = sessionsHistoryAllowed,
                     pinnedSidebar = isPinnedSidebar,
                 ),
-                drawerContent = { sessionsDrawerContent(false) },
+                // Do not compose a second session browser behind the sidebar.
+                drawerContent = {
+                    if (!isPinnedSidebar) sessionsDrawerContent(false)
+                },
     ) {
         val isDarkTheme = LocalBrand.current.isDark
 
@@ -2827,13 +2835,11 @@ fun ChatScreen(
                     // hamburger would only stack a second modal sessions
                     // drawer over it — the pin/unpin affordance lives in the
                     // sidebar header instead, so the control is omitted.
-                    if (!isPinnedSidebar &&
-                        (!supervised || supervisedPolicy.capabilities.conversationHistory)
-                    ) {
+                    if (!isPinnedSidebar && sessionsHistoryAllowed) {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.cd_sessions))
                         }
-                    } else if (supervisedPolicy.capabilities.newChat) {
+                    } else if (supervised && !sessionsHistoryAllowed && supervisedPolicy.capabilities.newChat) {
                         IconButton(onClick = { chatViewModel.createNewChat() }) {
                             Icon(Icons.Filled.Edit, contentDescription = "New chat")
                         }
@@ -4973,7 +4979,11 @@ fun ChatScreen(
             }
         }
 
-        // Voice mode overlay — covers the whole Box when voiceUiState.voiceMode
+        } // end chat Box
+            } // end ModalNavigationDrawer
+        } // end padded chat Box
+
+        // Voice mode covers both Chat and the pinned Sessions sidebar.
         AnimatedVisibility(
             visible = voiceUiState.voiceMode,
             enter = fadeIn(),
@@ -5043,9 +5053,6 @@ fun ChatScreen(
                 onCardInput = handleCardInput,
                 // === END v0.4.1 ===
             )
-        }
-        } // end Box
-            }
         }
     }
     }

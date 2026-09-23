@@ -7,6 +7,12 @@ Swipe from the left edge or tap the hamburger menu icon to open the session draw
 - Last activity timestamp
 - Message count
 
+On an unfolded foldable or other wide Chat layout, use **Pin sessions sidebar**
+in the drawer to keep Sessions visible beside the conversation. Use **Unpin
+sessions sidebar** to hide it; the hamburger menu then opens the drawer when
+needed. Compact layouts always use the drawer. Your pin choice is saved and
+takes effect again when the Chat layout becomes wide enough.
+
 ## Creating a New Chat
 
 Tap **New Chat** in the session drawer, or just start typing — a session is automatically created on your first message.

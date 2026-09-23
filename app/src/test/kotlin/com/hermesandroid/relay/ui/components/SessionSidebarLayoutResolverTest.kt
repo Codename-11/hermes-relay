@@ -53,6 +53,18 @@ class SessionSidebarLayoutResolverTest {
         )
     }
 
+    @Test
+    fun pinnedIntent_waitsWhileSupervisedHistoryIsBlocked() {
+        assertEquals(
+            SessionSidebarLayout.Modal,
+            resolveSessionSidebarLayout(1024, pinned = true, historyAllowed = false),
+        )
+        assertEquals(
+            SessionSidebarLayout.Sidebar,
+            resolveSessionSidebarLayout(1024, pinned = true, historyAllowed = true),
+        )
+    }
+
     // resolveDrawerGesturesEnabled — edge-swipe must not open the modal
     // drawer when supervised mode gates conversation history or when the
     // pinned sidebar already renders as the persistent sessions surface.

@@ -35,6 +35,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
@@ -104,6 +105,7 @@ import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -203,19 +205,25 @@ internal fun resolveSessionDrawerFilter(
 
 /**
  * Where the Sessions surface renders for a given available width and pin
- * intent. Pure function so the 840dp threshold behavior is JVM-testable.
+ * intent and history policy. Pure function so these boundaries are JVM-testable.
  *
  * - Pinned intent only takes effect at wide widths (>= [SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP]).
  * - Below the threshold the modal drawer renders (and the pin affordance is
  *   hidden) while the persisted intent survives for the next wide layout.
+ * - Supervised history restrictions also suspend the sidebar without clearing
+ *   the saved preference.
  */
 enum class SessionSidebarLayout { Sidebar, Modal }
 
 const val SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP = 840
 const val SESSIONS_SIDEBAR_WIDTH_DP = 320
 
-fun resolveSessionSidebarLayout(availableWidthDp: Int, pinned: Boolean): SessionSidebarLayout =
-    if (pinned && availableWidthDp >= SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP) {
+fun resolveSessionSidebarLayout(
+    availableWidthDp: Int,
+    pinned: Boolean,
+    historyAllowed: Boolean = true,
+): SessionSidebarLayout =
+    if (pinned && historyAllowed && availableWidthDp >= SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP) {
         SessionSidebarLayout.Sidebar
     } else {
         SessionSidebarLayout.Modal
@@ -308,7 +316,7 @@ fun SessionDrawerContent(
      * preserves the compact drawer behavior and every existing call site.
      */
     asSidebar: Boolean = false,
-    /** Pin/unpin affordance in the panel header. Null hides the control. */
+    /** Pin/unpin affordance below the panel header. Null hides the control. */
     onTogglePin: (() -> Unit)? = null,
     /** Whether the sidebar pin is currently active (drives the control's state). */
     pinned: Boolean = false,
@@ -601,29 +609,30 @@ fun SessionDrawerContent(
                         )
                     }
                 }
-                // Pin/unpin: keeps the sessions panel docked beside the chat on
-                // wide layouts instead of opening it as a modal drawer. The
-                // control is only supplied where the pin can take effect
-                // (available width >= 840dp), so it never appears uselessly.
-                onTogglePin?.let { togglePin ->
-                    IconButton(onClick = togglePin, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            Icons.Filled.PushPin,
-                            contentDescription = stringResource(
-                                if (pinned) {
-                                    R.string.drawer_unpin_sidebar
-                                } else {
-                                    R.string.drawer_pin_sidebar
-                                },
-                            ),
-                            tint = if (pinned) {
-                                RelayRefresh.Amber
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
+            }
+            // Keep the presentation control on its own 48dp row so the title
+            // and existing actions still fit within a 320dp panel at large text.
+            onTogglePin?.let { togglePin ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .toggleable(value = pinned, role = Role.Switch, onValueChange = { togglePin() })
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Filled.PushPin,
+                        contentDescription = null,
+                        tint = if (pinned) RelayRefresh.Amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(if (pinned) R.string.drawer_unpin_sidebar else R.string.drawer_pin_sidebar),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
                 }
             }
             drawerSubtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
@@ -1035,7 +1044,9 @@ fun SessionDrawerContent(
             color = RelayRefresh.Background,
             contentColor = RelayRefresh.Ink,
         ) {
-            panel()
+            // ModalDrawerSheet supplies a ColumnScope. Surface does not, so
+            // stack the shared header and list explicitly in this presentation.
+            Column(modifier = Modifier.fillMaxHeight()) { panel() }
         }
     } else {
         ModalDrawerSheet(
