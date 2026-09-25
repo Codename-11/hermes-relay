@@ -2901,8 +2901,7 @@ class ChatViewModel : ViewModel() {
                         val checkpointAsk = checkpoint?.pendingAsk
                         if (checkpoint != null && checkpointAsk != null &&
                             checkpointAsk.kind == event.ask.kind.name &&
-                            (event.ask.kind == GatewayAsk.Kind.APPROVAL ||
-                                checkpointAsk.requestId == event.ask.requestId)
+                            checkpointAsk.requestId == event.ask.requestId
                         ) {
                             val updated = checkpoint.copy(
                                 pendingAsk = null,
@@ -6745,9 +6744,8 @@ class ChatViewModel : ViewModel() {
      * action value per [com.hermesandroid.relay.data.HermesCardAction.mode]:
      *
      *  - [com.hermesandroid.relay.data.HermesCardAction.Modes.SEND_TEXT]
-     *    (default): sends [action.value] as a new user message. For an
-     *    `approval_request` card with `value = "approve"`, the agent sees
-     *    the literal "approve" in its next turn and reacts accordingly.
+     *    (default): sends [action.value] as a new user message. This remains
+     *    the legacy card behavior; Gateway approval asks use [answerAsk].
      *  - [com.hermesandroid.relay.data.HermesCardAction.Modes.SLASH_COMMAND]:
      *    still routes through `sendMessage` — slash commands are plain
      *    text to the server (`/approve` is just text starting with a `/`),
@@ -7008,7 +7006,8 @@ class ChatViewModel : ViewModel() {
         }
         viewModelScope.launch {
             val response: Result<GatewayAskResponse>? = when (ask.kind) {
-                GatewayAsk.Kind.APPROVAL -> gateway.respondApproval(choice = "deny")
+                GatewayAsk.Kind.APPROVAL -> ask.requestId?.let { gateway.respondApprovalRequest(it, "deny") }
+                    ?: gateway.respondApproval(choice = "deny")
                 GatewayAsk.Kind.CLARIFY -> ask.requestId?.let {
                     gateway.respondClarify(it, "This supervised client cannot answer interactive requests.")
                 }
@@ -7030,7 +7029,11 @@ class ChatViewModel : ViewModel() {
                 if (ask.smartDenied) choices.filter { it == "once" || it == "deny" } else choices
             }
         val choices = advertised.ifEmpty {
-            if (ask.smartDenied) listOf("once", "deny") else listOf("approve", "deny")
+            when {
+                ask.smartDenied -> listOf("once", "deny")
+                ask.requestId != null -> listOf("deny")
+                else -> listOf("approve", "deny")
+            }
         }
         return choices.map { choice ->
             val label = when (choice) {
@@ -7116,7 +7119,8 @@ class ChatViewModel : ViewModel() {
             }
             val requestId = ask.requestId
             val result = when (ask.kind) {
-                GatewayAsk.Kind.APPROVAL -> gateway.respondApproval(choice = value)
+                GatewayAsk.Kind.APPROVAL -> requestId?.let { gateway.respondApprovalRequest(it, value) }
+                    ?: gateway.respondApproval(choice = value)
                 GatewayAsk.Kind.CLARIFY ->
                     requestId?.let { gateway.respondClarify(it, value.trim(), question?.qid) }
                         ?: Result.failure(GatewayRpcException("ask has no request id"))
@@ -7185,7 +7189,7 @@ class ChatViewModel : ViewModel() {
     private fun expirePendingAsk(expiry: GatewayAskExpiry) {
         val pending = _pendingAsk.value ?: return
         if (pending.ask.kind != expiry.kind) return
-        if (expiry.kind != GatewayAsk.Kind.APPROVAL) {
+        if (expiry.kind != GatewayAsk.Kind.APPROVAL || expiry.requestId != null) {
             val requestId = expiry.requestId?.takeIf { it.isNotBlank() } ?: return
             if (pending.ask.requestId != requestId) return
         }

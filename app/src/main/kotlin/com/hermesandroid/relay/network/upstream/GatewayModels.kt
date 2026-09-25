@@ -214,8 +214,8 @@ data class GatewayAsk(
     val kind: Kind,
     /**
      * Correlates the answer with the blocked server thread. Null ONLY for
-     * [Kind.APPROVAL] — upstream approvals correlate per-session, not
-     * per-request (`approval.respond` carries `session_id` instead).
+     * Legacy notification approvals correlate per-session. Native JSON-RPC
+     * approval requests carry their server-issued string id here.
      */
     val requestId: String?,
     /** Question / command / prompt — whatever the ask wants the user to read. */

@@ -555,9 +555,9 @@ class GatewayEventMapper(
 
             "approval.request" -> GatewayAsk(
                 kind = GatewayAsk.Kind.APPROVAL,
-                // Upstream approvals correlate per-SESSION, never
-                // per-request — a stray request_id must not be adopted.
-                requestId = null,
+                // Notification-era approval requests correlate per-session;
+                // native JSON-RPC requests carry their exact server id.
+                requestId = payload.string("_server_request_id"),
                 text = listOfNotNull(payload.string("command"), payload.string("description"))
                     .joinToString(" — ")
                     .ifBlank { "a command approval" },
@@ -635,11 +635,11 @@ class GatewayEventMapper(
                 requestId = payload.string("request_id"),
             )
 
-            // Forward-compatible consumer for a future upstream approval
-            // expiry event. Approvals correlate by session, never request id.
+            // Legacy expiry has no request id; JSON-RPC requests carry the
+            // server request id through the private mapper field.
             "approval.expire" -> GatewayAskExpiry(
                 kind = GatewayAsk.Kind.APPROVAL,
-                requestId = null,
+                requestId = payload.string("_server_request_id"),
             )
 
             else -> null
@@ -763,4 +763,4 @@ private fun GatewayAsk.sameRequestAs(other: GatewayAsk): Boolean =
 
 private fun GatewayAsk.matches(expiry: GatewayAskExpiry): Boolean =
     kind == expiry.kind &&
-        (kind == GatewayAsk.Kind.APPROVAL || requestId == expiry.requestId)
+        (kind == GatewayAsk.Kind.APPROVAL && requestId == null || requestId == expiry.requestId)
