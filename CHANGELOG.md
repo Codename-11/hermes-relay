@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Android refreshes background-alert permission defaults after onboarding and keeps notification delivery tied to the original connection, profile, and conversation across navigation.
 - Replies from conversations left running get separate notification slots; opening one conversation preserves alerts from others.
 - Chat progress stays above the composer while scrolling and disappears when the turn finishes or waits for input.
-
+- Android Chat shows a server-provided interrupt explanation when a turn is cancelled, instead of a bare “Response interrupted” / “Run interrupted” label when content, error, `interrupt_reason`, or `turn_exit_reason` is present.
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
 
 ## [0.4.0-beta.8] - 2026-10-02
