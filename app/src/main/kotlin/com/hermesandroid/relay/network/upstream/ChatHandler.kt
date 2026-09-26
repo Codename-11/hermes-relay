@@ -19,6 +19,7 @@ import com.hermesandroid.relay.network.shared.LocalDispatchResult
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.network.upstream.models.RelayStreamEventEnvelope
 import com.hermesandroid.relay.network.upstream.models.SessionItem
+import com.hermesandroid.relay.network.upstream.models.isBareInterruptPlaceholder
 import com.hermesandroid.relay.voice.RealtimeTurnSyncBuilder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -365,7 +366,12 @@ class ChatHandler {
             }
             "assistant.completed" -> {
                 if (boolField("interrupted") == true) {
-                    onStreamError("Response interrupted")
+                    val reason = listOfNotNull(
+                        textField("interrupt_reason", "error", "content", "output", "final_response", "text", "message"),
+                        textField("turn_exit_reason")?.let { "Operation interrupted: ${it.replace('_', ' ')}." },
+                    ).map { it.trim() }.firstOrNull { it.isNotEmpty() && !isBareInterruptPlaceholder(it) }
+                        ?: "Response interrupted"
+                    onStreamError(reason)
                 } else {
                     onTurnComplete(currentMessageId)
                 }
