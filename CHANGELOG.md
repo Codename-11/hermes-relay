@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android Chat shows a server-provided interrupt explanation when a turn is cancelled, instead of a bare “Response interrupted” / “Run interrupted” label when content, error, `interrupt_reason`, or `turn_exit_reason` is present.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
