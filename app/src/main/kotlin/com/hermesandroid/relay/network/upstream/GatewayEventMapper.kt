@@ -287,10 +287,17 @@ class GatewayEventMapper(
             "message.complete" -> {
                 // Non-streaming servers (or error turns) deliver everything
                 // here; backfill whatever never streamed.
-                val failed = payload.string("status").equals(ERROR_STATUS_KIND, ignoreCase = true)
+                val statusKind = payload.string("status").orEmpty()
+                val failed = statusKind.equals(ERROR_STATUS_KIND, ignoreCase = true)
+                val interrupted = statusKind.equals("interrupted", ignoreCase = true) ||
+                    statusKind.equals("cancelled", ignoreCase = true)
                 val error = payload.string("error")
+                val turnExit = payload.string("turn_exit_reason")
                 val text = payload.string("text")
-                    ?: error?.takeIf { failed }?.let { "Error: $it" }
+                    ?: error?.takeIf { failed || interrupted }?.let { if (failed) "Error: $it" else it }
+                    ?: turnExit?.takeIf { interrupted }?.let {
+                        "Operation interrupted: ${it.replace('_', ' ')}."
+                    }
                 val reconcilesInterim = !text.isNullOrEmpty() &&
                     previewedText?.let { preview ->
                         preview.isNotEmpty() &&
@@ -309,17 +316,25 @@ class GatewayEventMapper(
                     callbacks.onThinkingDelta(reasoning)
                 }
                 callbacks.onUsage(parseGatewayUsage(payload?.get("usage") as? JsonObject))
-                if (failed) {
+                if (failed || interrupted) {
+                    val failMsg = error?.takeIf { it.isNotBlank() }
+                        ?: text.orEmpty().ifBlank {
+                            if (interrupted) {
+                                turnExit?.let { "Operation interrupted: ${it.replace('_', ' ')}." }
+                                    ?: "Run interrupted"
+                            } else {
+                                "Turn failed"
+                            }
+                        }
                     callbacks.onFailure(
                         GatewayTurnFailure(
-                            error = error?.takeIf { it.isNotBlank() }
-                                ?: text.orEmpty().ifBlank { "Turn failed" },
-                            recoverable = payload.boolean("recoverable") == true,
+                            error = failMsg,
+                            recoverable = payload.boolean("recoverable") == true || interrupted,
                         ),
                     )
                     callbacks.onStatusUpdate(
-                        ERROR_STATUS_KIND,
-                        error?.takeIf { it.isNotBlank() } ?: text.orEmpty().ifBlank { "Turn failed" },
+                        if (interrupted) "interrupted" else ERROR_STATUS_KIND,
+                        failMsg,
                     )
                 }
                 turnEnded = true
