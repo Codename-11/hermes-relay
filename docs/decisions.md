@@ -4473,3 +4473,26 @@ loopback/public_url guidance is conditional on additional setup evidence.
 **Consequences.** Advanced network setups are usable with explicit assumed risk.
 The exception must not cross connection or credential-origin boundaries. VPN
 monitoring or route enforcement would be separate work, not an implied guarantee.
+
+## ADR 76 — Native Dashboard callbacks use bounded concurrent readers
+
+**Status:** Accepted (2026-09-27).
+
+The native password and OIDC paths share one Android loopback coordinator.
+Serial blocking reads allowed an incomplete request to hold later callbacks
+behind it. A per-read socket timeout reset by incoming bytes did not enforce the
+attempt deadline or coroutine cancellation.
+
+Use at most four concurrent readers with a five-second absolute request deadline
+and one serial authorization consumer. Cancellation closes descriptors to unblock
+Java socket IO; interrupting a coroutine alone is insufficient. Keep request-line
+and header byte limits, exact literal IPv4 Host/port and callback-path validation,
+unique state/code parameters, single-use authorization and connection-generation
+checks. Token calls are cancelled with their attempt. Response writes have their
+own two-second deadline. Fixed diagnostic stages never include request contents.
+
+This addresses the reproduced listener defect in #632. The reported Samsung
+Android 16 password-browser stall is not established as the same failure. Provider
+selection, upstream PKCE, embedded cookie fallback, `/api/auth/me` verification,
+encrypted connection credentials and saved conversations retain their ownership.
+See [callback investigation and verification](native-dashboard-callback-testing.md).

@@ -469,6 +469,15 @@ fun DashboardSignInScreen(
                 )
                 NativeDashboardSignInCoordinator(authClient).signIn(
                     provider = authorizationProvider,
+                    onDiagnostic = { stage ->
+                        recordNativeDashboardAuthDiagnostic(
+                            stage = stage,
+                            attempt = attemptNumber,
+                            providerKind = attemptProviderKind,
+                            dashboardUrl = dashboardUrl,
+                            startedAtElapsedMs = attemptStartedAtElapsedMs,
+                        )
+                    },
                     onAuthorizationPrepared = { usesAlternateOrigin ->
                         recordNativeDashboardAuthDiagnostic(
                             stage = "authorization_prepared",
@@ -909,7 +918,8 @@ internal fun nativeDashboardSignInMessageKind(failureStage: String): NativeDashb
         failureStage == "token_shape" -> NativeDashboardSignInMessageKind.ResponseUnsupported
         failureStage == "inactive_generation" -> NativeDashboardSignInMessageKind.AttemptInactive
         failureStage == "token_store" -> NativeDashboardSignInMessageKind.SecureStorage
-        failureStage.startsWith("token_transport") -> NativeDashboardSignInMessageKind.Transport
+        failureStage.startsWith("token_transport") || failureStage == "callback_timeout" ||
+            failureStage == "callback_bind_failed" -> NativeDashboardSignInMessageKind.Transport
         else -> NativeDashboardSignInMessageKind.Generic
     }
 

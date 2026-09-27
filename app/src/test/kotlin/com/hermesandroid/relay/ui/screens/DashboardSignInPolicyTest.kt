@@ -9,6 +9,9 @@ import org.junit.Test
 class DashboardSignInPolicyTest {
     @Test
     fun nativeFailuresMapToActionableSecretFreeMessageKinds() {
+        listOf("callback_timeout", "callback_bind_failed").forEach {
+            assertEquals(NativeDashboardSignInMessageKind.Transport, nativeDashboardSignInMessageKind(it))
+        }
         assertEquals(
             NativeDashboardSignInMessageKind.CallbackRejected,
             nativeDashboardSignInMessageKind("callback_error"),
