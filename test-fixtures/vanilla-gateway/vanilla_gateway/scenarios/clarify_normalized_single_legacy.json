@@ -1,10 +1,10 @@
 {
-  "name": "clarify_batch",
+  "name": "clarify_normalized_single_legacy",
   "live_session_id": "fixture-live-clarify",
   "stored_session_id": "fixture-stored-clarify",
   "profile": "default",
   "contract_requirements": [
-    "gateway.server_requests"
+    "gateway.clarify"
   ],
   "turns": [
     {
@@ -14,8 +14,9 @@
           "type": "message.start"
         },
         {
-          "op": "server_request",
+          "op": "clarify",
           "payload": {
+            "request_id": "clarify-one",
             "questions": [
               {
                 "qid": "route/a",
@@ -25,20 +26,9 @@
                   "Immediate"
                 ],
                 "multi_select": false
-              },
-              {
-                "qid": "environment:b",
-                "question": "Which environments?",
-                "choices": [
-                  "Stage",
-                  "Production"
-                ],
-                "multi_select": true
               }
             ]
-          },
-          "id": "clarify-batch",
-          "method": "clarify"
+          }
         },
         {
           "op": "event",

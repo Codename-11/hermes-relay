@@ -4473,3 +4473,28 @@ loopback/public_url guidance is conditional on additional setup evidence.
 **Consequences.** Advanced network setups are usable with explicit assumed risk.
 The exception must not cross connection or credential-origin boundaries. VPN
 monitoring or route enforcement would be separate work, not an implied guarantee.
+
+
+## ADR 76 — Gateway asks use upstream JSON-RPC server requests
+
+**Status:** Accepted (2026-09-27).
+
+Upstream replaced most paired ask notifications and response methods with
+server-to-client JSON-RPC requests. Android advertises its ability to answer
+requests or return a method error after readiness on every connection. A method
+with an id is dispatched before ordinary client response correlation, preserving
+string and numeric ids without treating inbound requests as RPC acknowledgements.
+
+The existing native cards render supported requests. Their persisted checkpoint
+records whether the ask came from the native protocol; restored native cards
+cannot fall back to legacy response methods. Only a replayed open request on the
+current socket and exact session authorizes a reply. Batch Clarify uses upstream
+question locks and preserves accepted progress. Server cancellation, expiry and
+closed-request snapshots retire only matching cards. Native requests have no
+invented client deadline. Secret and sudo values remain transient and masked.
+
+Android does not impersonate Desktop preview, terminal, native window, tour,
+vault or display-installation interfaces. Those requests receive `-32601`.
+Legacy notification fixtures remain separate from current upstream scenarios.
+The current contract has both source checks and provider-free execution against
+an unmodified pinned upstream request registry.

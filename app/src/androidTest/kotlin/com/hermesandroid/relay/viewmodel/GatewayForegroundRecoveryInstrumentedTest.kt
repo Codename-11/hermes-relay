@@ -711,6 +711,9 @@ internal class AndroidGatewayContractFixture {
     private val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
     private val requestPaths = ConcurrentLinkedQueue<String>()
     private val ticketCount = AtomicInteger(0)
+    val serverResponses = LinkedBlockingQueue<JsonObject>()
+    var openRequests = kotlinx.serialization.json.JsonArray(emptyList())
+    private val lockedQuestions = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     @Volatile
     var recoveryRunning = false
@@ -733,7 +736,8 @@ internal class AndroidGatewayContractFixture {
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             val frame = json.parseToJsonElement(text) as? JsonObject ?: return
-            val method = (frame["method"] as? JsonPrimitive)?.contentOrNull ?: return
+            val method = (frame["method"] as? JsonPrimitive)?.contentOrNull
+            if (method == null) { serverResponses.offer(frame); return }
             val id = (frame["id"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull() ?: return
             val params = frame["params"] as? JsonObject ?: JsonObject(emptyMap())
             rpcLog.add(method to params)
@@ -754,6 +758,12 @@ internal class AndroidGatewayContractFixture {
                             })
                         }
                     })
+                }
+                "clarify.lock" -> buildJsonObject {
+                    lockedQuestions += (params["question_id"] as JsonPrimitive).content
+                    put("status", "ok")
+                    put("remaining", kotlinx.serialization.json.JsonArray(
+                        listOf("route/a", "notes:b").filterNot { it in lockedQuestions }.map(::JsonPrimitive)))
                 }
                 "prompt.submit", "session.interrupt" -> buildJsonObject { put("ok", true) }
                 else -> JsonObject(emptyMap())
@@ -796,6 +806,7 @@ internal class AndroidGatewayContractFixture {
     private fun sessionSnapshot(sessionId: String): JsonObject = buildJsonObject {
         put("session_id", sessionId)
         put("running", recoveryRunning)
+        put("open_requests", openRequests)
         put("status", if (recoveryRunning) "streaming" else "idle")
         put("info", buildJsonObject { put("profile_name", profileName) })
     }

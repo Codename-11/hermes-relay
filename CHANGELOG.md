@@ -13,6 +13,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Android restores Clarify, approval, sudo, and secret cards on current Hermes, preserves partial Clarify answers across reconnects, and explicitly declines unsupported requests. (#631)
+
 - Desktop tray notices, screenshot evidence, and grant prompts stay reusable after dismissal; screenshot evidence keeps the most recently selected image. (#606)
 - Proactive phone Thread messages render relay-token and host-path media as attachments while preserving multiline text; notification previews omit media markers. (#485)
 - Desktop computer screenshots attach validated image bytes to the host tool result instead of returning base64 as plain text.

@@ -46,8 +46,67 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({"detail": "Unauthorized"}, await response.json())
         self.assertEqual([], fixture._history_rows)
 
-    async def test_clarify_batch_requires_each_qid_and_replays_partial_progress(self) -> None:
+    async def test_native_method_family_accepts_results_and_unsupported_errors(self) -> None:
+        fixture, base_url = await self.start("server_requests")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "client.capabilities", {"server_requests": True})
+        await self.frames_until(ws, lambda f: f.get("id") == 1)
+        await self.rpc(ws, 2, "prompt.submit")
+        seen = []
+        for _ in range(13):
+            frames = await self.frames_until(ws, lambda f: "id" in f and "method" in f)
+            frame = frames[-1]
+            method = frame["method"]
+            seen.append(method)
+            response = {"jsonrpc": "2.0", "id": frame["id"]}
+            if method in ("clarify", "approval", "sudo", "secret"):
+                key = "answer" if method == "clarify" else "choice" if method == "approval" else "value"
+                response["result"] = {key: "deny" if method == "approval" else ""}
+            else:
+                response["error"] = {"code": -32601, "message": "Unsupported"}
+            await ws.send_json(response)
+        await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "message.complete")
+        self.assertEqual(13, len(set(seen)))
+        self.assertIsNone(fixture._native_request)
+
+    async def test_native_clarify_requires_capabilities_and_replays_locks(self) -> None:
         fixture, base_url = await self.start("clarify_batch")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "client.capabilities", {"server_requests": True})
+        await self.frames_until(ws, lambda f: f.get("id") == 1)
+        await self.rpc(ws, 2, "prompt.submit")
+        frames = await self.frames_until(ws, lambda f: f.get("method") == "clarify")
+        frame = frames[-1]
+        self.assertNotIn("request_id", frame["params"])
+        rid = frame["id"]
+        await self.rpc(ws, 3, "clarify.lock", {"request_id": rid, "question_id": "route/a", "answer": "Canary"})
+        frames = await self.frames_until(ws, lambda f: f.get("id") == 3)
+        self.assertEqual(["environment:b"], frames[-1]["result"]["remaining"])
+        await ws.close()
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 4, "client.capabilities", {"server_requests": True})
+        await self.frames_until(ws, lambda f: f.get("id") == 4)
+        await self.rpc(ws, 5, "session.activate", {"session_id": fixture.scenario.live_session_id})
+        frames = await self.frames_until(ws, lambda f: f.get("id") == 5)
+        replay = frames[-1]["result"]["open_requests"][0]
+        self.assertEqual(rid, replay["id"])
+        self.assertEqual({"route/a": "Canary"}, replay["params"]["answers"])
+        # Empty answer skips only this question; the last lock settles without a response frame.
+        await self.rpc(ws, 6, "clarify.lock", {"request_id": rid, "question_id": "environment:b", "answer": ""})
+        frames = await self.frames_until(ws, lambda f: f.get("id") == 6)
+        self.assertEqual([], frames[-1]["result"]["remaining"])
+        await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "message.complete")
+
+    async def test_native_clarify_legacy_client_fails_fast(self) -> None:
+        fixture, base_url = await self.start("clarify_batch")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "prompt.submit")
+        frames = await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "message.complete")
+        self.assertFalse(any(f.get("method") == "clarify" for f in frames))
+        self.assertIsNone(fixture._native_request)
+
+    async def test_clarify_batch_requires_each_qid_and_replays_partial_progress(self) -> None:
+        fixture, base_url = await self.start("clarify_batch_legacy")
         ws, _ = await self.connect(base_url)
         await self.rpc(ws, 1, "prompt.submit")
         frames = await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "clarify.request")
@@ -86,7 +145,7 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("ok", frames[-1]["result"]["status"])
 
     async def test_one_normalized_question_is_still_qid_owned(self) -> None:
-        _, base_url = await self.start("clarify_normalized_single")
+        _, base_url = await self.start("clarify_normalized_single_legacy")
         ws, _ = await self.connect(base_url)
         await self.rpc(ws, 1, "prompt.submit")
         frames = await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "clarify.request")
