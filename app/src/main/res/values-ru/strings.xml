@@ -1022,6 +1022,8 @@
     <string name="drawer_new_chat">Новый чат</string>
     <string name="drawer_search_placeholder">Поиск сессий или id...</string>
     <string name="drawer_search_sessions">Поиск сессий</string>
+    <string name="drawer_pin_sidebar">Закрепить боковую панель сессий</string>
+    <string name="drawer_unpin_sidebar">Открепить боковую панель сессий</string>
     <string name="drawer_activity_working">Выполняется</string>
     <string name="drawer_activity_needs_input">Требуется ввод</string>
     <string name="drawer_activity_starting">Запуск</string>

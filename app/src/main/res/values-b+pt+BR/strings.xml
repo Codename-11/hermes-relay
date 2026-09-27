@@ -944,6 +944,8 @@
     <string name="drawer_new_chat">Novo Chat</string>
     <string name="drawer_search_placeholder">Pesquisar sessões ou id...</string>
     <string name="drawer_search_sessions">Pesquisar sessões</string>
+    <string name="drawer_pin_sidebar">Fixar barra lateral de sessões</string>
+    <string name="drawer_unpin_sidebar">Desfixar barra lateral de sessões</string>
     <string name="drawer_activity_working">Em andamento</string>
     <string name="drawer_activity_needs_input">Precisa de resposta</string>
     <string name="drawer_activity_starting">Iniciando</string>

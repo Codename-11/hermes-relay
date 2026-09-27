@@ -22,6 +22,7 @@ import com.hermesandroid.relay.ui.components.ChatDebugOverlay
 import com.hermesandroid.relay.ui.components.chatDebugHeaderGesture
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -264,6 +265,11 @@ import com.hermesandroid.relay.ui.components.ThinkingIndicatorStyle
 import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
 import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
+import com.hermesandroid.relay.ui.components.SESSIONS_SIDEBAR_WIDTH_DP
+import com.hermesandroid.relay.ui.components.SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP
+import com.hermesandroid.relay.ui.components.SessionSidebarLayout
+import com.hermesandroid.relay.ui.components.resolveDrawerGesturesEnabled
+import com.hermesandroid.relay.ui.components.resolveSessionSidebarLayout
 import com.hermesandroid.relay.ui.components.ProfileSessionRow
 import com.hermesandroid.relay.ui.components.ProvisionalThreadRow
 import com.hermesandroid.relay.ui.components.ProfileDisplayManagerDialog
@@ -1531,6 +1537,9 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val userScrolledAwayState = remember(currentSessionId) { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    // Pinned Sessions sidebar intent (persisted). Only takes effect when the
+    // available chat width is wide enough; see resolveSessionSidebarLayout.
+    val sessionsSidebarPinned by connectionViewModel.sessionsSidebarPinned.collectAsState()
     LaunchedEffect(chatViewModel, drawerState) {
         chatViewModel.sessionDirectoryRefreshRequests.collect {
             if (drawerState.isOpen || allProfileSessions.isNotEmpty()) {
@@ -2474,14 +2483,27 @@ fun ChatScreen(
     val hasLiveConversationSurface = messages.isNotEmpty() || isStreaming
     val isChatConnecting = chatConnectState == ChatConnectState.Connecting &&
         !hasLiveConversationSurface
+    val sessionsHistoryAllowed = !supervised || supervisedPolicy.capabilities.conversationHistory
+    val toggleSessionsSidebarPin: () -> Unit = {
+        scope.launch {
+            if (!sessionsSidebarPinned) drawerState.close()
+            connectionViewModel.setSessionsSidebarPinned(!sessionsSidebarPinned)
+        }
+    }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        // Material routes scrim taps through the drawer's gesture handler.
-        // Keep it enabled so tapping outside always dismisses the drawer; the
-        // voice overlay already owns input while voice mode is visible.
-        gesturesEnabled = !supervised || supervisedPolicy.capabilities.conversationHistory,
-        drawerContent = {
+    BoxWithConstraints {
+        // Available chat width in dp drives the wide-layout threshold; the
+        // pure resolver decides Sidebar vs Modal from it + the pin intent.
+        val availableWidthDp = maxWidth.value.toInt()
+        val isWideLayout =
+            availableWidthDp >= SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP
+        val sidebarLayout = resolveSessionSidebarLayout(
+            availableWidthDp,
+            sessionsSidebarPinned,
+            historyAllowed = sessionsHistoryAllowed,
+        )
+        val isPinnedSidebar = sidebarLayout == SessionSidebarLayout.Sidebar
+        val sessionsDrawerContent: @Composable (Boolean) -> Unit = { renderAsSidebar ->
             val drawerProfileName = explicitBindingProfileName ?: effectiveProfile?.name
             val drawerTitle = if (drawerProfileName != null) {
                 stringResource(R.string.chat_profile_sessions, agentDisplayName)
@@ -2556,7 +2578,7 @@ fun ChatScreen(
                 isLoadingMore = isLoadingMoreSessions,
                 hasMore = hasMoreSessions,
                 loadMoreFailed = sessionPageLoadFailed,
-                isOpen = drawerState.isOpen,
+                isOpen = drawerState.isOpen || isPinnedSidebar,
                 activityStates = sessionActivityStates,
                 animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
@@ -2748,8 +2770,51 @@ fun ChatScreen(
                         }
                     }
                 },
+                asSidebar = renderAsSidebar,
+                // Pin affordance lives below the panel header; shown only
+                // where the pin can take effect (wide layout).
+                onTogglePin = if (isWideLayout && sessionsHistoryAllowed) toggleSessionsSidebarPin else null,
+                pinned = isPinnedSidebar,
             )
         }
+        // A pinned sidebar behaves as an always-open drawer: entering the
+        // wide pinned layout re-syncs the session list the same way opening
+        // the modal drawer does. It also replaces the modal drawer as THE
+        // sessions surface, so a drawer left open at pin time is closed —
+        // otherwise it overlays a duplicate sessions panel.
+        LaunchedEffect(isPinnedSidebar) {
+            // Unpinning returns to the closed, on-demand drawer as well.
+            drawerState.close()
+            if (isPinnedSidebar) {
+                chatViewModel.setSessionActivityDrawerOpen(true)
+                chatViewModel.refreshSessionsIfStale()
+            }
+        }
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (isPinnedSidebar) {
+                Box(modifier = Modifier.width(SESSIONS_SIDEBAR_WIDTH_DP.dp)) {
+                    sessionsDrawerContent(true)
+                }
+            }
+            Box(
+                modifier = Modifier.fillMaxSize()
+                    .padding(start = if (isPinnedSidebar) SESSIONS_SIDEBAR_WIDTH_DP.dp else 0.dp)
+            ) {
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                // Material routes scrim taps through the drawer's gesture handler.
+                // Keep it enabled so tapping outside always dismisses the drawer; the
+                // voice overlay already owns input while voice mode is visible.
+                // Edge-swipe is also disabled while the pinned sidebar owns the
+                // leading edge, so a swipe can't open a second sessions surface.
+                gesturesEnabled = resolveDrawerGesturesEnabled(
+                    supervisedHistoryAllowed = sessionsHistoryAllowed,
+                    pinnedSidebar = isPinnedSidebar,
+                ),
+                // Do not compose a second session browser behind the sidebar.
+                drawerContent = {
+                    if (!isPinnedSidebar) sessionsDrawerContent(false)
+                },
     ) {
         val isDarkTheme = LocalBrand.current.isDark
 
@@ -2766,11 +2831,15 @@ fun ChatScreen(
             TopAppBar(
                 modifier = Modifier.onSizeChanged { chatHeaderHeightPx = it.height },
                 navigationIcon = {
-                    if (!supervised || supervisedPolicy.capabilities.conversationHistory) {
+                    // While the pinned sidebar is the sessions surface the
+                    // hamburger would only stack a second modal sessions
+                    // drawer over it — the pin/unpin affordance lives in the
+                    // sidebar header instead, so the control is omitted.
+                    if (!isPinnedSidebar && sessionsHistoryAllowed) {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.cd_sessions))
                         }
-                    } else if (supervisedPolicy.capabilities.newChat) {
+                    } else if (supervised && !sessionsHistoryAllowed && supervisedPolicy.capabilities.newChat) {
                         IconButton(onClick = { chatViewModel.createNewChat() }) {
                             Icon(Icons.Filled.Edit, contentDescription = "New chat")
                         }
@@ -4910,7 +4979,11 @@ fun ChatScreen(
             }
         }
 
-        // Voice mode overlay — covers the whole Box when voiceUiState.voiceMode
+        } // end chat Box
+            } // end ModalNavigationDrawer
+        } // end padded chat Box
+
+        // Voice mode covers both Chat and the pinned Sessions sidebar.
         AnimatedVisibility(
             visible = voiceUiState.voiceMode,
             enter = fadeIn(),
@@ -4981,7 +5054,7 @@ fun ChatScreen(
                 // === END v0.4.1 ===
             )
         }
-        } // end Box
+    }
     }
 
     // Command palette bottom sheet

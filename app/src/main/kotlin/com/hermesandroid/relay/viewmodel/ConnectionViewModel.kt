@@ -1041,6 +1041,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Chat scroll behavior
         private val KEY_SMOOTH_AUTO_SCROLL = booleanPreferencesKey("smooth_auto_scroll")
         private val KEY_CLOSE_DRAWER_ON_SEND = booleanPreferencesKey("close_drawer_on_send")
+        private val KEY_SESSIONS_SIDEBAR_PINNED =
+            booleanPreferencesKey("sessions_sidebar_pinned")
         private val KEY_KEEP_COMPOSER_FOCUSED_ON_SEND =
             booleanPreferencesKey("keep_composer_focused_on_send")
 
@@ -3154,6 +3156,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_CLOSE_DRAWER_ON_SEND] = enabled
+            }
+        }
+    }
+
+    // Pinned Sessions sidebar (wide layout only). Persisted intent: when the
+    // chat surface is >= 840dp wide the drawer renders as an always-visible
+    // 320dp sidebar instead of a modal sheet; below the threshold the modal
+    // drawer behavior applies and the intent waits for the next wide layout.
+    val sessionsSidebarPinned: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_SESSIONS_SIDEBAR_PINNED] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setSessionsSidebarPinned(pinned: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_SESSIONS_SIDEBAR_PINNED] = pinned
             }
         }
     }

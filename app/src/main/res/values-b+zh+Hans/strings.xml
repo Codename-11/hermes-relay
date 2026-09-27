@@ -987,6 +987,8 @@
     <string name="drawer_new_chat">新对话</string>
     <string name="drawer_search_placeholder">搜索会话或 ID…</string>
     <string name="drawer_search_sessions">搜索会话</string>
+    <string name="drawer_pin_sidebar">固定会话侧边栏</string>
+    <string name="drawer_unpin_sidebar">取消固定会话侧边栏</string>
     <string name="drawer_activity_working">正在处理</string>
     <string name="drawer_activity_needs_input">需要输入</string>
     <string name="drawer_activity_starting">正在启动</string>
