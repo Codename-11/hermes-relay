@@ -40,6 +40,12 @@ method. No optional Relay capability is used to implement this contract.
 - `session.activate` and recovery `session.resume` restore `open_requests` and
   accepted question locks. Previously answered questions remain locked. A lost
   lock acknowledgement is reconciled through replay before another answer.
+  Snapshot receive order prevents an older snapshot from retiring a later live
+  request. A cancellation received before snapshot consumption blocks replay.
+- When a terminal event arrives while a native card remains open, Android reads
+  `session.events.since` for its authoritative `open_requests`. This handles an
+  answer from another client without resuming, activating or interrupting that
+  client's session. Native replies retain the socket that received the request.
 - A raw JSON-RPC response has no acknowledgement. Successful local enqueue
   retires the card; a failed send leaves it retryable. Secrets are never retained
   for automatic retransmission. A later server replay remains server authority.

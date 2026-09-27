@@ -128,6 +128,10 @@ def _snapshot_sessions(rid):
     with _sessions_lock:
         return list(_sessions.items()), None
 
+@method("session.events.since")
+def _(rid, params):
+    return {"open_requests": _open_requests(params["session_id"])}
+
 @method("session.active_list")
 def _(rid, params):
     snapshot, error = _snapshot_sessions(rid)

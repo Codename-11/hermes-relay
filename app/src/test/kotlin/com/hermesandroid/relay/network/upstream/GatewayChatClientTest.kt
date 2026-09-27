@@ -5,6 +5,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -422,6 +424,7 @@ class GatewayClientHarness(
                     })))
                 }
                 "file.attach" -> fileAttachPayload
+                "session.events.since" -> buildJsonObject { put("open_requests", recoveryOpenRequests ?: JsonArray(emptyList())) }
                 "clarify.lock" -> buildJsonObject {
                     put("status", askResponseStatus)
                     put("remaining", JsonArray(if (params["question_id"] == JsonPrimitive("b")) emptyList() else listOf(JsonPrimitive("b"))))
@@ -820,7 +823,88 @@ class GatewayChatClientTest {
     }
 
     @Test
-    fun `native request waits for server deadline even after ordinary progress events`() = runBlocking {
+    fun `reconnect snapshot cannot expire a later live request`() = verifyReplayOrdering(cancel = false)
+
+    @Test
+    fun `cancellation received before snapshot consumption prevents replay resurrection`() = verifyReplayOrdering(cancel = true)
+
+    private fun verifyReplayOrdering(cancel: Boolean): Unit = runBlocking {
+        client.shutdown()
+        val dispatcher = java.util.concurrent.Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        scope = CoroutineScope(SupervisorJob() + dispatcher)
+        client = buildClient()
+        val release = CountDownLatch(1)
+        try {
+            val r = Recorder()
+            client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+            val ws = harness.awaitServerSocket()
+            harness.awaitRpc("prompt.submit")
+            nativeRequest(ws, JsonPrimitive("srq-old"), "clarify", """{"session_id":"live-1","question":"Old?"}""")
+            awaitCondition { r.interactions.size == 1 }
+            harness.recoveryRunning = true
+            harness.suppressAckMethods += "session.activate"
+            ws.close(1001, "fixture gap")
+            val replacement = harness.awaitServerSocket()
+            val activation = harness.awaitPendingAck()
+            val blocked = CountDownLatch(1)
+            scope.launch { blocked.countDown(); release.await(5, TimeUnit.SECONDS) }
+            assertTrue(blocked.await(5, TimeUnit.SECONDS))
+            harness.releaseAck(activation, buildJsonObject {
+                put("session_id", "live-1"); put("running", true)
+                put("open_requests", buildJsonArray {
+                    if (cancel) add(harness.json.parseToJsonElement("""{"id":"srq-old","method":"clarify","params":{"session_id":"live-1","question":"Old?"}}"""))
+                })
+            })
+            if (cancel) {
+                replacement.send(harness.eventFrame("request.cancel", buildJsonObject {
+                    put("id", "srq-old"); put("method", "clarify"); put("reason", "timeout")
+                }, "live-1"))
+                awaitCondition { r.interactionExpiries.size == 1 }
+            } else {
+                // Withdraw old first, then a new question arrives after the snapshot's wire boundary.
+                replacement.send(harness.eventFrame("request.cancel", buildJsonObject {
+                    put("id", "srq-old"); put("method", "clarify"); put("reason", "resolved")
+                }, "live-1"))
+                nativeRequest(replacement, JsonPrimitive("srq-new"), "clarify", """{"session_id":"live-1","question":"New?"}""")
+                awaitCondition { r.interactions.size == 2 }
+            }
+            release.countDown()
+            // A subsequent operation on the single client dispatcher runs after snapshot processing.
+            val drained = CountDownLatch(1)
+            scope.launch { drained.countDown() }
+            assertTrue(drained.await(5, TimeUnit.SECONDS))
+            if (cancel) {
+                assertEquals(1, r.interactions.size)
+                assertTrue(client.respondAsk(r.interactions.single(), "late").isFailure)
+            } else {
+                assertEquals(1, r.interactionExpiries.size)
+                client.respondAsk(r.interactions.last(), "new answer").getOrThrow()
+            }
+        } finally {
+            release.countDown()
+            client.shutdown()
+            dispatcher.close()
+        }
+    }
+
+    @Test
+    fun `another client response is retired from read only open request snapshot`() = runBlocking {
+        val r = Recorder()
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        nativeRequest(ws, JsonPrimitive("srq-other-client"), "clarify", """{"session_id":"live-1","question":"Choose?"}""")
+        awaitCondition { r.interactions.size == 1 }
+        ws.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "Answered elsewhere") }, "live-1"))
+        harness.awaitRpc("session.events.since")
+        awaitCondition { r.interactionExpiries.size == 1 }
+        assertTrue(client.respondAsk(r.interactions.single(), "late").isFailure)
+        assertTrue(harness.rpcLog.none { it.first == "session.activate" || it.first == "session.interrupt" })
+        assertTrue(harness.serverResponses.isEmpty())
+    }
+
+    @Test
+    fun `native request waits for server deadline even after ordinary progress events`(): Unit = runBlocking {
         rebuildClient(turnIdleTimeoutMs = 500L)
         val r = Recorder()
         client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }

@@ -439,11 +439,19 @@ class GatewayChatClient(
     /** Invalidates an older async prewarm when a newer session selection wins. */
     private val prewarmRequestGeneration = AtomicLong(0)
     private val pendingRpcs = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
-    private data class OpenServerRequest(val request: GatewayServerRequest, val connection: CompletableDeferred<Unit>)
+    private data class OpenServerRequest(
+        val request: GatewayServerRequest,
+        val connection: CompletableDeferred<Unit>,
+        val receivedSequence: Long,
+        val socket: WebSocket,
+    )
+    private data class DeferredServerRequest(val frame: JsonObject, val sequence: Long)
+    private val serverRequestSequence = AtomicLong(0)
+    private val reconcilingServerRequests = ConcurrentHashMap.newKeySet<Pair<CompletableDeferred<Unit>, String>>()
     private val serverRequestLock = Any()
     private val openServerRequests = linkedMapOf<String, OpenServerRequest>()
     private val retiredServerRequests = linkedSetOf<String>()
-    private val deferredServerRequests = mutableListOf<JsonObject>()
+    private val deferredServerRequests = mutableListOf<DeferredServerRequest>()
     private val lazyLiveSessions = ConcurrentHashMap.newKeySet<String>()
     private val readyLiveSessions = ConcurrentHashMap.newKeySet<String>()
     private val sessionReadyWaiters = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
@@ -1800,7 +1808,7 @@ class GatewayChatClient(
                 put("request_id", open.request.id.content)
                 put("question_id", questionId)
                 put("answer", value)
-            }).mapCatching { result ->
+            }, expectedConnection = open.connection, expectedSocket = open.socket).mapCatching { result ->
                 val outcome = when (result.stringField("status")) {
                     "expired" -> GatewayAskResponse.EXPIRED
                     "ok" -> if (result["remaining"] is JsonArray) GatewayAskResponse.ACCEPTED
@@ -1823,7 +1831,7 @@ class GatewayChatClient(
         return synchronized(serverRequestLock) {
             if (openServerRequests[key] !== open || open.connection !== readySignal || open.request.sessionId != liveSessionId) {
                 Result.failure(GatewayRpcException("Request is no longer active"))
-            } else if (webSocket?.send(buildJsonObject {
+            } else if (open.socket.send(buildJsonObject {
                     put("jsonrpc", "2.0"); put("id", open.request.id); put("result", result)
                 }.toString()) == true) {
                 retireServerRequest(key)
@@ -1840,14 +1848,22 @@ class GatewayChatClient(
     }
 
     private fun serverRequestError(id: JsonPrimitive, code: Int, message: String, ready: CompletableDeferred<Unit>) {
+        val socket = webSocket ?: return
         if (readySignal !== ready) return
-        webSocket?.send(buildJsonObject {
+        socket.send(buildJsonObject {
             put("jsonrpc", "2.0"); put("id", id)
             put("error", buildJsonObject { put("code", code); put("message", message) })
         }.toString())
     }
 
-    private fun receiveServerRequest(frame: JsonObject, ready: CompletableDeferred<Unit>, replay: Boolean = false) {
+    private fun receiveServerRequest(
+        frame: JsonObject,
+        ready: CompletableDeferred<Unit>,
+        replay: Boolean = false,
+        sequence: Long = serverRequestSequence.incrementAndGet(),
+    ) {
+        val socket = webSocket ?: return
+        if (readySignal !== ready) return
         val id = GatewayServerRequest.id(frame) ?: return
         val request = GatewayServerRequest.parse(frame)
         if (request == null) {
@@ -1866,7 +1882,7 @@ class GatewayChatClient(
             val recovering = synchronized(recoveryEventLock) { recoveryEvents != null }
             if (!replay && recovering) {
                 synchronized(serverRequestLock) {
-                    if (deferredServerRequests.size < 64) { deferredServerRequests += frame; return }
+                    if (deferredServerRequests.size < 64) { deferredServerRequests += DeferredServerRequest(frame, sequence); return }
                 }
             }
             serverRequestError(id, -32602, "Request is not owned by this conversation", ready)
@@ -1889,7 +1905,7 @@ class GatewayChatClient(
                 serverRequestError(id, -32000, "Too many open requests", ready)
                 return
             }
-            openServerRequests[request.key] = OpenServerRequest(request, ready)
+            openServerRequests[request.key] = OpenServerRequest(request, ready, maxOf(sequence, previous?.receivedSequence ?: sequence), socket)
         }
         val pending = if (sid == liveSessionId) activeTurn?.pendingInteraction else backgroundTurns[sid]?.pendingAsk
         if (pending == null || pending.requestId == request.key) {
@@ -1913,19 +1929,32 @@ class GatewayChatClient(
         }
     }
 
-    private fun replayServerRequests(snapshot: JsonObject) {
+    private fun replayServerRequests(snapshot: JsonObject, sessionId: String? = liveSessionId) {
         val ready = readySignal ?: return
         val frames = (snapshot["open_requests"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
         val deferred = synchronized(serverRequestLock) { deferredServerRequests.toList().also { deferredServerRequests.clear() } }
+        val boundary = (snapshot["_android_request_sequence"] as? JsonPrimitive)?.longOrNull ?: serverRequestSequence.get()
         if (snapshot.containsKey("open_requests")) {
-            val keys = frames.mapNotNull(GatewayServerRequest::parse).map { it.key }.toSet()
-            activeTurn?.pendingInteraction?.takeIf { it.serverRequest && it.requestId !in keys }?.let { stale ->
-                activeTurn?.onEvent("${stale.kind.name.lowercase()}.expire", buildJsonObject {
+            val keys = synchronized(serverRequestLock) {
+                frames.mapNotNull(GatewayServerRequest::parse).filter { it.sessionId == sessionId }.map { it.key }.toSet() - retiredServerRequests
+            }
+            val pending = if (sessionId == liveSessionId) activeTurn?.pendingInteraction else backgroundTurns[sessionId]?.pendingAsk
+            val pendingSequence = synchronized(serverRequestLock) {
+                openServerRequests[pending?.requestId]?.receivedSequence ?: Long.MIN_VALUE
+            }
+            synchronized(serverRequestLock) {
+                openServerRequests.values.filter {
+                    it.request.sessionId == sessionId && it.receivedSequence <= boundary && it.request.key !in keys
+                }.map { it.request.key }.forEach(::retireServerRequest)
+            }
+            pending?.takeIf { it.serverRequest && it.requestId !in keys && pendingSequence <= boundary }?.let { stale ->
+                handleEvent("${stale.kind.name.lowercase()}.expire", buildJsonObject {
                     put("request_id", stale.requestId); put("_server_request", true)
-                })
+                }, sessionId, ready)
             }
         }
-        (deferred + frames).forEach { receiveServerRequest(it, ready, replay = true) }
+        deferred.forEach { receiveServerRequest(it.frame, ready, replay = true, sequence = it.sequence) }
+        frames.forEach { receiveServerRequest(it, ready, replay = true, sequence = boundary) }
     }
 
     /** Answer a [GatewayAsk.Kind.CLARIFY] ask. */
@@ -3313,6 +3342,11 @@ class GatewayChatClient(
         _connectionState.value = GatewayConnectionState.Connecting
         val ready = CompletableDeferred<Unit>()
         readySignal = ready
+        synchronized(serverRequestLock) {
+            openServerRequests.clear()
+            deferredServerRequests.clear()
+            retiredServerRequests.clear()
+        }
         val socket = transport.socket.newWebSocket(
             Request.Builder().url(url).build(),
             createListener(ready),
@@ -3903,7 +3937,11 @@ class GatewayChatClient(
                 val code = (error["code"] as? JsonPrimitive)?.intOrNull
                 pending.completeExceptionally(GatewayRpcException(message, code))
             } else {
-                pending.complete(frame["result"] as? JsonObject ?: JsonObject(emptyMap()))
+                val result = frame["result"] as? JsonObject ?: JsonObject(emptyMap())
+                // Capture on the reader thread. A coroutine may consume this snapshot only after
+                // a later request/cancellation has arrived on the same socket.
+                pending.complete(if (result.containsKey("open_requests")) JsonObject(result +
+                    ("_android_request_sequence" to JsonPrimitive(serverRequestSequence.get()))) else result)
             }
             return
         }
@@ -3919,21 +3957,28 @@ class GatewayChatClient(
         handleEvent(type, payload, eventSessionId, ready)
     }
 
-    private fun handleEvent(type: String, payload: JsonObject?, eventSessionId: String?, ready: CompletableDeferred<Unit>) {
+    private fun handleEvent(
+        type: String,
+        payload: JsonObject?,
+        eventSessionId: String?,
+        ready: CompletableDeferred<Unit>,
+        requestsReconciled: Boolean = false,
+    ) {
         if (readySignal !== ready) return
         if (type == "request.cancel") {
             val id = payload?.get("id") as? JsonPrimitive ?: return
             val key = "jsonrpc:$id"
             val open = synchronized(serverRequestLock) { openServerRequests[key] }
             if (open == null) {
-                synchronized(serverRequestLock) {
-                    val removed = deferredServerRequests.removeAll { frame ->
-                        GatewayServerRequest.parse(frame)?.let {
-                            it.key == key && it.sessionId == eventSessionId && it.method == payload.stringField("method")
-                        } == true
-                    }
-                    if (removed) retireServerRequest(key)
-                }
+                val method = payload.stringField("method") ?: return
+                val owned = !eventSessionId.isNullOrBlank() &&
+                    (eventSessionId == liveSessionId || backgroundTurns.containsKey(eventSessionId))
+                val recovering = synchronized(recoveryEventLock) { recoveryEvents != null }
+                if (method !in GatewayServerRequest.supportedMethods || (!owned && !recovering)) return
+                retireServerRequest(key)
+                if (owned) handleEvent("$method.expire", buildJsonObject {
+                    put("request_id", key); put("_server_request", true)
+                }, eventSessionId, ready)
                 return
             }
             if (open.connection !== ready || open.request.sessionId != eventSessionId ||
@@ -3941,6 +3986,34 @@ class GatewayChatClient(
             retireServerRequest(key)
             handleEvent("${open.request.method}.expire", open.request.payload, eventSessionId, ready)
             advanceServerRequests(eventSessionId)
+            return
+        }
+        val terminal = type in setOf("message.complete", "error") ||
+            (type == "session.info" && payload?.booleanField("running") == false)
+        val requestOwner = if (eventSessionId == liveSessionId) activeTurn?.pendingInteraction else backgroundTurns[eventSessionId]?.pendingAsk
+        if (!requestsReconciled && terminal && requestOwner?.serverRequest == true && eventSessionId != null) {
+            val key = ready to eventSessionId
+            if (!reconcilingServerRequests.add(key)) return
+            val socket = webSocket ?: run { reconcilingServerRequests.remove(key); return }
+            val turn = activeTurn.takeIf { eventSessionId == liveSessionId }
+            val background = backgroundTurns[eventSessionId]
+            scope.launch {
+                try {
+                    // Read only the open-request snapshot. No event replay or ownership mutation.
+                    val snapshot = rpc("session.events.since", buildJsonObject {
+                        put("session_id", eventSessionId); put("last_seen", Long.MAX_VALUE)
+                    }, expectedConnection = ready, expectedSocket = socket).getOrNull()
+                    if (readySignal !== ready) return@launch
+                    val stillOwned = (turn != null && activeTurn === turn && liveSessionId == eventSessionId) ||
+                        (background != null && backgroundTurns[eventSessionId] === background) ||
+                        (turn != null && backgroundTurns.containsKey(eventSessionId))
+                    if (!stillOwned) return@launch
+                    if (snapshot?.containsKey("open_requests") == true) replayServerRequests(snapshot, eventSessionId)
+                    handleEvent(type, payload, eventSessionId, ready, requestsReconciled = true)
+                } finally {
+                    reconcilingServerRequests.remove(key)
+                }
+            }
             return
         }
         // Mirror HermesApiClient's per-event SSE logging — high-frequency
@@ -4606,8 +4679,13 @@ class GatewayChatClient(
         method: String,
         params: JsonObject,
         timeoutMs: Long = rpcTimeoutMs,
+        expectedConnection: CompletableDeferred<Unit>? = null,
+        expectedSocket: WebSocket? = null,
     ): Result<JsonObject> {
-        val socket = webSocket ?: return Result.failure(GatewayRpcException("not connected"))
+        val socket = expectedSocket ?: webSocket ?: return Result.failure(GatewayRpcException("not connected"))
+        if (expectedConnection != null && readySignal !== expectedConnection) {
+            return Result.failure(GatewayRpcException("Request connection changed"))
+        }
         val id = rpcId.getAndIncrement()
         val deferred = CompletableDeferred<JsonObject>()
         pendingRpcs[id] = deferred
@@ -4930,7 +5008,7 @@ class GatewayChatClient(
             source: String,
             expectedProgressGeneration: Long? = null,
         ): Boolean {
-            if (running != false || !started) return false
+            if (running != false || !started || mapper.currentInteraction?.serverRequest == true) return false
             val settled = synchronized(deferredEventLock) {
                 if (ended ||
                     (expectedProgressGeneration != null &&

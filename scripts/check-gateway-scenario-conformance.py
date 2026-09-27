@@ -578,6 +578,8 @@ def _check_server_requests(root: Path) -> CheckResult:
     cancel = requests.function("_emit_cancel")
     lock_rpc = prompt.method_handler("clarify.lock")
     capabilities = voice.method_handler("client.capabilities")
+    sessions = SourceFile(root, SESSION_METHODS)
+    replay_rpc = sessions.method_handler("session.events.since")
     expected = {"clarify", "approval", "sudo", "secret", "vault.unlock_prompt", "vault.save_login",
                 "vault.code", "terminal.read", "preview.read", "preview.act", "window.read", "tour"}
     declared = {node.args[0].value for node in ast.walk(contracts.tree)
@@ -594,6 +596,8 @@ def _check_server_requests(root: Path) -> CheckResult:
         and {"request_id", "question_id", "answer", "expired", "remaining"} <= _string_constants(lock_rpc)
         and bool(_call_lines(lock_rpc, "lock_answer"))
         and bool(_call_lines(capabilities, "advertise"))
+        and "open_requests" in _string_constants(replay_rpc)
+        and bool(_call_lines(replay_rpc, "_open_requests"))
         and bool(_call_lines(bridge.function("_clarify_block"), "send", "clarify"))
         and "req.locked[question_id] = answer" in requests.segment(lock)
     )
@@ -605,6 +609,7 @@ def _check_server_requests(root: Path) -> CheckResult:
         requests.evidence(cancel, "scoped cancellation"),
         prompt.evidence(lock_rpc, "per-question lock RPC"),
         voice.evidence(capabilities, "per-transport capabilities"),
+        sessions.evidence(replay_rpc, "read-only open-request snapshot"),
     ), None if passed else "Server request methods, envelope, capability, replay or settlement contract changed")
 
 
