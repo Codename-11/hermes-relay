@@ -820,6 +820,23 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `native request waits for server deadline even after ordinary progress events`() = runBlocking {
+        rebuildClient(turnIdleTimeoutMs = 500L)
+        val r = Recorder()
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        nativeRequest(ws, JsonPrimitive("srq-wait"), "clarify", """{"session_id":"live-1","question":"Choose?"}""")
+        awaitCondition { r.interactions.size == 1 }
+        ws.send(harness.eventFrame("status.update", buildJsonObject { put("text", "Waiting") }, "live-1"))
+        delay(800)
+        assertTrue(client.hasActiveTurn())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+        client.respondAsk(r.interactions.single(), "answer").getOrThrow()
+        ws.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "Done") }, "live-1"))
+    }
+
+    @Test
     fun `numeric server request cannot consume an ordinary response with the same id`() = runBlocking {
         val r = Recorder()
         client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }

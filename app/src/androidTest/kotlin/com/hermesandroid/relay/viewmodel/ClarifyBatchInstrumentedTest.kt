@@ -131,6 +131,28 @@ class ClarifyBatchInstrumentedTest {
         compose.onNodeWithContentDescription("Type an answer…").assertDoesNotExist()
     }
 
+    @Test fun nativeAnswerCannotCrossSessionSwitch() = verifySwitchFence(false)
+
+    @Test fun nativeAnswerCannotCrossProfileSwitch() = verifySwitchFence(true)
+
+    private fun verifySwitchFence(profile: Boolean) {
+        compose.runOnIdle { viewModel.sendMessage("Ask a question") }
+        fixture.awaitRpc("prompt.submit")
+        socket.send("""{"id":"srq-owner","method":"clarify","params":{"session_id":"fixture-live-1","question":"Continue?"}}""")
+        compose.waitUntil(10_000) { viewModel.pendingAsk.value != null }
+        val pending = requireNotNull(viewModel.pendingAsk.value)
+        compose.runOnIdle {
+            if (profile) viewModel.switchProfileContext("fixture-other-profile", null)
+            else viewModel.switchSession("fixture-other-session")
+        }
+        compose.waitUntil(10_000) { viewModel.pendingAsk.value == null }
+        compose.runOnIdle { viewModel.answerAsk(pending.messageId, pending.cardKey, "stale answer") }
+        compose.waitForIdle()
+        assertTrue(fixture.serverResponses.isEmpty())
+        assertEquals(0, fixture.rpcCount("clarify.respond"))
+        assertEquals(0, fixture.rpcCount("clarify.lock"))
+    }
+
     private fun exerciseBatch(native: Boolean) {
         compose.runOnIdle { viewModel.sendMessage("Ask two questions") }
         fixture.awaitRpc("prompt.submit")

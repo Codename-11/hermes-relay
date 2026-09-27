@@ -1797,7 +1797,7 @@ class GatewayChatClient(
             val generation = turn.interactionGeneration
             val owner = turn.pendingInteraction!!.ownershipToken
             return rpc("clarify.lock", buildJsonObject {
-                put("request_id", open.request.id)
+                put("request_id", open.request.id.content)
                 put("question_id", questionId)
                 put("answer", value)
             }).mapCatching { result ->
@@ -4760,7 +4760,6 @@ class GatewayChatClient(
 
     /** Per-event idle-watchdog duration — asks block server-side with no events, so they arm longer. */
     private fun watchdogTimeoutFor(eventType: String, payload: JsonObject? = null): Long = when {
-        payload?.booleanField("_server_request") == true -> ASK_UNBOUNDED_TIMEOUT_MS
         eventType == "clarify.request" || eventType == "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
         eventType == "sudo.request" -> ASK_SUDO_TIMEOUT_MS
         eventType == "approval.request" -> ASK_UNBOUNDED_TIMEOUT_MS
@@ -4783,11 +4782,15 @@ class GatewayChatClient(
             mapper.restoreInteraction(ask)
         }
         fun acknowledgeInteraction(expiry: GatewayAskExpiry) {
+            val native = mapper.currentInteraction?.serverRequest == true
             mapper.acknowledgeInteraction(expiry)
+            if (native && !ended) armWatchdog()
         }
         val interactionGeneration: Long get() = mapper.interactionGeneration
         fun acknowledgeClarify(requestId: String, questionId: String?, answer: String, expired: Boolean, generation: Long) {
+            val native = mapper.currentInteraction?.serverRequest == true
             mapper.acknowledgeClarify(requestId, questionId, answer, expired, generation)
+            if (native && !ended) armWatchdog()
         }
         fun acknowledgeClarifyOwner(requestId: String, questionId: String?, answer: String, expired: Boolean, owner: GatewayAskOwnership) {
             mapper.acknowledgeClarifyOwner(requestId, questionId, answer, expired, owner)
@@ -4897,10 +4900,6 @@ class GatewayChatClient(
             if (type == "message.delta" || type == "reasoning.delta" || type == "thinking.delta") {
                 tracer.mark("ttft")
             }
-            // Reset on every event — long tool runs keep the turn alive.
-            // Ask requests block with no further events, so they arm with
-            // their own (longer) duration via watchdogTimeoutFor.
-            armWatchdog(watchdogTimeoutFor(type, payload))
             // Queue this immediately before the terminal callbacks. Both are
             // marshalled through the same dispatcher, preserving callback order
             // even when the WebSocket reader and reconnect coroutine differ.
@@ -4912,6 +4911,9 @@ class GatewayChatClient(
                 disarmWatchdog()
                 tracer.done()
                 handoffQueuedSuccessor()
+            } else {
+                // Map first: native asks own their deadline, including across unrelated events.
+                armWatchdog(watchdogTimeoutFor(type, payload))
             }
         }
 
@@ -5022,7 +5024,8 @@ class GatewayChatClient(
         }
 
         fun armWatchdog(timeoutMs: Long = turnIdleTimeoutMs) {
-            watchdog?.cancel()
+            disarmWatchdog()
+            if (mapper.currentInteraction?.serverRequest == true) return
             watchdog = scope.launch {
                 delay(timeoutMs)
                 if (!ended) {
