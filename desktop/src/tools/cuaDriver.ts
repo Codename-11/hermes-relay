@@ -432,7 +432,11 @@ function validatePositiveInteger(value: number, name: string): void {
 }
 
 function validateElementToken(value: string): void {
-  if (!/^e[0-9a-f]+$/i.test(value)) {
+  // Driver element tokens are opaque handles that are forwarded verbatim.
+  // Releases up to 0.19 emitted `e<hex>` handles; 0.20 and newer (the
+  // supported range) emits `<snapshot>:<index>` handles such as
+  // `s00000001:3`. Accept both forms.
+  if (!/^(?:e[0-9a-f]+|s\d+:\d+)$/i.test(value)) {
     throw new CuaRuntimeError('elementToken is not a valid opaque CUA element token', 'transport')
   }
 }

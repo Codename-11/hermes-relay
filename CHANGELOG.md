@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Android Gateway onboarding verifies Dashboard access without overstating Chat or voice readiness, explains common authentication setup failures, and requires exact-address consent before using HTTP. Custom Dashboard ports are accepted and shown throughout setup and route editing. (#604)
 - Android safely settles Gateway foreground-service starts before stopping local retention, preventing the startup/shutdown race reported in #603. Turning off always-on connectivity preserves active turns.
 - Android Standard Voice speaks live background completions in its active conversation after the original reply finishes. Stop and conversation changes discard pending speech. (#545)
+- Desktop computer control accepts the current CUA Driver element token format. Element actions such as click, set value, and scroll no longer fail with a transport error when CUA Driver 0.20 or newer returns `<snapshot>:<index>` element handles; the legacy token form remains accepted.
 
 ## [Android 1.17.0] - 2026-09-13
 

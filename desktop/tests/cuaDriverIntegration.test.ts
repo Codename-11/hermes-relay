@@ -19,7 +19,7 @@ const tools = [
 class StatefulFakeCua implements CuaProcessRunner {
   readonly calls: Array<{ args: readonly string[]; payload: Record<string, unknown> | null; signal?: AbortSignal }> = []
   rejectClicksAsStale = false
-
+  elementToken = 'e1234abcd'
   constructor(private readonly binary: string) {}
 
   async run(
@@ -55,7 +55,7 @@ class StatefulFakeCua implements CuaProcessRunner {
     if (command === 'call get_window_state') {
       return ok(JSON.stringify({
         snapshot_id: 's1234abcd',
-        elements: [{ element_index: 7, element_token: 'e1234abcd', role: 'button', label: 'Seven' }]
+        elements: [{ element_index: 7, element_token: this.elementToken, role: 'button', label: 'Seven' }]
       }))
     }
     if (command === 'call click' && this.rejectClicksAsStale) {
@@ -110,6 +110,26 @@ test('semantic CUA action can be bracketed by fresh snapshots without foreground
       scope: 'window',
       delivery_mode: 'background'
     })
+  } finally {
+    await cleanup()
+  }
+})
+
+test('supported driver element tokens flow verbatim from snapshot into click and set-value', async () => {
+  const { adapter, runner, cleanup } = await harness()
+  try {
+    runner.elementToken = 's00000002:11'
+    const session = await adapter.openSession(identity('control-token-flow'))
+    const before = await session.snapshot({ pid: 100, windowId: 200, includeScreenshot: false })
+    const token = (before.elements as Array<{ element_token: string }>)[0]!.element_token
+    assert.equal(token, 's00000002:11')
+    await session.clickElement({ pid: 100, windowId: 200, elementToken: token })
+    await session.setElementValue({ pid: 100, windowId: 200, elementToken: token }, 'hello')
+    await session.close()
+    const click = runner.calls.find(call => call.args[1] === 'click')
+    const setValue = runner.calls.find(call => call.args[1] === 'set_value')
+    assert.equal(click?.payload?.element_token, 's00000002:11')
+    assert.equal(setValue?.payload?.element_token, 's00000002:11')
   } finally {
     await cleanup()
   }

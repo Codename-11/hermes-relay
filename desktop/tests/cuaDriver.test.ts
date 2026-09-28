@@ -195,6 +195,28 @@ test('rejects invalid tokens and keys before invoking the driver', async () => {
   }
 })
 
+test('accepts the element token format of supported CUA Driver releases', async () => {
+  const install = await fakeInstall()
+  try {
+    const runner = new FakeRunner(install.binary)
+    const adapter = await CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner })
+    const session = await adapter.openSession({ controlSessionId: 'control-token-format', targetDeviceId: 'desktop-1' })
+    const driverToken = 's00000001:3'
+    await session.clickElement({ pid: 11, windowId: 22, elementToken: driverToken })
+    await session.setElementValue({ pid: 11, windowId: 22, elementToken: driverToken }, 'value')
+    await session.scroll({ pid: 11, windowId: 22, elementToken: driverToken }, 'down', 2)
+    await session.close()
+    const forwarded = runner.calls
+      .filter(call => call.args[0] === 'call')
+      .map(call => JSON.parse(call.stdin ?? '{}') as { element_token?: unknown })
+      .filter(payload => payload.element_token !== undefined)
+      .map(payload => payload.element_token)
+    assert.deepEqual(forwarded, [driverToken, driverToken, driverToken])
+  } finally {
+    await install.cleanup()
+  }
+})
+
 test('shared control sessions reject identity changes under the same authority id', async () => {
   const fake = { close: async () => undefined } as unknown as CuaControlSession
   setCuaControlSessionFactoryForTests(async () => fake)
