@@ -54,6 +54,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 class GatewayClientHarness(
     autoRespond: Boolean = true,
+    private val advanceCallbacks: () -> Unit = {},
 ) {
     val json = Json { ignoreUnknownKeys = true }
     val server = MockWebServer()
@@ -688,8 +689,14 @@ class GatewayClientHarness(
             })
         }.toString()
 
-    fun awaitServerSocket(): WebSocket =
-        serverSockets.poll(5, TimeUnit.SECONDS) ?: error("server socket never opened")
+    fun awaitServerSocket(): WebSocket {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (System.nanoTime() < deadline) {
+            advanceCallbacks()
+            serverSockets.poll(20, TimeUnit.MILLISECONDS)?.let { return it }
+        }
+        error("server socket never opened")
+    }
 
     fun sendGatewayReady(webSocket: WebSocket) {
         webSocket.send(eventFrame("gateway.ready", null, null))
@@ -698,14 +705,21 @@ class GatewayClientHarness(
     fun awaitRpc(method: String): JsonObject {
         val deadline = System.currentTimeMillis() + 5_000
         while (System.currentTimeMillis() < deadline) {
+            advanceCallbacks()
             rpcLog.firstOrNull { it.first == method }?.let { return it.second }
             Thread.sleep(20)
         }
         error("rpc $method never arrived; saw ${rpcLog.map { it.first }}")
     }
 
-    fun awaitPendingAck(): PendingAck =
-        pendingAcks.poll(5, TimeUnit.SECONDS) ?: error("suppressed ack never captured")
+    fun awaitPendingAck(): PendingAck {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (System.nanoTime() < deadline) {
+            advanceCallbacks()
+            pendingAcks.poll(20, TimeUnit.MILLISECONDS)?.let { return it }
+        }
+        error("suppressed ack never captured")
+    }
 
     /** Release a withheld ack with a caller-supplied or generic success result. */
     fun releaseAck(
@@ -725,6 +739,7 @@ class GatewayClientHarness(
     fun awaitRpcCount(method: String, count: Int): List<JsonObject> {
         val deadline = System.currentTimeMillis() + 5_000
         while (System.currentTimeMillis() < deadline) {
+            advanceCallbacks()
             val seen = rpcLog.filter { it.first == method }
             if (seen.size >= count) return seen.map { it.second }
             Thread.sleep(20)
@@ -2629,6 +2644,11 @@ class GatewayChatClientTest {
 
     @Test
     fun `lost submit ack before first event rejoins without duplicate fallback`() {
+        // Resume a failed RPC inline on the reader thread, before onSocketDown can continue.
+        // Recovery ownership must already be visible at that exact boundary.
+        client.shutdown()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        client = buildClient()
         harness.suppressAckMethods += "prompt.submit"
         val r = Recorder()
         client.sendTurn(null, "only once", null, r.callbacks) { r.preflightFailures += it }

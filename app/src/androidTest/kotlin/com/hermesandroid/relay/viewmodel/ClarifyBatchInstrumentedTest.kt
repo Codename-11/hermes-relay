@@ -142,9 +142,9 @@ class ClarifyBatchInstrumentedTest {
             Triple("secret", "Secret requested", "Skip"),
         )
         for ((method, title, action) in cases) {
-            socket.send("""{"id":"srq-$method","method":"$method","params":{
+            socket.send(Json.parseToJsonElement("""{"id":"srq-$method","method":"$method","params":{
                 "session_id":"fixture-live-1","request_id":"queue-$method","command":"echo fixture",
-                "choices":["once","deny"],"env_var":"FIXTURE_TOKEN","prompt":"Enter the fixture value"}}""")
+                "choices":["once","deny"],"env_var":"FIXTURE_TOKEN","prompt":"Enter the fixture value"}}""").toString())
             compose.waitUntil(10_000) { viewModel.pendingAsk.value?.ask?.requestId == "jsonrpc:\"srq-$method\"" }
             compose.onNodeWithText(title).performScrollTo().assertIsDisplayed()
             compose.onNodeWithText(action).performScrollTo().performClick()

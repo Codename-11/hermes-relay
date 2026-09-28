@@ -4430,6 +4430,9 @@ class GatewayChatClient(
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _reconnectDisposition.value = disposition
         _connectionState.value = GatewayConnectionState.Idle
+        // Completing a pending submit wakes its caller immediately. Mark ambiguous acceptance
+        // first so that caller cannot clear the turn before rejoin takes ownership below.
+        activeTurn?.markTransportRecoveryStarted()
         pendingRpcs.values.forEach {
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
         }
@@ -4922,6 +4925,10 @@ class GatewayChatClient(
          * Mark reconciliation before reconnecting so a terminal event arriving
          * immediately after `gateway.ready` cannot race ahead of the signal.
          */
+        fun markTransportRecoveryStarted() {
+            if (!ended) transportRecoveryStarted = true
+        }
+
         fun beginRejoin(): Boolean {
             val shouldRejoin = !ended && rejoinAttempts.incrementAndGet() <= MAX_TURN_REJOINS
             if (shouldRejoin) {
