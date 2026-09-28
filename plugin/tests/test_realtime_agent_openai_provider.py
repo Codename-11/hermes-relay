@@ -6,7 +6,7 @@ import base64
 import os
 import unittest
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import aiohttp
 
@@ -15,7 +15,10 @@ from plugin.relay.realtime_agent.models import (
     ProviderEventKind,
     RealtimeAgentSessionConfig,
 )
-from plugin.relay.realtime_agent.providers.openai import OpenAIRealtimeAgentProvider
+from plugin.relay.realtime_agent.providers.openai import (
+    OpenAIRealtimeAgentProvider,
+    _session_update,
+)
 from plugin.voice_lab.providers.base import ProviderUnavailable
 
 
@@ -37,7 +40,171 @@ class FakeOpenAISocket:
         self.closed = True
 
 
+class PCMContractSocket(FakeOpenAISocket):
+    """Model the reported rejection and GA session.updated acknowledgement."""
+
+    async def send_json(self, payload: dict[str, Any]) -> None:
+        await super().send_json(payload)
+        if payload["type"] != "session.update":
+            return
+        session = payload["session"]
+        for direction in ("input", "output"):
+            audio_format = session["audio"][direction]["format"]
+            param = f"session.audio.{direction}.format.rate"
+            if "rate" not in audio_format:
+                self.incoming.append({
+                    "type": "error",
+                    "event_id": "evt-rejected",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "code": "missing_required_parameter",
+                        "param": param,
+                        "message": f"Missing required parameter: '{param}'.",
+                    },
+                })
+                return
+            if audio_format != {"type": "audio/pcm", "rate": 24000}:
+                raise AssertionError("Expected mono PCM16 at 24 kHz")
+        self.incoming.append({
+            "type": "session.updated",
+            "event_id": "evt-configured",
+            "session": {"id": "sess-test", "object": "realtime.session", **session},
+        })
+
+
 class OpenAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pcm_session_negotiation_for_ga_models(self) -> None:
+        for model in (
+            "gpt-realtime-2", "gpt-realtime-2.1", "gpt-realtime-2.1-mini",
+            "gpt-realtime", "gpt-realtime-1.5", "gpt-realtime-mini",
+        ):
+            with self.subTest(model=model):
+                socket = PCMContractSocket()
+                factory = AsyncMock(return_value=socket)
+                connection = await OpenAIRealtimeAgentProvider(factory).connect(
+                    RealtimeAgentSessionConfig(
+                        provider="openai_realtime", model=model, voice="cedar",
+                        sample_rate=24000, profile=None, hermes_session_id=None,
+                        provider_options={"api_key": "openai-test"},
+                    )
+                )
+                try:
+                    events = [event async for event in connection.events()]
+                    self.assertEqual([e.kind for e in events], [ProviderEventKind.READY])
+                    self.assertEqual(events[0].payload["provider_event_type"], "session.updated")
+                    self.assertEqual(events[0].payload["resolved_model"], model)
+                    self.assertEqual(socket.sent[0]["session"]["audio"], {
+                        "input": {
+                            "format": {"type": "audio/pcm", "rate": 24000},
+                            "turn_detection": None,
+                            "transcription": {"model": "gpt-realtime-whisper"},
+                        },
+                        "output": {
+                            "format": {"type": "audio/pcm", "rate": 24000},
+                            "voice": "cedar",
+                        },
+                    })
+                    self.assertNotIn("OpenAI-Beta", factory.call_args.args[1])
+                finally:
+                    await connection.close()
+                self.assertTrue(socket.closed)
+
+    async def test_missing_output_rate_surfaces_provider_rejection(self) -> None:
+        config = RealtimeAgentSessionConfig(
+            provider="openai_realtime", model="gpt-realtime-2.1", voice="marin",
+            sample_rate=24000, profile=None, hermes_session_id=None,
+            provider_options={"api_key": "openai-test"},
+        )
+        rejected_update = _session_update(config)
+        rejected_update["session"]["audio"]["output"]["format"].pop("rate", None)
+        socket = PCMContractSocket()
+        with patch(
+            "plugin.relay.realtime_agent.providers.openai._session_update",
+            return_value=rejected_update,
+        ):
+            connection = await OpenAIRealtimeAgentProvider(
+                AsyncMock(return_value=socket)
+            ).connect(config)
+        try:
+            events = [event async for event in connection.events()]
+            self.assertEqual([e.kind for e in events], [ProviderEventKind.ERROR])
+            self.assertEqual(events[0].payload["message"],
+                "OpenAI Realtime error: Missing required parameter: "
+                "'session.audio.output.format.rate'.")
+            self.assertNotIn("openai-test", str(events[0].payload))
+        finally:
+            await connection.close()
+
+    async def test_unsupported_session_rates_fail_before_opening_socket(self) -> None:
+        factory = AsyncMock()
+        for rate in (0, 8000, 16000, 44100, 48000):
+            with self.subTest(rate=rate):
+                with self.assertRaisesRegex(ProviderUnavailable, "sample_rate=24000"):
+                    await OpenAIRealtimeAgentProvider(factory).connect(
+                        RealtimeAgentSessionConfig(
+                            provider="openai_realtime", model="gpt-realtime-2.1",
+                            voice="marin", sample_rate=rate, profile=None,
+                            hermes_session_id=None,
+                        )
+                    )
+        factory.assert_not_awaited()
+
+    async def test_transcription_options_preserve_ga_audio_configuration(self) -> None:
+        for options, expected in (
+            ({"input_transcription_enabled": False}, None),
+            ({"transcription_prompt": "Project vocabulary"},
+             {"model": "gpt-realtime-whisper"}),
+            ({"transcription_model": "gpt-4o-transcribe",
+              "transcription_language": "en", "transcription_prompt": "Project vocabulary"},
+             {"model": "gpt-4o-transcribe", "language": "en", "prompt": "Project vocabulary"}),
+        ):
+            with self.subTest(options=options):
+                socket = PCMContractSocket()
+                connection = await OpenAIRealtimeAgentProvider(
+                    AsyncMock(return_value=socket)
+                ).connect(RealtimeAgentSessionConfig(
+                    provider="openai_realtime", model="gpt-realtime-2.1", voice="marin",
+                    sample_rate=24000, profile=None, hermes_session_id=None,
+                    provider_options={"api_key": "openai-test", **options},
+                ))
+                try:
+                    audio = socket.sent[0]["session"]["audio"]
+                    self.assertEqual(audio["input"].get("transcription"), expected)
+                    self.assertIsNone(audio["input"]["turn_detection"])
+                    events = [event async for event in connection.events()]
+                    self.assertEqual([e.kind for e in events], [ProviderEventKind.READY])
+                finally:
+                    await connection.close()
+
+    async def test_ga_and_legacy_audio_events_remain_compatible(self) -> None:
+        for prefix in ("response.output_audio", "response.audio"):
+            with self.subTest(prefix=prefix):
+                socket = FakeOpenAISocket()
+                connection = await OpenAIRealtimeAgentProvider(
+                    AsyncMock(return_value=socket)
+                ).connect(RealtimeAgentSessionConfig(
+                    provider="openai_realtime", model="gpt-realtime-2.1", voice="marin",
+                    sample_rate=24000, profile=None, hermes_session_id=None,
+                    provider_options={"api_key": "openai-test"},
+                ))
+                pcm = b"\x01\x00" * 10
+                socket.incoming.extend([
+                    {"type": f"{prefix}.delta", "delta": base64.b64encode(pcm).decode("ascii")},
+                    {"type": f"{prefix}_transcript.delta", "delta": "Hello"},
+                    {"type": f"{prefix}.done"},
+                ])
+                try:
+                    events = [event async for event in connection.events()]
+                    self.assertEqual([e.kind for e in events], [
+                        ProviderEventKind.AUDIO_DELTA,
+                        ProviderEventKind.OUTPUT_TEXT_DELTA,
+                        ProviderEventKind.AUDIO_DONE,
+                    ])
+                    self.assertEqual(events[0].payload["audio"], pcm)
+                    self.assertEqual(events[1].payload["delta"], "Hello")
+                finally:
+                    await connection.close()
+
     async def test_auth_handshake_failure_reports_reauth_action(self) -> None:
         async def factory(url: str, headers: dict[str, str], timeout: float):
             raise aiohttp.WSServerHandshakeError(
@@ -144,7 +311,10 @@ class OpenAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
             "gpt-realtime-whisper",
         )
         self.assertEqual(session["audio"]["input"]["transcription"]["language"], "en")
-        self.assertEqual(session["audio"]["output"]["format"], {"type": "audio/pcm"})
+        self.assertEqual(
+            session["audio"]["output"]["format"],
+            {"type": "audio/pcm", "rate": 24000},
+        )
         self.assertEqual(session["audio"]["output"]["voice"], "marin")
         self.assertEqual(session["tool_choice"], "auto")
         tool_names = [tool["name"] for tool in session["tools"]]
@@ -154,6 +324,73 @@ class OpenAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("current checks", run_tool["description"])
         self.assertIn("live/external data", run_tool["description"])
         self.assertIn("speech-safe summary", run_tool["description"])
+
+    async def test_ga_pcm_session_negotiation_for_configured_and_default_models(self) -> None:
+        for model in ("gpt-realtime-2", "gpt-realtime-2.1", "gpt-realtime", ""):
+            with self.subTest(model=model):
+                socket = FakeOpenAISocket()
+
+                async def factory(url: str, headers: dict[str, str], timeout: float):
+                    self.assertNotIn("OpenAI-Beta", headers)
+                    return socket
+
+                connection = await OpenAIRealtimeAgentProvider(factory).connect(
+                    RealtimeAgentSessionConfig(
+                        provider="openai_realtime", model=model, voice="cedar",
+                        sample_rate=24000, profile=None, hermes_session_id=None,
+                        provider_options={"api_key": "test-only", "input_transcription_enabled": False},
+                    )
+                )
+                session = socket.sent[0]["session"]
+                expected_model = model or "gpt-realtime-2.1"
+                self.assertEqual(session["model"], expected_model)
+                self.assertEqual(session["audio"], {
+                    "input": {"format": {"type": "audio/pcm", "rate": 24000}, "turn_detection": None},
+                    "output": {"format": {"type": "audio/pcm", "rate": 24000}, "voice": "cedar"},
+                })
+                self.assertNotIn("test-only", str(socket.sent))
+                # Simulate acknowledgement of the exact format sent on the wire.
+                socket.incoming.append({"type": "session.updated", "session": session})
+                events = [event async for event in connection.events()]
+                self.assertEqual(events[0].kind, ProviderEventKind.READY)
+                self.assertEqual(events[0].payload["resolved_model"], expected_model)
+                await connection.close()
+                self.assertTrue(socket.closed)
+
+    async def test_unsupported_pcm_rate_fails_before_opening_socket(self) -> None:
+        async def factory(url: str, headers: dict[str, str], timeout: float):
+            self.fail("Invalid PCM rate must not open a provider connection")
+
+        for rate in (0, 8000, 16000, 48000):
+            with self.subTest(rate=rate), self.assertRaisesRegex(ProviderUnavailable, "sample_rate=24000"):
+                await OpenAIRealtimeAgentProvider(factory).connect(
+                    RealtimeAgentSessionConfig(
+                        provider="openai_realtime", model="gpt-realtime-2.1", voice="marin",
+                        sample_rate=rate, profile=None, hermes_session_id=None,
+                        provider_options={"api_key": "test-only"},
+                    )
+                )
+
+    async def test_schema_rejection_remains_an_error_not_a_ready_event(self) -> None:
+        socket = FakeOpenAISocket()
+
+        async def factory(url: str, headers: dict[str, str], timeout: float):
+            return socket
+
+        connection = await OpenAIRealtimeAgentProvider(factory).connect(
+            RealtimeAgentSessionConfig(
+                provider="openai_realtime", model="gpt-realtime-2.1", voice="marin",
+                sample_rate=24000, profile=None, hermes_session_id=None,
+                provider_options={"api_key": "test-only"},
+            )
+        )
+        socket.incoming.append({"type": "error", "error": {
+            "type": "invalid_request_error",
+            "message": "Missing required parameter: 'session.audio.output.format.rate'.",
+        }})
+        events = [event async for event in connection.events()]
+        self.assertEqual(events[0].kind, ProviderEventKind.ERROR)
+        self.assertIn("session.audio.output.format.rate", events[0].payload["message"])
 
     async def test_audio_tool_and_response_events_normalize(self) -> None:
         fake_socket = FakeOpenAISocket()
