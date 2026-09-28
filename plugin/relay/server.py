@@ -4252,8 +4252,10 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
         session_token = await _authenticate(
             ws, server, remote_ip, request, via_secure_link=via_secure_link
         )
-    except _AuthFailed as exc:
-        logger.info("Auth failed from %s: %s", remote_ip, exc)
+    except _AuthFailed:
+        # The failed envelope can contain arbitrary client text. Keep it out
+        # of logs; the client already receives the bounded auth.fail reason.
+        logger.info("Auth failed from %s", remote_ip)
         server._client_capabilities.pop(ws, None)
         server.chat.detach_ws(ws)
         # WebSocket was already sent an auth.fail message
