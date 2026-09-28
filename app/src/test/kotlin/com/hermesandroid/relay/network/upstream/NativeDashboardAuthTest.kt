@@ -204,6 +204,29 @@ class NativeDashboardAuthTest {
     }
 
     @Test
+    fun exchangeCallback_rejectsAmbiguousTargetsAndReplayWithoutAnotherExchange() {
+        val client = NativeDashboardAuthClient(server.url("/").toString(), store)
+        val authorization = client.beginAuthorization("http://127.0.0.1:43123/callback")
+        val state = authorization.state
+        listOf(
+            "/callback?code=one&state=$state&state=$state",
+            "/callback?code=one&code=two&state=$state",
+            "/other/../callback?code=one&state=$state",
+            "/callback?code=one&state=$state#ignored",
+            "http://127.0.0.1:1234/callback?code=one&state=$state",
+        ).forEach { target ->
+            assertTrue(runCatching { client.exchangeCallback(authorization, target) }.exceptionOrNull() is NativeDashboardCallbackException)
+        }
+        assertEquals(0, server.requestCount)
+        server.enqueue(MockResponse().setBody("""{"access_token":"fixture"}"""))
+        client.exchangeCallback(authorization, "/callback?code=one&state=$state")
+        assertTrue(runCatching {
+            client.exchangeCallback(authorization, "/callback?code=one&state=$state")
+        }.exceptionOrNull() is NativeDashboardInactiveAuthorizationException)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
     fun exchangeCallback_rejectsWrongStateWithoutNetworkOrStorage() {
         val client = NativeDashboardAuthClient(server.url("/").toString(), store)
         val authorization = client.beginAuthorization("http://127.0.0.1:43123/callback")
@@ -729,7 +752,7 @@ class NativeDashboardAuthTest {
             nativeDashboardSignInFailureStage(IOException("connection reset")),
         )
         assertEquals(
-            "token_transport_timeout",
+            "callback_timeout",
             nativeDashboardSignInFailureStage(NativeDashboardSignInTimeoutException()),
         )
         assertEquals(

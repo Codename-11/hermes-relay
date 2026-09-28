@@ -6,6 +6,21 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Confirm the reported Android 16 native password handoff
+
+Issue [#632](https://github.com/Codename-11/hermes-relay/issues/632) still needs a
+real-provider/browser retest on the affected Samsung environment after the
+bounded listener fix. Use the secret-free socket/read/rejection timeline to
+distinguish browser navigation from callback handling. JVM and controlled API 36
+socket tests do not establish the cause of that original device stall. See
+[callback verification](../native-dashboard-callback-testing.md).
+
+The broad `check-upstream-route-contract.py` scanner also needs a separate update
+for current upstream's split router modules; its two-file scan reports routes
+that remain declared in those modules as missing.
+
+---
+
 ## Secure Link managed activation
 
 The first guided setup uses shared read-only checks, copyable startup settings,

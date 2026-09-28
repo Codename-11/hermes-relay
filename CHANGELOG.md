@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Android Dashboard sign-in handles fragmented browser callbacks without letting idle or incomplete connections stall cancellation, retry, or timeout. Diagnostics identify callback reads and rejections without including credentials. (#632)
 - Android restores Clarify, approval, sudo, and secret cards on current Hermes, preserves partial Clarify answers across reconnects, and explicitly declines unsupported requests. (#631)
 
 - Desktop tray notices, screenshot evidence, and grant prompts stay reusable after dismissal; screenshot evidence keeps the most recently selected image. (#606)

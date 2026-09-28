@@ -312,6 +312,13 @@ failures surface as distinct secret-free recovery guidance. Client-local native
 failures automatically continue through the upstream cookie/WebView fallback;
 explicit provider denial, server rejection, and rate limiting remain visible
 instead of starting a second authorization attempt.
+The callback binds only literal `127.0.0.1` on an OS-selected port. At most four
+accepted sockets read concurrently, each with a five-second absolute header
+deadline, an 8 KiB request-line limit and a 16 KiB header limit. A single consumer
+validates the exact Host/port, `/callback` target and unique state/code parameters
+before a single-use PKCE exchange. Cancellation closes accepted sockets and the
+listener and cancels an active token call. Browser response writes have a separate
+two-second bound; failure to deliver the page does not undo a saved session.
 If a provider establishes its browser session but does not resume the original
 authorization transaction, the waiting screen offers Continue sign-in. That
 action cancels the old native attempt before opening a fresh authorization, so
@@ -322,6 +329,9 @@ authorization-origin relationship, browser launch, validated loopback callback,
 completion, Continue/cancel/close actions, fallback, and typed failure with
 elapsed time, provider class, and route role. Raw provider names, hostnames,
 callback parameters, codes, state, verifier, cookies, and tokens are excluded.
+Listener binding/closure, socket acceptance, completed reads, fixed rejection
+categories and failed response writes identify where browser handoff stopped.
+Callback-wait timeout is distinct from token-transport timeout.
 The review-before-sharing support export combines recent sanitized diagnostics
 with persistent reliability reports; no telemetry or automatic upload is added.
 Unreadable secure stores may be cleared and rebuilt, with any Keystore fallback,

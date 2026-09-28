@@ -21,7 +21,14 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 FOCUSED_TESTS = (
-    "com.hermesandroid.relay.network.upstream.GatewayChatClientTest",
+    "com.hermesandroid.relay.network.upstream.NativeDashboardAuthTest",
+    "com.hermesandroid.relay.network.upstream.NativeDashboardCallbackRequestTest",
+    "com.hermesandroid.relay.network.upstream.NativeDashboardSignInCoordinatorTest",
+    "com.hermesandroid.relay.ui.screens.DashboardSignInPolicyTest",
+    "com.hermesandroid.relay.ui.screens.DashboardWebViewAuthPolicyTest",
+    "com.hermesandroid.relay.viewmodel.connection.UpstreamTransportControllerAuthClientTest",
+    "com.hermesandroid.relay.viewmodel.MultiGatewayAuthPersistenceTest",
+"com.hermesandroid.relay.network.upstream.GatewayChatClientTest",
     "com.hermesandroid.relay.network.upstream.GatewayEventMapperTest",
     "com.hermesandroid.relay.network.upstream.GatewayServerRequestTest",
     "com.hermesandroid.relay.network.upstream.GatewayKeepAliveServiceTest",
