@@ -1930,6 +1930,7 @@ class GatewayChatClient(
     }
 
     private fun replayServerRequests(snapshot: JsonObject, sessionId: String? = liveSessionId) {
+        if (sessionId == null) return
         val ready = readySignal ?: return
         val frames = (snapshot["open_requests"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
         val deferred = synchronized(serverRequestLock) { deferredServerRequests.toList().also { deferredServerRequests.clear() } }
