@@ -2053,7 +2053,7 @@
     <string name="stats_last_sentence">Última frase</string>
     <string name="stats_avg_latency_last_format">Latência média (últimas %1$d)</string>
     <string name="stats_response_chunks">Blocos da resposta</string>
-    <string name="stats_last_chunk_gap">Último intervalo entre blocos</string>
+    <string name="stats_last_chunk_gap">Intervalo entre solicitações de síntese</string>
     <string name="stats_received">Recebidos</string>
     <string name="stats_barge_in_playback">Interrupção por voz/reprodução</string>
     <string name="stats_barge_in_events">Eventos de interrupção por voz</string>
@@ -4461,4 +4461,8 @@
     <string name="cw_auth_verified">Login verificado</string>
     <string name="cw_chat_checked_on_open">Verificado ao abrir o Chat</string>
     <string name="dashboard_local_auth_help">Hermes está acessível, mas as solicitações protegidas não estão autorizadas. Se o Dashboard for encaminhado do loopback, confira o endereço de escuta, o provedor de autenticação e dashboard.public_url no host. Um 401 sozinho não identifica a causa.</string>
+    <string name="voice_streaming_failed_basic">A voz em streaming falhou. Será usada a voz básica, que pode ter pausas entre frases. Confira as configurações do provedor de voz.</string>
+    <string name="voice_streaming_stopped_basic_next">A voz em streaming parou. O restante usará a voz básica. Confira as configurações do provedor de voz.</string>
+    <string name="stats_tts_queue_wait">Espera na fila de áudio</string>
+    <string name="stats_tts_player_start">Atraso ao iniciar o player</string>
 </resources>

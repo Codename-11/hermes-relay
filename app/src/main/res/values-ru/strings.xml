@@ -2159,7 +2159,7 @@
     <string name="stats_last_sentence">Последнее предложение</string>
     <string name="stats_avg_latency_last_format">Средняя задержка (последние %1$d)</string>
     <string name="stats_response_chunks">Части ответа</string>
-    <string name="stats_last_chunk_gap">Последний разрыв части</string>
+    <string name="stats_last_chunk_gap">Интервал запросов синтеза</string>
     <string name="stats_received">Получено</string>
     <string name="stats_barge_in_playback">Вмешательство/воспроизведение</string>
     <string name="stats_barge_in_events">События вмешательства</string>
@@ -4357,4 +4357,8 @@
     <string name="cw_auth_verified">Вход подтверждён</string>
     <string name="cw_chat_checked_on_open">Проверяется при открытии чата</string>
     <string name="dashboard_local_auth_help">Hermes доступен, но защищённые запросы не авторизованы. Если Dashboard перенаправляется с loopback, проверьте адрес прослушивания, провайдер аутентификации и dashboard.public_url на хосте. Сам по себе код 401 не определяет причину.</string>
+    <string name="voice_streaming_failed_basic">Потоковая озвучка недоступна. Используется базовая озвучка, возможны паузы между предложениями. Проверьте настройки голосового провайдера.</string>
+    <string name="voice_streaming_stopped_basic_next">Потоковая озвучка остановилась. Оставшийся текст будет озвучен в базовом режиме. Проверьте настройки голосового провайдера.</string>
+    <string name="stats_tts_queue_wait">Ожидание в очереди аудио</string>
+    <string name="stats_tts_player_start">Задержка запуска плеера</string>
 </resources>

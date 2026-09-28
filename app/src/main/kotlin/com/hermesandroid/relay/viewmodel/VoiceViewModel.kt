@@ -70,6 +70,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -554,6 +555,10 @@ data class VoiceStats(
     val currentResponseTtsChunks: Int = 0,
     /** Gap between the previous render finishing and the latest render starting. */
     val lastTtsChunkGapMs: Long = 0L,
+    /** Wait for the next synthesized file after the preceding player drain. */
+    val lastTtsQueueWaitMs: Long? = null,
+    /** File submission to Media3 isPlaying; excludes the wait for synthesis. */
+    val lastTtsPlayerStartMs: Long? = null,
     /** Cumulative TTS bytes received this session. */
     val ttsBytesReceived: Long = 0L,
     /** Number of TTS calls completed this session. */
@@ -1006,6 +1011,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Null = not probed, true = prefer realtime, false = fallback to basic TTS. */
     private var voiceOutputAvailable: Boolean? = null
+    @Volatile private var voiceOutputEpoch = 0L
     private var voiceOutputProfileName: String? = null
     private var ttsChunksThisResponse: Int = 0
     private var lastTtsChunkFinishedAtMs: Long = 0L
@@ -1207,6 +1213,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         retireInboundSpeech()
         this.chatViewModel?.gatewayInboundSpeechReceiver = null
         this.voiceClient = voiceClient
+        voiceOutputEpoch++
         this.voiceAudioClient = voiceAudioClient ?: RelayVoiceAudioClientAdapter(voiceClient)
         this.chatViewModel = chatViewModel
         chatViewModel.gatewayInboundSpeechReceiver = ::captureInboundSpeechReceiver
@@ -1481,6 +1488,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val normalized = profileName?.trim()?.takeIf { it.isNotBlank() }
         if (voiceOutputProfileName == normalized) return
         voiceOutputProfileName = normalized
+        voiceOutputEpoch++
         voiceOutputAvailable = null
         resetRealtimeSpeechCoalescer()
         // WP-V2: re-point the voice prefs at this (connection, profile) scope
@@ -1517,6 +1525,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val normalized = connectionId?.trim()?.takeIf { it.isNotBlank() }
         if (voicePrefsConnectionId == normalized) return
         voicePrefsConnectionId = normalized
+        voiceOutputEpoch++
+        voiceOutputAvailable = null
         applyVoicePrefsScope(voiceOutputProfileName)
     }
 
@@ -1546,6 +1556,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun applyVoiceSettingsSnapshot(settings: com.hermesandroid.relay.data.VoiceSettings) {
         val nextEngineMode = VoiceEngineMode.fromStorage(settings.engineMode)
         if (voiceEngineMode != nextEngineMode) {
+            voiceOutputEpoch++
             if (inboundSpeechPlaying) interruptSpeaking(cancelActiveTurn = false)
             else retireInboundSpeech()
         }
@@ -1898,6 +1909,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun exitVoiceMode() {
+        voiceOutputEpoch++
         retireInboundSpeech()
         cancelPendingListeningStart()
         // Idempotence guard — added 2026-04-21 after logcat showed the voice-
@@ -2442,6 +2454,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * new turn on the next mic tap).
      */
     fun interruptSpeaking(cancelActiveTurn: Boolean = true): Job? {
+        voiceOutputEpoch++
         retireInboundSpeech()
         cancelPendingListeningStart()
         Log.i(
@@ -5113,7 +5126,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * participates in the pipeline-drained gate — see the field KDoc for
      * the race this closes.
      */
-    private fun enqueueSentenceForTts(
+    @androidx.annotation.VisibleForTesting
+    internal fun enqueueSentenceForTts(
         sentence: String,
         immediate: Boolean = false,
         allowDuringProviderRealtime: Boolean = false,
@@ -5253,90 +5267,150 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun speakSentenceViaRealtime(sentence: String) {
-        val client = voiceClient
-        val pcmPlayer = realtimePcmPlayer
-        if (client == null || pcmPlayer == null) {
-            pendingInTtsQueue.decrementAndGet()
-            enqueueSentenceForLegacyTts(sentence)
-            return
-        }
-
-        if (voiceOutputAvailable == null) {
-            val config = client.getVoiceOutputConfig()
-            val cfg = config.getOrNull()
-            voiceOutputAvailable = cfg?.enabled == true
-            if (voiceOutputAvailable != true) {
-                Log.i(TAG, "Voice output unavailable; using basic /voice/synthesize fallback")
-                // Surface the active render path for troubleshooting — otherwise
-                // the streaming-vs-synthesize choice is invisible (e.g. why the
-                // streaming "Expressive speech tags" toggle has no effect here).
-                DiagnosticsLog.record(
-                    category = DiagnosticCategory.Voice,
-                    severity = DiagnosticSeverity.Info,
-                    title = getApplication<Application>().getString(R.string.voice_status_render_basic),
-                    detail = "Streaming /voice/output is disabled or unavailable — rendering via " +
-                        "the /voice/synthesize fallback. Per-request enhanced voice applies here; " +
-                        "the streaming renderer's speech-tags setting does not.",
-                )
+    @androidx.annotation.VisibleForTesting
+    internal suspend fun speakSentenceViaRealtime(sentence: String) {
+        var pendingReleased = false
+        fun releasePendingChunk() {
+            if (!pendingReleased) {
+                pendingReleased = true
                 pendingInTtsQueue.decrementAndGet()
+            }
+        }
+        try {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val outputEpoch = voiceOutputEpoch
+            val client = voiceClient
+            val pcmPlayer = realtimePcmPlayer
+            if (client == null || pcmPlayer == null) {
+                releasePendingChunk()
                 enqueueSentenceForLegacyTts(sentence)
                 return
             }
+
+            // Chunks already queued before a failure must also use the fallback.
+            if (voiceOutputAvailable == false) {
+                releasePendingChunk()
+                enqueueSentenceForLegacyTts(sentence)
+                return
+            }
+
+            if (voiceOutputAvailable == null) {
+                val config = client.getVoiceOutputConfig()
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (outputEpoch != voiceOutputEpoch) return
+                val cfg = config.getOrNull()
+                voiceOutputAvailable = cfg?.enabled == true
+                if (voiceOutputAvailable != true) {
+                    Log.i(TAG, "Voice output unavailable; using basic /voice/synthesize fallback")
+                    // Surface the active render path for troubleshooting — otherwise
+                    // the streaming-vs-synthesize choice is invisible (e.g. why the
+                    // streaming "Expressive speech tags" toggle has no effect here).
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Voice,
+                        severity = DiagnosticSeverity.Info,
+                        title = getApplication<Application>().getString(R.string.voice_status_render_basic),
+                        detail = "Streaming /voice/output is disabled or unavailable — rendering via " +
+                            "the /voice/synthesize fallback. Per-request enhanced voice applies here; " +
+                            "the streaming renderer's speech-tags setting does not.",
+                    )
+                    releasePendingChunk()
+                    activateLegacyTtsFallback(sentence)
+                    return
+                }
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Voice,
+                    severity = DiagnosticSeverity.Info,
+                    title = getApplication<Application>().getString(R.string.voice_status_render_streaming),
+                    detail = "Streaming /voice/output renderer active" +
+                        (cfg?.default_provider?.takeIf { it.isNotBlank() }?.let { " (provider $it)" }.orEmpty()) +
+                        (if (cfg?.auto_speech_tags == true) "; expressive speech tags on" else "") + ".",
+                )
+            }
+
+            val audioSeen = AtomicBoolean(false)
+            val audioBytes = AtomicInteger(0)
+            val bargeInStarted = AtomicBoolean(false)
+            val startedAtMs = System.currentTimeMillis()
+            _uiState.update { it.copy(state = VoiceState.Speaking, outputAudioActive = false) }
+            _currentPlayingChunkIndex.value = _currentPlayingChunkIndex.value + 1
+
+            val result = try {
+                client.runVoiceOutput(
+                    text = sentence,
+                    renderMode = "verbatim",
+                    onHandoff = ::recordVoiceHandoff,
+                ) { event ->
+                    if (outputEpoch == voiceOutputEpoch) {
+                        handleRealtimeVoiceEvent(event, pcmPlayer, audioSeen, audioBytes, bargeInStarted)
+                    }
+                }
+            } finally {
+                if (outputEpoch == voiceOutputEpoch && _uiState.value.state == VoiceState.Speaking) {
+                    stopBargeInListener()
+                }
+            }
+
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (outputEpoch != voiceOutputEpoch) return
+            releasePendingChunk()
+            if (!shouldFallbackRelayVoiceOutput(result.isSuccess, audioSeen.get())) {
+                spokenChunks.add(sentence)
+                val latencyMs = System.currentTimeMillis() - startedAtMs
+                recordTtsChunkFinished(
+                    sentence = sentence,
+                    latencyMs = latencyMs,
+                    bytesReceived = audioBytes.get().toLong(),
+                    startedAtMs = startedAtMs,
+                )
+                maybeAutoResume()
+                return
+            }
+
+            // Provider errors can contain account identifiers or request details.
+            // Publish the recovery action without copying the raw error into UI/logs.
+            val message = getApplication<Application>().getString(
+                if (audioSeen.get()) R.string.voice_streaming_stopped_basic_next
+                else R.string.voice_streaming_failed_basic,
+            )
+            Log.w(TAG, "Voice output failed; basic TTS selected; audioStarted=${audioSeen.get()}")
+            UiMessageBus.warning(message)
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Voice,
-                severity = DiagnosticSeverity.Info,
-                title = getApplication<Application>().getString(R.string.voice_status_render_streaming),
-                detail = "Streaming /voice/output renderer active" +
-                    (cfg?.default_provider?.takeIf { it.isNotBlank() }?.let { " (provider $it)" }.orEmpty()) +
-                    (if (cfg?.auto_speech_tags == true) "; expressive speech tags on" else "") + ".",
+                severity = DiagnosticSeverity.Warning,
+                title = message,
+                detail = "render_path=legacy_hermes_tts; streaming_attempt_failed=true; " +
+                    "audio_started=${audioSeen.get()}; replay_chunk=${!audioSeen.get()}",
             )
-        }
-
-        val audioSeen = AtomicBoolean(false)
-        val audioBytes = AtomicInteger(0)
-        val bargeInStarted = AtomicBoolean(false)
-        val startedAtMs = System.currentTimeMillis()
-        _uiState.update { it.copy(state = VoiceState.Speaking, outputAudioActive = false) }
-        _currentPlayingChunkIndex.value = _currentPlayingChunkIndex.value + 1
-
-        val result = try {
-            client.runVoiceOutput(
-                text = sentence,
-                renderMode = "verbatim",
-                onHandoff = ::recordVoiceHandoff,
-            ) { event ->
-                handleRealtimeVoiceEvent(event, pcmPlayer, audioSeen, audioBytes, bargeInStarted)
+            if (audioSeen.get()) {
+                // A failed stream cannot continue owning the speaker while
+                // queued fallback files begin on the legacy player.
+                pcmPlayer.stop()
+                firstFrameWatchdogJob?.cancel()
+                realtimeAmplitudeDecayJob?.cancel()
+                lastRealtimeAudioDeltaAtMs = 0L
+                speakEnvelope = 0f
+                _uiState.update { it.copy(amplitude = 0f, outputAudioActive = false) }
             }
+            activateLegacyTtsFallback(sentence.takeUnless { audioSeen.get() })
+            if (audioSeen.get()) maybeAutoResume()
         } finally {
-            if (_uiState.value.state == VoiceState.Speaking) {
-                stopBargeInListener()
-            }
+            // Cancellation and stale-owner returns still retire this chunk.
+            releasePendingChunk()
         }
+    }
 
-        pendingInTtsQueue.decrementAndGet()
-        if (!shouldFallbackRelayVoiceOutput(result.isSuccess, audioSeen.get())) {
-            spokenChunks.add(sentence)
-            val latencyMs = System.currentTimeMillis() - startedAtMs
-            recordTtsChunkFinished(
-                sentence = sentence,
-                latencyMs = latencyMs,
-                bytesReceived = audioBytes.get().toLong(),
-                startedAtMs = startedAtMs,
-            )
-            maybeAutoResume()
-            return
-        }
-
-        val err = result.exceptionOrNull()
-            ?: IOException("Voice output completed without audio")
-        Log.w(TAG, "Voice output failed; falling back to basic TTS: ${err.message}")
+    private fun activateLegacyTtsFallback(replay: String?) {
         voiceOutputAvailable = false
-        if (!audioSeen.get()) {
-            enqueueSentenceForLegacyTts(sentence)
-        } else {
-            maybeAutoResume()
+        replay?.let { enqueueSentenceForLegacyTts(it) }
+        // Preserve the order of chunks queued during the failed request, then
+        // flush prose still held below the coalescer threshold. Future chunks
+        // go straight to legacy TTS; no text is discarded at the route change.
+        while (true) {
+            val queued = realtimeTtsQueue.tryReceive().getOrNull() ?: break
+            pendingInTtsQueue.decrementAndGet()
+            enqueueSentenceForLegacyTts(queued)
         }
+        realtimeSpeechCoalescer.flush().forEach { enqueueSentenceForLegacyTts(it) }
     }
 
     /**
@@ -5553,15 +5627,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun resetTtsTurnStats() {
+        ttsStatsGeneration++
         ttsChunksThisResponse = 0
         lastTtsChunkFinishedAtMs = 0L
         _voiceStats.update {
             it.copy(
                 currentResponseTtsChunks = 0,
                 lastTtsChunkGapMs = 0L,
+                lastTtsQueueWaitMs = null,
+                lastTtsPlayerStartMs = null,
             )
         }
     }
+
+    private var ttsStatsGeneration = 0L
 
     private fun recordTtsChunkFinished(
         sentence: String,
@@ -5592,41 +5671,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---------------------------------------------------------------------
     //
-    // V4 (voice-quality-pass 2026-04-16) rewrites what used to be a strictly
-    // serial synth→play→await loop into two parallel workers joined by a
-    // bounded [Channel] so sentence N+1's network round-trip overlaps
-    // sentence N's audio playback.
-    //
-    // ┌──────────────┐  String  ┌────────────┐  File (cap=2)  ┌────────────┐
-    // │ streamObserver │──────────▶│ synth worker │────────────────▶│ play worker│
-    // └──────────────┘  ttsQueue └────────────┘   audioQueue   └────────────┘
-    //
-    // Why the capacity-2 Channel<File> (Option B) instead of eagerly
-    // appending every synthesized file to the ExoPlayer queue (Option A):
-    // VoicePlayer (V5) doesn't expose its internal queue depth as a public
-    // API and V4's guardrails forbid modifying VoicePlayer.kt, so we can't
-    // read ExoPlayer.mediaItemCount from the synth side to gate
-    // "maxMediaItemsAhead = 2." Option B makes the backpressure explicit
-    // at the Channel level — [audioQueue.send] suspends the synth worker
-    // once two files are queued, so disk usage and ElevenLabs spend both
-    // stay bounded regardless of how fast the SSE stream delivers
-    // sentences. The play worker calls [VoicePlayer.awaitCompletion] per
-    // file (V5's "queue drained + not playing" semantic) so ExoPlayer's
-    // own queue never grows past 1 — a single queuing layer, cleanly owned.
-    //
-    // Supervision: both workers are children of a [supervisorScope] so a
-    // failure in one (e.g. a single synth error) does not tear down the
-    // other. Cancelling [ttsConsumerJob] cleanly cancels both workers; the
-    // interrupt paths exploit this to reset the pipeline between turns.
+    // Synthesis and playback overlap through a capacity-two file channel.
+    // At most two files wait in the channel, with one playing and one synth
+    // in flight or blocked on send. More capacity cannot fix a sustained
+    // synthesis rate slower than playback. The play worker currently drains
+    // each file before submitting the next, even when that file is ready.
+    // Queue-wait and player-start measurements distinguish these two costs.
+    // Cancellation stops both workers; pending file cleanup runs after unwind.
 
     private fun startTtsConsumer() {
         ttsConsumerJob?.cancel()
-        // Fresh capacity-2 audio channel per pipeline lifecycle (Kotlin
-        // [Channel] instances can't be "re-opened" after close). Capacity
-        // 2 lets the synth worker stay one sentence ahead of playback —
-        // enough to hide the ~200 ms synth round-trip behind the current
-        // sentence's audio without unbounded disk growth on long agent
-        // responses.
+        // Each pipeline lifecycle owns a fresh bounded audio channel.
         val queue = Channel<File>(capacity = 2)
         ttsConsumerJob = viewModelScope.launch {
             try {
@@ -5723,7 +5778,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         runTtsPlayWorker(
             input = queue,
             play = { file -> player?.play(file) },
-            awaitCompletion = { player?.awaitCompletion() },
+            awaitCompletion = {
+                player?.awaitCompletion()
+                _voiceStats.update { it.copy(lastTtsPlayerStartMs = player?.lastStartLatencyMs) }
+            },
+            onQueueWait = { waitMs ->
+                _voiceStats.update { it.copy(lastTtsQueueWaitMs = waitMs) }
+            },
+            turnId = { ttsStatsGeneration },
             onFileReady = { file ->
                 // About to play — ensure Speaking so the amplitude bridge
                 // forwards the player output to the UI.
@@ -7824,7 +7886,12 @@ internal suspend fun runTtsPlayWorker(
     onFileReady: (File) -> Unit,
     pendingFiles: MutableSet<File>,
     onQueueDrained: () -> Unit,
+    elapsedRealtimeMs: () -> Long = { System.nanoTime() / 1_000_000L },
+    onQueueWait: (Long) -> Unit = {},
+    turnId: () -> Long = { 0L },
 ) {
+    var drainedAtMs: Long? = null
+    var drainedTurn: Long? = null
     while (true) {
         val immediate = input.tryReceive()
         val file: File = when {
@@ -7838,11 +7905,17 @@ internal suspend fun runTtsPlayWorker(
             }
         }
 
+        val fileTurn = turnId()
+        if (drainedTurn == fileTurn) {
+            drainedAtMs?.let { onQueueWait((elapsedRealtimeMs() - it).coerceAtLeast(0L)) }
+        }
         onFileReady(file)
         try {
             play(file)
             pendingFiles.remove(file)
             awaitCompletion()
+            drainedAtMs = elapsedRealtimeMs()
+            drainedTurn = fileTurn
         } catch (ce: CancellationException) {
             throw ce
         } catch (_: Exception) {
