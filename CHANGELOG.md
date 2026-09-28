@@ -40,6 +40,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Plugin authentication failures no longer write client-supplied envelope fields to service logs.
 - Plugin OpenAI Realtime Agent sessions include the output PCM sample rate, fixing immediate session rejection. (#644)
 - Relay-owned media uploads are removed on token expiry, eviction, and shutdown; media activity logs omit tokens, file paths, and screenshot bytes.
 - Plugin screenshot and navigation tools resolve Android's authenticated media token, attach the actual bounded image to host vision, and keep legacy inline screenshots readable. (#593)

@@ -13,6 +13,7 @@ Secure Link gains guided host checks and pairing, Android screenshot tools deliv
 
 ## Fixed
 
+- Authentication failures no longer write client-supplied envelope fields to service logs.
 - OpenAI Realtime Agent sessions include the output PCM sample rate required by the current API. (#644)
 - Android screenshot and navigation tools resolve authenticated media tokens into bounded images for host vision while retaining legacy inline-image compatibility. (#593)
 - Relay-owned media uploads are removed on token expiry, eviction, and shutdown, and media logs omit sensitive tokens and file paths.
