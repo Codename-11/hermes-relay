@@ -3,7 +3,6 @@ package com.hermesandroid.relay.network.shared
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.ProxyEndpoint
 import com.hermesandroid.relay.data.isValidPinnedProxy
-import okhttp3.CertificatePinner
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import java.net.URI
@@ -66,9 +65,10 @@ fun EndpointCandidate.pluginProxyRoutesOrNull(): PluginProxyRoutes? =
 private fun formatHost(host: String): String = if (':' in host) "[$host]" else host
 
 /**
- * Build a client that trusts the system normally, plus exactly the
- * pairing-advertised SPKI for this proxy. The authority guard keeps a pin
- * scoped to host *and port*; OkHttp's CertificatePinner alone is host-only.
+ * Require the paired leaf SPKI for both system-trusted and self-signed chains.
+ * Validate it in the trust manager, before OkHttp's chain cleaning, so a
+ * self-signed paired leaf does not depend on a platform-supplied cleaned chain.
+ * The authority guard applies to HTTP calls and WebSocket upgrades alike.
  */
 fun buildPluginProxyClient(
     baseBuilder: OkHttpClient.Builder,
@@ -88,12 +88,12 @@ fun buildPluginProxyClient(
     if (rawSocketFactory != null) baseBuilder.socketFactory(rawSocketFactory)
     return baseBuilder
         .sslSocketFactory(sslContext.socketFactory, pinnedTrust)
-        .certificatePinner(
-            CertificatePinner.Builder().add(expectedHost, routes.pinSha256).build(),
-        )
-        .addNetworkInterceptor(Interceptor { chain ->
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .addInterceptor(Interceptor { chain ->
             val requestUrl = chain.request().url
-            if (!requestUrl.host.equals(expectedHost, ignoreCase = true) ||
+            if (!requestUrl.isHttps ||
+                !requestUrl.host.equals(expectedHost, ignoreCase = true) ||
                 requestUrl.port != expectedPort
             ) {
                 throw java.io.IOException("Pinned proxy redirect left its paired authority")
@@ -122,7 +122,7 @@ private fun systemTrustManager(): X509TrustManager {
     return factory.trustManagers.filterIsInstance<X509TrustManager>().single()
 }
 
-private class PinnedOrSystemTrustManager(
+internal class PinnedOrSystemTrustManager(
     private val system: X509TrustManager,
     private val expectedPin: String,
 ) : X509TrustManager {
@@ -133,10 +133,8 @@ private class PinnedOrSystemTrustManager(
         val certificates = chain?.takeIf { it.isNotEmpty() }
             ?: throw CertificateException("Proxy supplied no certificate chain")
         val systemAccepted = runCatching { system.checkServerTrusted(chain, authType) }.isSuccess
-        if (systemAccepted) return
-
         val leaf = certificates.first()
-        leaf.checkValidity()
+        if (!systemAccepted) leaf.checkValidity()
         val actual = "sha256/" + java.util.Base64.getEncoder().encodeToString(
             MessageDigest.getInstance("SHA-256").digest(leaf.publicKey.encoded),
         )

@@ -1,5 +1,15 @@
 # Hermes-Relay — Dev Log
 
+## 2026-09-14 — Android 1.17.0 and Plugin 1.11.3 publication verified
+
+Published [Hermes-Relay Android 1.17.0](https://github.com/Codename-11/hermes-relay/releases/tag/android-v1.17.0) (versionCode 57) and [Hermes-Relay Plugin 1.11.3](https://github.com/Codename-11/hermes-relay/releases/tag/server-v1.11.3) from `52f3f7565811828824d42bc9b432296271a2f9c3`. Both immutable tags retain tree `b366c9567759e509d39b6495197ffd35b3eeb430`. Android public APK/AAB bytes match the signed Play preflight artifact; Plugin wheel/sdist metadata and checksums were independently verified.
+
+Play accepted code 57 on Internal testing and Production. At initial verification, the Publisher API reported Production `completed` while Console showed the release in review, with Managed Publishing off. Console subsequently confirmed Android 1.17.0/code 57 as **Available on Google Play** on September 14, 2026, across 177 countries/regions. English and Chinese Play notes match the tagged sources.
+
+Canonical and legacy privacy pages were published and matched the committed policy. Data Safety and foreground-service declarations were reconciled, and [versioned reviewer videos](https://hermes-relay.dev/play-review/) use persistent storage. API 36 emulator evidence covers overlay access gating, background capture, notification Stop, screen-lock shutdown, standalone wake listening and persistent-connection controls. Physical Android 14–16/OEM testing was waived; speech-provider behavior and combined voice/wake handoff are not certified by these recordings.
+
+Release follow-ups closed #474 and #556 as fixed. #557 remains the upstream-tracked context gap; its existing reply was preserved. The contributor on #583 was notified after Plugin publication.
+
 ## 2026-09-13 — Android 1.17.0 and Plugin 1.11.3 release preparation
 
 Prepared Android 1.17.0 (versionCode 57) with Google Play Voice Overlay, progressive Clarify batches, chat card presentation, transport-accurate context previews and profile display names. Prepared Plugin 1.11.3 for current and legacy Dashboard WebSocket guard ownership. CLI+UI remains 0.4.0-beta.7.

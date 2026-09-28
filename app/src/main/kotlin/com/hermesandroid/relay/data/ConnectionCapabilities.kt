@@ -44,7 +44,9 @@ val Connection.automaticChatTransport: SessionTransport
     get() {
         val dashboardPersisted = !dashboardUrl.isNullOrBlank() ||
             !authenticatedDashboardOrigin.isNullOrBlank()
-        return if (dashboardPersisted) SessionTransport.GATEWAY else SessionTransport.SSE
+        // An empty first-setup placeholder is standard Gateway intent, not an
+        // API-only conversation. Only an actual API endpoint selects legacy SSE.
+        return if (dashboardPersisted || apiServerUrl.isBlank()) SessionTransport.GATEWAY else SessionTransport.SSE
     }
 
 fun Connection.chatTransportForPreference(preference: String): SessionTransport =

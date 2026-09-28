@@ -108,11 +108,54 @@ namespaces when their own credentials are present, or use independent direct or
 Tailscale HTTPS fallback routes. Tailscale Serve remains the normal recommended
 setup; Secure Link is opt-in.
 
-Enable it with `--secure-link` or `RELAY_SECURE_LINK_ENABLED=1`, then re-pair so
-the new QR carries the exact origin and pin. The Relay `/health` response
-reports `secure_link.status`; the Secure Link endpoint at
-`https://<host>:9443/relay/health` reports its namespaces. A certificate,
-hostname, or port change requires another explicit re-pair.
+Use **Relay → Remote Access → Hermes Secure Link → Set up Secure Link** in
+Dashboard, or the Secure Link setup section in the Desktop Relay pane. The same
+read-only checks are available on the server:
+
+```bash
+hermes relay secure-link --host relay.example --port 9443
+```
+
+Without Hermes CLI discovery, use `python -m plugin.cli secure-link --host
+relay.example --port 9443` from the Relay environment. Add `--json` for the shared
+readiness report. This is a host-side check, not a command for the separate
+Hermes-Relay CLI+UI client.
+
+1. **Check the address and prerequisites.** Use an address reachable from the
+   phone, not a wildcard or localhost. Checks cover the listener, certificate,
+   loopback upstreams, Dashboard password/OAuth protection, and connected-client
+   restart impact. They do not write configuration, generate keys, open firewall
+   ports, or restart anything.
+2. **Apply the reviewed settings.** The flow supplies environment settings or
+   arguments for your existing Relay startup command. Enable with `--secure-link`
+   or `RELAY_SECURE_LINK_ENABLED=1`, preserving its other settings, then restart
+   the service/process that already owns Relay. Do not start a second instance.
+   Startup flags override environment settings; replace an existing
+   `--secure-link` or `--no-secure-link` flag when changing the setting.
+   If an upstream uses a LAN-only bind, configure a working loopback listener
+   first; merely changing its URL to localhost does not make it reachable.
+3. **Check again and pair.** Only an enabled listener at the checked address
+   unlocks **Create pairing QR**. The server signs a fresh invite containing its
+   certificate and pin. Alternatively run `hermes pair --png`. Existing devices
+   must re-pair to import that trust. Desktop's pane can copy the equivalent
+   signed invite for clients that accept pairing URLs.
+4. **Sign in on the client.** Scan the QR in Android, confirm its address and
+   services, and sign into Dashboard. Reachable transport, authenticated access,
+   and Gateway Chat readiness are separate states. Generic preview probes do
+   not bypass self-signed certificate checks: pinned routes are verified by the
+   paired client after importing the QR.
+
+The Relay `/health` response reports `secure_link.status`; the Secure Link
+endpoint at `https://<host>:9443/relay/health` reports its namespaces. An unavailable
+optional API does not imply that Dashboard Chat or Standard Voice is unavailable.
+A certificate, hostname, or port change requires explicit re-pairing.
+
+To disable, set `RELAY_SECURE_LINK_ENABLED=0` or replace the startup flag with
+`--no-secure-link`, then restart the existing Relay owner. Keep its certificate
+and key if you plan to reuse the same identity. Failed Secure Link initialization
+leaves ordinary Relay available and does not advertise a working Secure Link
+route. Restore the previous settings and re-check health before retrying.
+Automatic service-manager activation is not part of this guided-command flow.
 
 ## Hermes Reach (experimental)
 

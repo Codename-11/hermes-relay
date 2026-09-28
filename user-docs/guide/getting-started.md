@@ -434,8 +434,10 @@ see [Remote access](/guide/remote-access) and the
 Manage uses the Hermes dashboard/admin server and stores its native bearer or
 compatibility cookies separately from Relay pairing credentials.
 
-- **Dashboard auth disabled / open dashboard:** Manage works as long as Android
-  can reach the dashboard URL.
+- **Loopback / internal-token mode:** a reachable public status endpoint does
+  not prove that Android can use protected routes. Configure a phone-reachable
+  authenticated Dashboard, or the external `dashboard.public_url` and provider
+  for a loopback reverse proxy. Do not copy the internal token to Android.
 - **Basic username/password login:** supported. Current gateways broker it in the
   system browser when `native_pkce` is advertised. Compatibility gateways post
   to `/auth/password-login` and store exact-origin Dashboard cookies.
@@ -458,9 +460,32 @@ compatibility cookies separately from Relay pairing credentials.
 Relay pairing does not replace dashboard login, and dashboard login does not mint
 an API key: it matches the Hermes Desktop remote-gateway path by authenticating
 `/api/ws` and `/api/pty` with the Dashboard session plus a single-use ticket from
-`/api/auth/ws-ticket`. Android uses that gateway path when it is ready and falls
-back to API-server SSE when it is not.
+`/api/auth/ws-ticket`. A Gateway conversation keeps that owner when sign-in
+expires or the network fails. Direct API is an explicitly selected compatibility
+connection; it never silently takes over a Gateway conversation.
 :::
+
+### Explicit HTTP risk exception
+
+HTTPS remains the default for public addresses. In **Remote gateway**, the
+gateway address editor, or an extra route editor, an HTTP address outside the
+recognized private ranges displays a warning and an unchecked acknowledgement.
+Confirm it only if you accept the risk of sending credentials and conversation
+data without HTTP-layer encryption. The app does not detect a VPN, verify its
+route, or stop requests when the VPN disconnects.
+
+The exception is saved for this connection and exact scheme, host, and port.
+Changing the address requires fresh acknowledgement; it does not mark the route
+encrypted, bypass Dashboard authentication, or grant Relay access. Editing keeps
+the saved gateway identity and history references. A changed credential origin
+retires that gateway's old Dashboard authentication and requires sign-in again.
+Cancelling or a failed validation leaves the old address intact.
+
+A generic 401 means authorization failed, not that `dashboard.public_url` is
+necessarily wrong. If public status advertises no authentication but protected
+requests fail, check the host's bind/proxy mode, configured provider and external
+public URL. For ordinary expired sessions, sign in again and retry the same
+conversation. Never delete history or switch to another profile as a workaround.
 
 ::: details Manual connection setup (no QR)
 **During onboarding:**

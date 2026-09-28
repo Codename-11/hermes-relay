@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.hermesandroid.relay.ui.theme.AppFont
@@ -35,23 +36,25 @@ internal object AppearancePreferences {
     private val serializer = ListSerializer(CustomThemePreset.serializer())
 
     fun state(context: Context): Flow<PersistedAppearance> = context.applicationContext.relayDataStore.data
-        .map { preferences ->
-            val customThemes = decodeCustomThemes(preferences[customThemesKey])
-            val requestedThemeId = preferences[appThemeKey]
-            val customTheme = CustomThemePreset.idFromAppTheme(requestedThemeId)
-                ?.let { id -> customThemes.firstOrNull { it.id == id } }
-            PersistedAppearance(
-                themePreference = preferences[themeKey]
-                    ?.takeIf { it == "auto" || it == "light" || it == "dark" }
-                    ?: "auto",
-                appThemeId = customTheme?.appThemeId ?: AppThemes.byId(requestedThemeId).id,
-                accentHex = normalizeAccentHex(preferences[accentKey]),
-                shapeId = AppearanceShape.fromId(preferences[shapeKey]).id,
-                appFontId = AppFont.byId(preferences[appFontKey]).id,
-                fontScale = (preferences[fontScaleKey] ?: 1.0f).coerceIn(0.85f, 1.3f),
-                customTheme = customTheme,
-            )
-        }
+        .map(::decode)
+
+    fun decode(preferences: Preferences): PersistedAppearance {
+        val customThemes = decodeCustomThemes(preferences[customThemesKey])
+        val requestedThemeId = preferences[appThemeKey]
+        val customTheme = CustomThemePreset.idFromAppTheme(requestedThemeId)
+            ?.let { id -> customThemes.firstOrNull { it.id == id } }
+        return PersistedAppearance(
+            themePreference = preferences[themeKey]
+                ?.takeIf { it == "auto" || it == "light" || it == "dark" }
+                ?: "auto",
+            appThemeId = customTheme?.appThemeId ?: AppThemes.byId(requestedThemeId).id,
+            accentHex = normalizeAccentHex(preferences[accentKey]),
+            shapeId = AppearanceShape.fromId(preferences[shapeKey]).id,
+            appFontId = AppFont.byId(preferences[appFontKey]).id,
+            fontScale = (preferences[fontScaleKey] ?: 1.0f).coerceIn(0.85f, 1.3f),
+            customTheme = customTheme,
+        )
+    }
 
     fun shape(context: Context): Flow<String> = state(context).map { it.shapeId }
 

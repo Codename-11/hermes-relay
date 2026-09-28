@@ -33,6 +33,24 @@ class PairingAuthorityTests(AioHTTPTestCase):
     async def get_application(self) -> web.Application:
         return create_app(RelayConfig(profile_discovery_enabled=False))
 
+    async def test_rejected_auth_does_not_log_client_fields(self) -> None:
+        sentinel = "SECRET_SENTINEL_FROM_CLIENT"
+        with self.assertLogs("hermes_relay", level="INFO") as captured:
+            ws = await self.client.ws_connect("/ws")
+            await ws.send_json(
+                {
+                    "channel": sentinel,
+                    "type": "auth",
+                    "payload": {"session_token": sentinel},
+                }
+            )
+            response = await ws.receive_json()
+            await ws.close()
+
+        self.assertEqual(response["type"], "auth.fail")
+        self.assertIn("Auth failed", "\n".join(captured.output))
+        self.assertNotIn(sentinel, "\n".join(captured.output))
+
     async def _authenticate(
         self,
         code: str,

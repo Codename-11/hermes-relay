@@ -28,15 +28,13 @@ estar instaladas a la vez.
 
 ## 2. Inicia Hermes
 
-El Dashboard/Gateway de Hermes debe estar activo y accesible desde el teléfono.
-Si es necesario, inícialo con `hermes dashboard`. Consulta
-[Instalación y configuración](/es/guide/getting-started) para preparar el servidor.
-Esta es toda la configuración del servidor necesaria para Chat, sesiones,
-Manage, voz y archivos entrantes estándar.
+El Dashboard debe ser accesible desde el teléfono y tener un proveedor de autenticación. `hermes dashboard` escucha solo en loopback de forma predeterminada. Configura primero el inicio de sesión y, para acceso directo por LAN/VPN, ejecuta `hermes dashboard --host 0.0.0.0 --port 9119 --no-open`. Un proxy inverso hacia loopback necesita la `dashboard.public_url` externa y un proveedor. Nunca copies el token interno al teléfono.
+
+Elige **Hermes nearby** o **Remote gateway**. Se recomienda HTTPS. Otras direcciones HTTP requieren aceptar el riesgo para esta conexión, host y puerto exactos. La aplicación no detecta ni impone protección VPN; asumes la exposición de credenciales y conversaciones si la VPN falla. Cambiar el origen requiere nuevo consentimiento e inicio de sesión. Cancelar conserva la dirección anterior; el historial y los borradores se mantienen. Direct API es una alternativa explícita, nunca un reemplazo automático del chat Gateway. Un 401 por sí solo no demuestra un error en `dashboard.public_url`.
 
 ## 3. Añade la conexión estándar {#other-supported-paths}
 
-En Android, abre **Connect**. Usa **Find Hermes on LAN** o introduce manualmente
+En Android, abre **Connect**. Usa **Hermes nearby** o introduce manualmente
 la dirección del Dashboard, normalmente `http://<host>:9119`. Inicia sesión
 cuando se solicite. Así se crea una conexión estándar completa sin plugin ni
 URL de Relay.
@@ -56,7 +54,7 @@ Usa `--no-ssl` solo en una LAN o VPN de confianza. Para acceder desde fuera de
 casa, [se recomienda Tailscale](/guide/remote-access).
 
 Después, abre **Relay → Pair new device** en el Web Dashboard y escanea el QR de
-un solo uso desde **Settings → Connections → Pair Hermes Relay**.
+un solo uso desde **Settings → Gateways → Pair Hermes Relay**.
 
 El servidor de API sigue siendo un fallback opcional. Relay no es obligatorio
 para upstream, pero se recomienda para Terminal/TUI, notificaciones,

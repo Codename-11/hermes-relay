@@ -780,6 +780,9 @@ class ChatViewModel : ViewModel() {
 
     /** Callback to persist session ID — set by RelayApp */
     var onSessionChanged: ((String?) -> Unit)? = null
+
+    /** Capture a voice-session receipt at live admission, never during history replay. */
+    internal var gatewayInboundSpeechReceiver: (() -> ((String) -> Unit)?)? = null
     var onFreshDraftSelected: ((String?, SessionTransport) -> Unit)? = null
 
     /**
@@ -1124,6 +1127,9 @@ class ChatViewModel : ViewModel() {
         modelSelectionRevision.incrementAndGet()
         _modelSelectionConfirmation.value = null
         modelOptionsGeneration.incrementAndGet()
+        _modelOptionsLoading.value = false
+        _modelOptionsRefreshing.value = false
+        _modelOptionsError.value = null
         val cached = modelOptionsByProfile[profileKey]
         _modelProviders.value = cached?.providers.orEmpty()
         relayCapabilityGeneration.incrementAndGet()
@@ -1141,6 +1147,10 @@ class ChatViewModel : ViewModel() {
     /** True only during an explicit user-requested dynamic model catalog refresh. */
     private val _modelOptionsRefreshing = MutableStateFlow(false)
     val modelOptionsRefreshing: StateFlow<Boolean> = _modelOptionsRefreshing.asStateFlow()
+    private val _modelOptionsLoading = MutableStateFlow(false)
+    val modelOptionsLoading: StateFlow<Boolean> = _modelOptionsLoading.asStateFlow()
+    private val _modelOptionsError = MutableStateFlow<String?>(null)
+    val modelOptionsError: StateFlow<String?> = _modelOptionsError.asStateFlow()
 
     /** Current gateway model from `model.options`, used when no Android override is active. */
     private val _gatewayCurrentModel = MutableStateFlow("")
@@ -1228,16 +1238,20 @@ class ChatViewModel : ViewModel() {
         val gateway = gatewayClient ?: run {
             android.util.Log.i("ChatViewModel", "refreshModelOptions: no gateway client")
             if (refresh) _modelOptionsRefreshing.value = false
+            _modelOptionsLoading.value = false
+            _modelOptionsError.value = "Gateway unavailable."
             return
         }
-        if (refresh && _modelOptionsRefreshing.value) return
+        if (_modelOptionsRefreshing.value) return
         if (refresh) _modelOptionsRefreshing.value = true
+        _modelOptionsLoading.value = true
+        _modelOptionsError.value = null
         val generation = modelOptionsGeneration.incrementAndGet()
         val profileKey = modelOptionsProfileKey()
         viewModelScope.launch {
             gateway.modelOptions(refresh = refresh).fold(
                 onSuccess = {
-                    if (!isCurrentModelOptionsResponse(
+                    if (gatewayClient !== gateway || !isCurrentModelOptionsResponse(
                             generation,
                             modelOptionsGeneration.get(),
                             profileKey,
@@ -1270,12 +1284,22 @@ class ChatViewModel : ViewModel() {
                 },
                 onFailure = {
                     android.util.Log.w("ChatViewModel", "model.options failed: ${it.message}")
-                    if (refresh) {
-                        _transientNotice.tryEmit("Couldn't refresh models: ${it.message ?: "unknown error"}")
+                    if (gatewayClient === gateway && isCurrentModelOptionsResponse(
+                            generation, modelOptionsGeneration.get(),
+                            profileKey, modelOptionsProfileKey(),
+                        )
+                    ) {
+                        _modelOptionsError.value = it.message ?: "Model catalog unavailable."
+                        if (refresh) {
+                            _transientNotice.tryEmit("Couldn't refresh models: ${it.message ?: "unknown error"}")
+                        }
                     }
                 },
             )
-            if (refresh) _modelOptionsRefreshing.value = false
+            if (gatewayClient === gateway && generation == modelOptionsGeneration.get()) {
+                _modelOptionsLoading.value = false
+                if (refresh) _modelOptionsRefreshing.value = false
+            }
         }
     }
 
@@ -1510,6 +1534,9 @@ class ChatViewModel : ViewModel() {
     ) {
         val client = apiClient ?: return
         val generation = modelOptionsGeneration.incrementAndGet()
+        _modelOptionsLoading.value = false
+        _modelOptionsRefreshing.value = false
+        _modelOptionsError.value = null
         val profileKey = modelOptionsProfileKey()
         viewModelScope.launch {
             val providerResult = client.getProviderModelOptions()
@@ -2119,6 +2146,9 @@ class ChatViewModel : ViewModel() {
         // what the agent actually runs. The next session.create then binds the
         // profile's own model.
         modelOptionsGeneration.incrementAndGet()
+        _modelOptionsLoading.value = false
+        _modelOptionsRefreshing.value = false
+        _modelOptionsError.value = null
         _modelProviders.value = emptyList()
         _apiModelOptions.value = emptyList()
         _availableModels.value = emptyList()
@@ -2729,6 +2759,10 @@ class ChatViewModel : ViewModel() {
         val previousClient = gatewayClient
         val changed = previousClient !== client
         if (changed) {
+            modelOptionsGeneration.incrementAndGet()
+            _modelOptionsLoading.value = false
+            _modelOptionsRefreshing.value = false
+            _modelOptionsError.value = null
             clearProjectedBackgroundProcesses()
             sessionActivityPollJob?.cancel()
             sessionActivityPollJob = null
@@ -2867,8 +2901,7 @@ class ChatViewModel : ViewModel() {
                         val checkpointAsk = checkpoint?.pendingAsk
                         if (checkpoint != null && checkpointAsk != null &&
                             checkpointAsk.kind == event.ask.kind.name &&
-                            (event.ask.kind == GatewayAsk.Kind.APPROVAL ||
-                                checkpointAsk.requestId == event.ask.requestId)
+                            checkpointAsk.requestId == event.ask.requestId
                         ) {
                             val updated = checkpoint.copy(
                                 pendingAsk = null,
@@ -3070,6 +3103,7 @@ class ChatViewModel : ViewModel() {
         var boundHandle: ActiveTurnHandle? = null
         var inputTokens: Int? = null
         var outputTokens: Int? = null
+        var speechReceiver: ((String) -> Unit)? = null
 
         fun ownsTranscriptSession(): Boolean =
             chatHandler === handler && handler.currentSessionId.value == storedSessionId
@@ -3148,9 +3182,9 @@ class ChatViewModel : ViewModel() {
             onTurnComplete = {
                 if (acceptsEvent()) handler.onTurnComplete(messageId)
             },
-            // Server-initiated turns already take the bounded durable-history
-            // reconcile below on every completion.
-            onReconcileRequired = { },
+            // Recovery can settle a partial live bubble before durable history
+            // arrives. That history repairs Chat, but is not a speech receipt.
+            onReconcileRequired = { speechReceiver = null },
             onComplete = {
                 val canWriteTranscript = acceptsEvent()
                 val expectedText = handler.messages.value
@@ -3168,7 +3202,9 @@ class ChatViewModel : ViewModel() {
                     } else {
                         finalizeTurnSideEffects(handler, messageId)
                         AppAnalytics.onStreamComplete(inputTokens, outputTokens)
+                        speechReceiver?.invoke(expectedText.orEmpty())
                     }
+                    speechReceiver = null
                     scheduleGatewayHistoryReconcile(
                         storedSessionId = storedSessionId,
                         expectedAssistantText = expectedText,
@@ -3270,6 +3306,9 @@ class ChatViewModel : ViewModel() {
                     // turn before its queued completion callback has settled.
                     baselineAssistantCount = handler.messages.value.count {
                         it.role == MessageRole.ASSISTANT && !it.clientOnly
+                    }
+                    if (queuedRecovery == null) {
+                        speechReceiver = gatewayInboundSpeechReceiver?.invoke()
                     }
                     boundHandle = handle
                     accepted = true
@@ -5411,6 +5450,9 @@ class ChatViewModel : ViewModel() {
     /** Clear server-owned catalogs before a different connection starts loading. */
     fun resetConnectionCatalogs() {
         modelOptionsGeneration.incrementAndGet()
+        _modelOptionsLoading.value = false
+        _modelOptionsRefreshing.value = false
+        _modelOptionsError.value = null
         modelOptionsByProfile.clear()
         apiSessionModelLocks.clear()
         _availableSkills.value = emptyList()
@@ -6834,6 +6876,10 @@ class ChatViewModel : ViewModel() {
                 body = ask.text,
                 accent = HermesCard.Accents.INFO,
                 id = cardKey,
+                actions = if (ask.serverRequest) listOf(HermesCardAction(
+                    label = appContext?.getString(R.string.chat_approval_skip) ?: "Skip",
+                    value = "", mode = HermesCardAction.Modes.SUBMIT_ASK,
+                )) else emptyList(),
                 input = HermesCardInput(
                     kind = if (ask.choices.isNullOrEmpty()) {
                         HermesCardInput.Kinds.TEXT
@@ -6929,6 +6975,7 @@ class ChatViewModel : ViewModel() {
                 accent = HermesCard.Accents.INFO,
                 id = pending.cardKey,
                 clarifyBatch = HermesCardClarifyBatch(
+                    allowSkip = ask.serverRequest,
                     questions = ask.questions.map { question ->
                         val key = clarifyQuestionCardKey(pending.cardKey, question.qid)
                         HermesCardClarifyQuestion(
@@ -6964,16 +7011,9 @@ class ChatViewModel : ViewModel() {
             return
         }
         viewModelScope.launch {
-            val response: Result<GatewayAskResponse>? = when (ask.kind) {
-                GatewayAsk.Kind.APPROVAL -> gateway.respondApproval(choice = "deny")
-                GatewayAsk.Kind.CLARIFY -> ask.requestId?.let {
-                    gateway.respondClarify(it, "This supervised client cannot answer interactive requests.")
-                }
-                GatewayAsk.Kind.SUDO -> ask.requestId?.let { gateway.respondSudo(it, "") }
-                GatewayAsk.Kind.SECRET -> ask.requestId?.let { gateway.respondSecret(it, "") }
-            }
+            val response = gateway.respondAsk(ask, if (ask.kind == GatewayAsk.Kind.APPROVAL) "deny" else "", cancel = true)
             handler.addSystemNotice("An interactive request was denied by supervised mode.")
-            if (response == null || response.isFailure) cancelStream()
+            if (response.isFailure) cancelStream() else gateway.advanceServerRequests()
         }
     }
 
@@ -6987,7 +7027,7 @@ class ChatViewModel : ViewModel() {
                 if (ask.smartDenied) choices.filter { it == "once" || it == "deny" } else choices
             }
         val choices = advertised.ifEmpty {
-            if (ask.smartDenied) listOf("once", "deny") else listOf("approve", "deny")
+            if (ask.smartDenied) listOf("once", "deny") else if (ask.serverRequest) listOf("deny") else listOf("approve", "deny")
         }
         return choices.map { choice ->
             val label = when (choice) {
@@ -7035,7 +7075,8 @@ class ChatViewModel : ViewModel() {
             handler.addSystemNotice("This request is no longer active.")
             return
         }
-        if (pending.ask.kind == GatewayAsk.Kind.CLARIFY && value.isBlank()) return
+        if (pending.ask.kind == GatewayAsk.Kind.CLARIFY && value.isBlank() &&
+            !(pending.ask.serverRequest && value.isEmpty())) return
         if (pending.ask.kind == GatewayAsk.Kind.CLARIFY && pending.ask.timeoutSeconds > 0 &&
             System.currentTimeMillis() >= pending.receivedAt + pending.ask.timeoutSeconds * 1_000L
         ) {
@@ -7071,19 +7112,7 @@ class ChatViewModel : ViewModel() {
                 answeredAskIds.remove(flightKey)
                 return@launch
             }
-            val requestId = ask.requestId
-            val result = when (ask.kind) {
-                GatewayAsk.Kind.APPROVAL -> gateway.respondApproval(choice = value)
-                GatewayAsk.Kind.CLARIFY ->
-                    requestId?.let { gateway.respondClarify(it, value.trim(), question?.qid) }
-                        ?: Result.failure(GatewayRpcException("ask has no request id"))
-                GatewayAsk.Kind.SUDO ->
-                    requestId?.let { gateway.respondSudo(it, value) }
-                        ?: Result.failure(GatewayRpcException("ask has no request id"))
-                GatewayAsk.Kind.SECRET ->
-                    requestId?.let { gateway.respondSecret(it, value) }
-                        ?: Result.failure(GatewayRpcException("ask has no request id"))
-            }
+            val result = gateway.respondAsk(ask, if (ask.kind == GatewayAsk.Kind.CLARIFY) value.trim() else value, question?.qid)
             result.fold(
                 onSuccess = { response ->
                     answeredAskIds.remove(flightKey)
@@ -7130,6 +7159,7 @@ class ChatViewModel : ViewModel() {
                     emitError(e, context = "send_message")
                 },
             )
+            gateway.advanceServerRequests()
         }
     }
 
@@ -7142,7 +7172,7 @@ class ChatViewModel : ViewModel() {
     private fun expirePendingAsk(expiry: GatewayAskExpiry) {
         val pending = _pendingAsk.value ?: return
         if (pending.ask.kind != expiry.kind) return
-        if (expiry.kind != GatewayAsk.Kind.APPROVAL) {
+        if (expiry.kind != GatewayAsk.Kind.APPROVAL || pending.ask.serverRequest) {
             val requestId = expiry.requestId?.takeIf { it.isNotBlank() } ?: return
             if (pending.ask.requestId != requestId) return
         }
@@ -7780,6 +7810,7 @@ class ChatViewModel : ViewModel() {
                 ChatTurnAskCheckpoint(
                     kind = ask.ask.kind.name,
                     requestId = ask.ask.requestId,
+                    serverRequest = ask.ask.serverRequest,
                     text = ask.ask.text,
                     choices = ask.ask.choices,
                     multiSelect = ask.ask.multiSelect,
@@ -7991,6 +8022,7 @@ class ChatViewModel : ViewModel() {
             ask = GatewayAsk(
                 kind = kind,
                 requestId = saved.requestId,
+                serverRequest = saved.serverRequest,
                 text = saved.text,
                 choices = saved.choices,
                 multiSelect = saved.multiSelect,

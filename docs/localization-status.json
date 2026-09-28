@@ -13,7 +13,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "8588c42385e783a2ddf888b515ca6b97a5df44a30d3619c048d3d03d91dd5278",
+        "main": "c717e39d6f8fc987a83498570e4fc4e2c26c20dc33c62cdb7c4b258a46530252",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -25,8 +25,8 @@
       "docs_locale": "de",
       "docs_source_sha256": {
         "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "57620215fb98a676f1b92d45596d44aa369dacc6e16dad17242f6e3e5cc38906",
-        "guide/getting-started.md": "a30d0553f962f780573054dfa148a5c1dd88e258cb8fcaee9fdaed63346efeba",
+        "guide/quick-start.md": "60d0ac8c35a03b3e4231329956e1bfee7dd276181d7513ecb5a877c323a282f2",
+        "guide/getting-started.md": "909d4114f0a99d62627673d69b50743ec257df8e83199f90b27788318b0b88bc",
         "guide/release-tracks.md": "5d9ba422975459581fdbbc0b9e6f9b9c7dc53f9196606455b418da11d63d3a63",
         "guide/troubleshooting.md": "9ace84208d2109d3ae7b35a21838eae146db3171236568d3ae60fb8d9de882cf"
       },
@@ -48,7 +48,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "8588c42385e783a2ddf888b515ca6b97a5df44a30d3619c048d3d03d91dd5278",
+        "main": "c717e39d6f8fc987a83498570e4fc4e2c26c20dc33c62cdb7c4b258a46530252",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -60,8 +60,8 @@
       "docs_locale": "es",
       "docs_source_sha256": {
         "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "57620215fb98a676f1b92d45596d44aa369dacc6e16dad17242f6e3e5cc38906",
-        "guide/getting-started.md": "a30d0553f962f780573054dfa148a5c1dd88e258cb8fcaee9fdaed63346efeba",
+        "guide/quick-start.md": "60d0ac8c35a03b3e4231329956e1bfee7dd276181d7513ecb5a877c323a282f2",
+        "guide/getting-started.md": "909d4114f0a99d62627673d69b50743ec257df8e83199f90b27788318b0b88bc",
         "guide/release-tracks.md": "5d9ba422975459581fdbbc0b9e6f9b9c7dc53f9196606455b418da11d63d3a63",
         "guide/troubleshooting.md": "9ace84208d2109d3ae7b35a21838eae146db3171236568d3ae60fb8d9de882cf"
       },
@@ -72,7 +72,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "8588c42385e783a2ddf888b515ca6b97a5df44a30d3619c048d3d03d91dd5278",
+        "main": "c717e39d6f8fc987a83498570e4fc4e2c26c20dc33c62cdb7c4b258a46530252",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -84,8 +84,8 @@
       "docs_locale": "ja",
       "docs_source_sha256": {
         "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "57620215fb98a676f1b92d45596d44aa369dacc6e16dad17242f6e3e5cc38906",
-        "guide/getting-started.md": "a30d0553f962f780573054dfa148a5c1dd88e258cb8fcaee9fdaed63346efeba",
+        "guide/quick-start.md": "60d0ac8c35a03b3e4231329956e1bfee7dd276181d7513ecb5a877c323a282f2",
+        "guide/getting-started.md": "909d4114f0a99d62627673d69b50743ec257df8e83199f90b27788318b0b88bc",
         "guide/release-tracks.md": "5d9ba422975459581fdbbc0b9e6f9b9c7dc53f9196606455b418da11d63d3a63",
         "guide/troubleshooting.md": "9ace84208d2109d3ae7b35a21838eae146db3171236568d3ae60fb8d9de882cf"
       },
@@ -96,7 +96,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "8588c42385e783a2ddf888b515ca6b97a5df44a30d3619c048d3d03d91dd5278",
+        "main": "c717e39d6f8fc987a83498570e4fc4e2c26c20dc33c62cdb7c4b258a46530252",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -108,8 +108,8 @@
       "docs_locale": "pt-BR",
       "docs_source_sha256": {
         "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "57620215fb98a676f1b92d45596d44aa369dacc6e16dad17242f6e3e5cc38906",
-        "guide/getting-started.md": "a30d0553f962f780573054dfa148a5c1dd88e258cb8fcaee9fdaed63346efeba",
+        "guide/quick-start.md": "60d0ac8c35a03b3e4231329956e1bfee7dd276181d7513ecb5a877c323a282f2",
+        "guide/getting-started.md": "909d4114f0a99d62627673d69b50743ec257df8e83199f90b27788318b0b88bc",
         "guide/release-tracks.md": "5d9ba422975459581fdbbc0b9e6f9b9c7dc53f9196606455b418da11d63d3a63",
         "guide/troubleshooting.md": "9ace84208d2109d3ae7b35a21838eae146db3171236568d3ae60fb8d9de882cf"
       },
@@ -120,7 +120,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "8588c42385e783a2ddf888b515ca6b97a5df44a30d3619c048d3d03d91dd5278",
+        "main": "c717e39d6f8fc987a83498570e4fc4e2c26c20dc33c62cdb7c4b258a46530252",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -135,7 +135,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "8588c42385e783a2ddf888b515ca6b97a5df44a30d3619c048d3d03d91dd5278",
+        "main": "c717e39d6f8fc987a83498570e4fc4e2c26c20dc33c62cdb7c4b258a46530252",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -147,8 +147,8 @@
       "docs_locale": "zh-CN",
       "docs_source_sha256": {
         "index.md": "101ef2e9394b76e822d0c828e2100bf18a9d3f450224f5f0ae3ea01cb02fab0d",
-        "guide/quick-start.md": "57620215fb98a676f1b92d45596d44aa369dacc6e16dad17242f6e3e5cc38906",
-        "guide/getting-started.md": "a30d0553f962f780573054dfa148a5c1dd88e258cb8fcaee9fdaed63346efeba",
+        "guide/quick-start.md": "60d0ac8c35a03b3e4231329956e1bfee7dd276181d7513ecb5a877c323a282f2",
+        "guide/getting-started.md": "909d4114f0a99d62627673d69b50743ec257df8e83199f90b27788318b0b88bc",
         "guide/release-tracks.md": "5d9ba422975459581fdbbc0b9e6f9b9c7dc53f9196606455b418da11d63d3a63",
         "guide/troubleshooting.md": "9ace84208d2109d3ae7b35a21838eae146db3171236568d3ae60fb8d9de882cf"
       },

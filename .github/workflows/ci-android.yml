@@ -183,11 +183,26 @@ jobs:
           ./gradlew :app:testSideloadDebugUnitTest \
             --tests com.hermesandroid.relay.network.ArchitectureBoundaryTest \
             --tests com.hermesandroid.relay.network.relay.RelayUrlDeriverTest \
+            --tests com.hermesandroid.relay.network.shared.PluginProxyTransportTest \
+            --tests '*GatewayChatClientTest*retarget*' \
+            --tests '*RelayVoiceClientRoutingTest.proxyProviderOwnsBothVoiceSessionAndWebSocketRequests' \
+            --tests com.hermesandroid.relay.network.relay.RelayHttpClientDiagnosticsTest \
+            --tests com.hermesandroid.relay.ui.components.GatewayRoutesAccessPresentationTest \
+            --tests com.hermesandroid.relay.ui.components.EndpointsCardCompactLayoutTest \
+            --tests com.hermesandroid.relay.ui.screens.ConnectionDetailPresentationTest \
             --tests com.hermesandroid.relay.viewmodel.ConnectionSwitchTest \
             --tests com.hermesandroid.relay.util.ServerAddressTest \
             --tests com.hermesandroid.relay.util.IssueReportAndDiagnosticsTest \
             --tests com.hermesandroid.relay.data.AppLanguageTest \
             --tests com.hermesandroid.relay.viewmodel.ChatStreamRecoveryTest \
+            --tests com.hermesandroid.relay.viewmodel.ChatViewModelGatewayInboundTurnTest \
+            --tests com.hermesandroid.relay.viewmodel.VoiceInboundCompletionTest \
+            --tests com.hermesandroid.relay.voice.VoiceViewModelBargeInTest \
+            --tests com.hermesandroid.relay.voice.VoiceOutputFallbackTest \
+            --tests com.hermesandroid.relay.voice.LegacyTtsTimingTest \
+            --tests com.hermesandroid.relay.voice.VoiceViewModelPipelineTest \
+            --tests com.hermesandroid.relay.audio.VoicePlayerTest \
+            --tests com.hermesandroid.relay.screenshots.VoiceFallbackPresentationTest \
             --tests com.hermesandroid.relay.viewmodel.ChatViewModelRealtimeTurnTest \
             --tests com.hermesandroid.relay.network.relay.RealtimeVoiceEventParsingTest \
             --tests com.hermesandroid.relay.voice.VoiceCommandInterpreterTest \

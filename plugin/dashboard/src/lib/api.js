@@ -84,6 +84,13 @@ export function getRemoteAccessStatus() {
   return fetchJSON("/remote-access/status");
 }
 
+export function getSecureLinkPreflight({ host, port } = {}) {
+  const query = new URLSearchParams();
+  if (host !== undefined) query.set("host", host);
+  if (port !== undefined) query.set("port", port);
+  return fetchJSON(`/remote-access/secure-link/preflight?${query}`);
+}
+
 export function enableTailscale(port) {
   return fetchJSON("/remote-access/tailscale/enable", {
     method: "POST",
@@ -115,12 +122,21 @@ export function putPublicUrl(url, { legacyDirectRelay = false } = {}) {
   });
 }
 
-export function probeEndpoints(candidates) {
-  return fetchJSON("/remote-access/probe", {
+export async function probeEndpoints(candidates) {
+  const entries = Array.isArray(candidates) ? candidates : [];
+  // A generic server-side TLS probe does not own the recipient's paired
+  // trust. Do not misreport self-signed Secure Link as broken or disable TLS.
+  const paired = entries.filter((item) => item.requires_paired_client).map((item) => ({
+    ...item, reachable: null, status: null, latency_ms: null, error: null,
+  }));
+  const ordinary = entries.filter((item) => !item.requires_paired_client);
+  if (!ordinary.length) return { results: paired };
+  const result = await fetchJSON("/remote-access/probe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ candidates: Array.isArray(candidates) ? candidates : [] }),
+    body: JSON.stringify({ candidates: ordinary }),
   });
+  return { ...result, results: [...(result.results || []), ...paired] };
 }
 
 /**

@@ -6,6 +6,8 @@ export function pairingQrRenderOptions() {
   return {
     scale: 4,
     margin: 4,
-    errorCorrectionLevel: "M",
+    // Match the CLI: certificate-bearing Secure Link invites can exceed the
+    // largest medium-correction QR even though they fit at low correction.
+    errorCorrectionLevel: "L",
   };
 }

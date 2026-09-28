@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -63,7 +64,7 @@ fun OnboardingPage(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(210.dp),
+                .height(if (LocalConfiguration.current.screenHeightDp < 620 || LocalConfiguration.current.fontScale > 1.2f) 96.dp else 150.dp),
             contentAlignment = Alignment.Center,
         ) {
             heroContent()
@@ -129,7 +130,7 @@ private fun FeatureHero(
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = icon,
-                            contentDescription = title,
+                            contentDescription = null,
                             modifier = Modifier.size(46.dp),
                             tint = Color(0xFF7B55F6),
                         )

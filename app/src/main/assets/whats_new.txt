@@ -1,19 +1,29 @@
-v1.17.0 - Voice over other apps and clearer conversations
+v1.18.0 - Current Hermes prompts and safer connections
 
 Summary
-* Google Play gains optional voice controls over other apps. Clarify questions, profile names, and chat context are easier to follow without losing confirmed answers or saved conversations.
+* Current Hermes prompts work on Android again. Gateway setup, sign-in, voice handoff, media, and session navigation are more reliable, with optional Secure Link support.
 
 Highlights
-* Keep voice controls over other apps — Start Voice Overlay from Voice Focus after granting microphone, notification, and display-over-other-apps access. Stop voice from its controls or persistent notification; screen lock and permission loss end the session.
-* Answer Clarify questions one at a time — Multi-question requests support separate choices and custom answers. Confirmed progress survives reconnects, and failed sends keep the current answer available.
-* Recognize profiles by their display names — Profiles use their Hermes display names, and the resolved server default appears under its agent identity. Explicit profile choices and saved conversations are preserved.
+* Answer current Hermes prompts — Clarify, approval, sudo, and secret cards work with current Hermes Gateway requests. Clarify answers remain in progress across reconnects, and unsupported requests fail clearly.
+* Finish Dashboard sign-in reliably — Incomplete browser callbacks cannot hold later sign-in attempts or prevent cancellation and timeout.
+* Set up Gateways with clearer checks — Setup verifies Dashboard access, explains authentication failures, accepts custom ports, and asks for exact-address consent before HTTP use.
+* Use paired Secure Link routes — Paired certificate checks cover HTTP, Gateway, and voice traffic. Route details show the active HTTPS Dashboard address.
+
+Added
+* Keep Sessions visible on wide screens — An optional sidebar keeps session navigation beside Chat on larger layouts.
+* See SuperGrok usage — New installs show SuperGrok subscription usage by default when the host provides it; existing display preferences stay intact.
 
 Improved
-* Read cleaner chat cards — Standalone response cards lose the extra outer bubble, assistant messages use quieter surfaces, and delivery status sits beside the timestamp.
+* Understand voice fallback — A failed streaming provider now shows a warning, keeps queued speech when basic TTS takes over, and exposes synthesis and player timing. Audible basic-TTS pauses remain under investigation.
 
 Fixed
-* See which context your chat can send — Gateway previews mark phone status and turn context as unavailable. Automatic phone-status sharing is labeled for API-only chats, where it remains supported.
+* Avoid a connection-service startup crash — Accepted foreground starts settle before local retention stops, while active Hermes turns remain protected.
+* Hear live background completions — Standard Voice speaks later answers in its active conversation once, while Stop and conversation changes discard pending speech.
+* Open models before the first message — Chat loads Gateway model choices when the picker opens and distinguishes loading, unavailable, and empty results.
+* Restore Appearance on launch — The saved palette and light/dark choice apply before the first app frame.
+* Show media in phone Threads — Proactive messages render media attachments while preserving multiline text and clean notification previews.
 
 Compatibility
-* Voice Overlay is now available in Google Play and sideload builds. Device Control remains sideload-only.
-* Standard Chat and voice use upstream Hermes without requiring Hermes-Relay Plugin. Gateway phone-status delivery and automatic Android identification remain unavailable.
+* Standard Chat and Voice continue to use upstream Hermes; Secure Link and enhanced tools use the optional Hermes-Relay Plugin 1.12.0.
+* HTTP outside recognized private address ranges requires explicit consent for the exact address and port; the app does not verify VPN protection.
+* Legacy basic-TTS pauses remain under investigation under issue #639.

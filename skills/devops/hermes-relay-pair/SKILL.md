@@ -1,10 +1,10 @@
 ---
 name: hermes-relay-pair
-description: Generate a pairing QR for the Hermes-Relay Android app — one scan configures chat (API server) and terminal/bridge (relay) in a single step.
+description: Generate a signed setup QR for Hermes-Relay Android, preserving Dashboard/Gateway ownership and optional Relay or API routes.
 version: 1.0.0
 author: Axiom Labs
 license: MIT
-platforms: [linux, macos]
+platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [pairing, qr, android, relay, setup, hermes-relay]
@@ -15,7 +15,7 @@ metadata:
 
 # Hermes-Relay Pairing
 
-[Hermes-Relay](https://github.com/Codename-11/hermes-relay) is a native Android client for Hermes. Chat rides the standard upstream Hermes path — the dashboard `/api/ws` gateway transport (live thinking), with API-server SSE as fallback; terminal and bridge channels go through a separate WSS relay. This skill generates a single QR code that configures both connections at once, using `plugin.pair` from the Hermes-Relay plugin.
+[Hermes-Relay](https://github.com/Codename-11/hermes-relay) is a native Android client for Hermes. Standard Chat, Manage, and voice belong to upstream Dashboard/Gateway. API-only operation is explicit compatibility, never an automatic fallback for a Gateway-owned conversation. Relay adds optional terminal/bridge and other extensions. This skill generates a signed setup QR using `plugin.pair`.
 
 ## When to Use
 
@@ -35,13 +35,22 @@ Operators with the Hermes dashboard open can also mint the same QR from the web 
 ## Prerequisites
 
 1. **Hermes-Relay plugin installed and enabled.** Verify with `hermes pair --help`. If the command is unavailable, run `hermes plugins install Codename-11/hermes-relay/plugin --enable`. Use the full `install.sh` path instead only when the host also needs the relay service, editable package, and shell shims.
-2. **Hermes API server reachable** on `API_SERVER_HOST:API_SERVER_PORT` (default `127.0.0.1:8642`). `plugin.pair` auto-reads this from `~/.hermes/config.yaml` → `~/.hermes/.env` → env vars → defaults.
+2. **Dashboard/Gateway reachable** at its configured origin for standard Chat, Manage, and voice. The API server is required only when explicitly including API-only compatibility; `plugin.pair` reads optional API configuration from the Hermes configuration/environment.
 3. **Relay server running** on `RELAY_HOST:RELAY_PORT` (default `0.0.0.0:8767`) if the user wants terminal/bridge channels. The Relay may stay host-internal: current Android pairing normally reaches it through the Dashboard's same-origin plugin transport. Tailscale Serve normally exposes dedicated HTTPS `10443` and proxies the host-local Dashboard on `9119`; a raw LAN/tailnet route may reach `9119` directly. Listener `443` is an advanced explicit override only when it is free. Without a live relay, the QR will configure chat only.
-4. **Host is Linux or macOS.** The relay uses a real PTY backend, which is POSIX-only. Windows hosts can generate API-only QRs but the terminal channel will not work.
+4. **Check optional host capabilities.** Standard Dashboard setup and QR generation are independent of PTY support. Terminal requires the supported POSIX backend; do not present a Windows host as terminal-capable merely because pairing succeeded.
 
 ## Procedure
 
-1. **Probe the relay** — `curl -sf http://127.0.0.1:8767/health` (or `$RELAY_PORT`). If it returns 200, the relay is up. If it fails, tell the user: "No relay running at localhost:8767 — the QR will only configure chat. Run `hermes relay start` first if you want terminal access." Then ask whether to proceed with API-only or start the relay first. Do NOT start the relay yourself unless the user explicitly asks.
+For Secure Link, run `hermes relay secure-link --host <reachable-server-address>`
+before minting. It is a read-only report shared with Dashboard and Desktop setup.
+Resolve its blockers and have the operator apply the reviewed settings/restart
+through the existing service owner; this pairing skill must not guess a service
+or change it. Re-check until the requested listener is active, then use
+`hermes pair --png`. Keep the certificate and pin in the signed invite. QR trust,
+Dashboard sign-in, and Chat readiness are separate steps; never learn a pin from
+an untrusted health response or downgrade the route after a TLS failure.
+
+1. **Probe the relay** — `curl -sf http://127.0.0.1:8767/health` (or `$RELAY_PORT`). If it returns 200, Relay is up; that alone does not prove Dashboard sign-in or Gateway readiness. If it fails, standard setup can still use Dashboard's **Connect mobile app** QR. Optional Relay pairing requires a running Relay. Do not offer API-only as automatic recovery for a Gateway connection, and do not start Relay unless the user asks.
 
 2. **Generate the QR** — run via the `terminal` tool:
 

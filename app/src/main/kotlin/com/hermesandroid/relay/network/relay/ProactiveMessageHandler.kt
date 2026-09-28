@@ -131,7 +131,7 @@ class ProactiveMessageHandler(
         ProactiveMessageNotifier.notify(
             context = context,
             title = msg.title,
-            text = msg.text,
+            text = mediaFreeProactivePreview(msg.text),
             messageId = msg.messageId,
             chatId = msg.chatId,
         )
@@ -154,6 +154,30 @@ class ProactiveMessageHandler(
     companion object {
         private const val TAG = "ProactiveMsgHandler"
     }
+}
+
+/** Notification text is a preview; the Thread owns attachment rendering. */
+internal fun mediaFreeProactivePreview(text: String): String {
+    var fence: String? = null
+    val lines = mutableListOf<String>()
+    for (line in text.lines()) {
+        val trimmed = line.trim()
+        val delimiter = when {
+            trimmed.startsWith("```") -> "```"
+            trimmed.startsWith("~~~") -> "~~~"
+            else -> null
+        }
+        if (delimiter != null) {
+            fence = if (fence == delimiter) null else if (fence == null) delimiter else fence
+        }
+        val markerOnly = fence == null && (
+            trimmed.startsWith("MEDIA:hermes-relay://") ||
+                trimmed.startsWith("MEDIA:/") ||
+                Regex("^MEDIA:[A-Za-z]:\\\\").containsMatchIn(trimmed)
+            )
+        if (!markerOnly && trimmed.isNotEmpty()) lines += trimmed
+    }
+    return lines.joinToString(" ").ifBlank { "Attachment" }
 }
 
 /**

@@ -329,6 +329,7 @@ async function cuaSnapshot(args: Record<string, unknown>, ctx: ToolContext): Pro
     elements: safeElements,
     tree_markdown: raw.tree_markdown,
     screenshot_base64: raw.screenshot_base64,
+    screenshot_mime_type: raw.screenshot_mime_type,
     screenshot_width: raw.screenshot_width,
     screenshot_height: raw.screenshot_height,
     truncated: elements.length > safeElements.length

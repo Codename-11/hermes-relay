@@ -3,230 +3,97 @@ package com.hermesandroid.relay.ui.onboarding
 import android.app.Application
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ApplicationProvider
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import org.junit.Rule
 import org.junit.Test
 
-/**
- * Instrumented tests for the Standard-first onboarding pager.
- */
+/** Standard setup stays separate from Direct API and optional Relay grants. */
 class OnboardingFlowTest {
+    @get:Rule val compose = createComposeRule()
 
-    @get:Rule
-    val composeTestRule = createComposeRule()
-
-    private fun setOnboardingContent() {
-        val app = ApplicationProvider.getApplicationContext<Application>()
-        val connectionViewModel = ConnectionViewModel(app)
-        composeTestRule.setContent {
-            HermesRelayTheme {
-                OnboardingScreen(
-                    connectionViewModel = connectionViewModel,
-                    onComplete = {},
-                )
-            }
-        }
+    private fun start() {
+        val model = ConnectionViewModel(ApplicationProvider.getApplicationContext<Application>())
+        compose.setContent { HermesRelayTheme { OnboardingScreen(model, onComplete = {}) } }
     }
 
-    @Test
-    fun firstPage_showsHermesForAndroidTitle() {
-        setOnboardingContent()
-
-        composeTestRule
-            .onNodeWithText("Hermes-Relay for Android")
-            .assertIsDisplayed()
+    private fun connectPage() {
+        compose.onNodeWithText("Get started").performClick()
+        repeat(3) { compose.onNodeWithText("Next").performClick(); compose.waitForIdle() }
     }
 
-    @Test
-    fun firstPage_showsStandardFirstDescription() {
-        setOnboardingContent()
-
-        composeTestRule
-            .onNodeWithText("Chat with Hermes and manage your dashboard from your phone.")
-            .assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("Standard")
-            .assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("Advanced")
-            .assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("Setup Guide")
-            .assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("Hermes Docs")
-            .assertIsDisplayed()
+    @Test fun welcomeOffersStartAndDemo() {
+        start()
+        compose.onNodeWithText("Hermes,\nin your pocket").assertIsDisplayed()
+        compose.onNodeWithText("Get started").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("Try the demo").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithText("Back").assertDoesNotExist()
     }
 
-    @Test
-    fun nextButton_navigatesForward_toChatPage() {
-        setOnboardingContent()
-
-        composeTestRule.onNodeWithText("Next").performClick()
-        composeTestRule.waitForIdle()
-
-        composeTestRule
-            .onNodeWithText("Chat")
-            .assertIsDisplayed()
+    @Test fun introNavigationAndSkipRemainAvailable() {
+        start()
+        compose.onNodeWithText("Get started").performClick()
+        compose.onNodeWithText("Chat").assertIsDisplayed()
+        compose.onNodeWithText("Back").performClick()
+        compose.onNodeWithText("Get started").assertIsDisplayed()
+        compose.onNodeWithText("Get started").performClick()
+        compose.onNodeWithText("Skip").performClick()
+        compose.onNodeWithText("Skip setup?").assertIsDisplayed()
+        compose.onNodeWithText("Go back").performClick()
+        compose.onNodeWithText("Chat").assertIsDisplayed()
     }
 
-    @Test
-    fun canNavigateForward_throughStandardAndPowerPages() {
-        setOnboardingContent()
-
-        composeTestRule.onNodeWithText("Hermes-Relay for Android").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Next").performClick()
-        composeTestRule.waitForIdle()
-
-        composeTestRule.onNodeWithText("Chat").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Next").performClick()
-        composeTestRule.waitForIdle()
-
-        composeTestRule.onNodeWithText("Manage").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Next").performClick()
-        composeTestRule.waitForIdle()
-
-        composeTestRule.onNodeWithText("Power tools").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Connect").performClick()
-        composeTestRule.waitForIdle()
-
-        composeTestRule.onNodeWithText("Add gateway").assertIsDisplayed()
+    @Test fun standardMethodsDoNotAskForApiCredentials() {
+        start(); connectPage()
+        compose.onNodeWithText("Hermes nearby").assertIsDisplayed()
+        compose.onNodeWithText("Remote gateway").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Hermes address").assertIsDisplayed()
+        compose.onNodeWithText("API key").assertDoesNotExist()
+        compose.onNodeWithText("Find Hermes").performScrollTo().assertIsDisplayed()
     }
 
-    @Test
-    fun backButton_hiddenOnFirstPage() {
-        setOnboardingContent()
-
-        composeTestRule
-            .onNodeWithText("Back")
-            .assertDoesNotExist()
+    @Test fun publicHttpConsentResetsWhenAddressChanges() {
+        start(); connectPage()
+        compose.onNodeWithText("Remote gateway").performClick()
+        compose.onNodeWithText("Hermes address").performTextReplacement("http://11.0.0.1:9119")
+        compose.onNodeWithText("Find Hermes").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("I accept the risk and allow HTTP for this address").performScrollTo().performClick()
+        compose.onNodeWithText("Find Hermes").performScrollTo().assertIsEnabled()
+        compose.onNodeWithText("Hermes address").performScrollTo().performTextReplacement("http://11.0.0.1:9120")
+        compose.onNodeWithText("Find Hermes").performScrollTo().assertIsNotEnabled()
     }
 
-    @Test
-    fun backButton_navigatesBackward() {
-        setOnboardingContent()
-
-        composeTestRule.onNodeWithText("Next").performClick()
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("Chat").assertIsDisplayed()
-
-        composeTestRule.onNodeWithText("Back").performClick()
-        composeTestRule.waitForIdle()
-        composeTestRule.onNodeWithText("Hermes-Relay for Android").assertIsDisplayed()
+    @Test fun advancedKeepsApiAndRelaySeparate() {
+        start(); connectPage()
+        compose.onNodeWithText("Advanced").performScrollTo().performClick()
+        compose.onNodeWithText("API-only connection").assertIsDisplayed()
+        compose.onNodeWithText("Pair Relay by code").performScrollTo().assertIsDisplayed()
     }
 
-    @Test
-    fun addGatewayPage_leadsWithStandardGatewayMethods() {
-        setOnboardingContent()
-        navigateToPage(4)
-
-        composeTestRule
-            .onNodeWithText("Hermes nearby")
-            .assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("Remote gateway")
-            .assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("Scan Hermes setup QR")
-            .assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("Recommended")
-            .assertDoesNotExist()
+    @Test fun setupSkipIsScrollReachable() {
+        start(); connectPage()
+        compose.onNodeWithText("Skip for now — set up later in Settings").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithText("Skip setup?").assertIsDisplayed()
     }
 
-    @Test
-    fun manualSetup_showsHermesAddressWithoutApiCredentials() {
-        setOnboardingContent()
-        navigateToPage(4)
-
-        composeTestRule.onNodeWithText("Remote gateway").performClick()
-        composeTestRule.waitForIdle()
-
-        composeTestRule
-            .onNodeWithText("Hermes address")
-            .assertIsDisplayed()
+    @Test fun hostedGatewayKeepsItsSeparateAddressEntry() {
+        start(); connectPage()
+        compose.onNodeWithText("Nous-hosted Hermes").performClick()
+        compose.onNodeWithText("Connect to Nous-hosted Hermes").assertIsDisplayed()
+        compose.onNodeWithText("Find Hermes").performScrollTo().assertIsNotEnabled()
     }
 
-    @Test
-    fun manualSetup_findButton_isShown() {
-        setOnboardingContent()
-        navigateToPage(4)
-
-        composeTestRule.onNodeWithText("Remote gateway").performClick()
-        composeTestRule.waitForIdle()
-
-        composeTestRule
-            .onNodeWithText("Find Hermes")
-            .assertIsDisplayed()
-    }
-
-    @Test
-    fun cloudSetup_requestsTheHostedDashboardAddress() {
-        setOnboardingContent()
-        navigateToPage(4)
-
-        composeTestRule.onNodeWithText("Nous-hosted Hermes").performClick()
-        composeTestRule.waitForIdle()
-
-        composeTestRule
-            .onNodeWithText("Connect to Nous-hosted Hermes")
-            .assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("Use the complete HTTPS address shown for your hosted agent.")
-            .assertIsDisplayed()
-    }
-
-    @Test
-    fun addGatewayPage_keepsPairingOptional() {
-        setOnboardingContent()
-        navigateToPage(4)
-
-        composeTestRule.onNodeWithText("Advanced").performClick()
-        composeTestRule.waitForIdle()
-
-        composeTestRule
-            .onNodeWithText("Pair Relay by code")
-            .assertIsDisplayed()
-        composeTestRule
-            .onNodeWithText("Power-user path for Terminal, Bridge, Relay sessions, and grants")
-            .assertIsDisplayed()
-    }
-
-    @Test
-    fun powerPage_linksToPermissionReview() {
-        setOnboardingContent()
-        navigateToPage(3)
-
-        composeTestRule
-            .onNodeWithText("Review permissions")
-            .assertIsDisplayed()
-            .assertIsEnabled()
-    }
-
-    @Test
-    fun skipButton_visibleOnIntroPages_andWizardSkipOnAddGatewayPage() {
-        setOnboardingContent()
-
-        repeat(4) {
-            composeTestRule.onNodeWithText("Skip").assertIsDisplayed()
-            composeTestRule.onNodeWithText(if (it == 3) "Connect" else "Next").performClick()
-            composeTestRule.waitForIdle()
-        }
-
-        composeTestRule
-            .onNodeWithText("Skip for now — set up later in Settings")
-            .assertIsDisplayed()
-    }
-
-    private fun navigateToPage(pageIndex: Int) {
-        repeat(pageIndex) {
-            composeTestRule.onNodeWithText(if (it == 3) "Connect" else "Next").performClick()
-            composeTestRule.waitForIdle()
-        }
+    @Test fun optionalPowerPermissionsRemainReachable() {
+        start()
+        compose.onNodeWithText("Get started").performClick()
+        repeat(2) { compose.onNodeWithText("Next").performClick(); compose.waitForIdle() }
+        compose.onNodeWithText("Review permissions").performScrollTo().assertIsDisplayed().assertIsEnabled()
     }
 }

@@ -21,6 +21,7 @@ from plugin.relay.secure_proxy import (
     spki_pin_sha256,
     _forward_headers,
     _scope_dashboard_cookie,
+    _rewrite_dashboard_body,
     _rewrite_dashboard_location,
 )
 from plugin.relay.server import (
@@ -35,6 +36,8 @@ from plugin.relay.server import (
 class SecureProxyRouteTests(AioHTTPTestCase):
     async def get_application(self):
         self.server_state = RelayServer(RelayConfig())
+        self.enterContext(patch("plugin.relay.secure_proxy._api_available", new=AsyncMock(return_value=False)))
+        self.enterContext(patch("plugin.relay.secure_proxy._dashboard_gate_enabled", new=AsyncMock(return_value=False)))
         return create_secure_proxy_app(self.server_state)
 
     async def asyncTearDown(self) -> None:
@@ -48,6 +51,8 @@ class SecureProxyRouteTests(AioHTTPTestCase):
         self.assertEqual(body["surface"], "hermes_secure_proxy")
         self.assertEqual(body["display_name"], SECURE_LINK_NAME)
         self.assertEqual(body["security"], "pinned_tls")
+        self.assertIn("version", body)
+        self.assertTrue(str(body["version"]).strip())
         self.assertEqual(body["capabilities"], ["relay", "api", "dashboard"])
         self.assertEqual(body["namespaces"], ["relay", "api", "dashboard"])
         self.assertEqual(body["services"]["relay"]["websocket_path"], "/relay/ws")
@@ -59,12 +64,17 @@ class SecureProxyRouteTests(AioHTTPTestCase):
 
         for path in (
             "/relay/sessions",
+            "/relay/voice/config",
             "/relay/desktop/_ping", "/relay/pairing/register", "/health",
         ):
             response = await self.client.get(path)
             self.assertEqual(response.status, 404, path)
 
-        self.assertEqual((await self.client.get("/api/health")).status, 502)
+        # Deterministic failures; never depend on a developer's local services.
+        from aiohttp import ClientConnectionError
+        with patch("plugin.relay.secure_proxy._proxy_http", new=AsyncMock(side_effect=ClientConnectionError)):
+            self.assertEqual((await self.client.get("/api/health")).status, 502)
+        self.assertEqual((await self.client.get("/dashboard")).status, 503)
         self.assertEqual((await self.client.get("/dashboard/")).status, 503)
 
     async def test_mutating_health_is_rejected(self) -> None:
@@ -327,12 +337,46 @@ class SecureProxyAdvertisementTests(unittest.TestCase):
             ),
             "/dashboard/auth/callback?code=x",
         )
+        # Upstream that already honored X-Forwarded-Prefix must not double-prefix.
+        self.assertEqual(
+            _rewrite_dashboard_location("/dashboard/login", upstream),
+            "/dashboard/login",
+        )
+        self.assertEqual(
+            _rewrite_dashboard_location(
+                "http://127.0.0.1:9119/dashboard/auth/callback?code=x",
+                upstream,
+            ),
+            "/dashboard/auth/callback?code=x",
+        )
         self.assertEqual(
             _rewrite_dashboard_location("https://idp.example/authorize", upstream),
             "https://idp.example/authorize",
         )
         self.assertIsNone(
             _rewrite_dashboard_location("http://attacker.example/", upstream)
+        )
+
+    def test_dashboard_html_and_json_auth_paths_are_scoped(self) -> None:
+        html = (
+            b"<script>fetch('/auth/password-login');"
+            b"window.location.assign((data && data.next) || '/');</script>"
+        )
+        rewritten = _rewrite_dashboard_body("text/html; charset=utf-8", html)
+        self.assertIn(b"fetch('/dashboard/auth/password-login')", rewritten)
+        self.assertIn(
+            b"window.location.assign((data && data.next) || '/dashboard/');",
+            rewritten,
+        )
+        payload = json.dumps({"ok": True, "next": "/"}).encode("utf-8")
+        out = _rewrite_dashboard_body("application/json", payload)
+        self.assertEqual(json.loads(out.decode("utf-8"))["next"], "/dashboard/")
+        already = json.dumps({"ok": True, "next": "/dashboard/sessions"}).encode(
+            "utf-8"
+        )
+        self.assertEqual(
+            _rewrite_dashboard_body("application/json", already),
+            already,
         )
 
     def test_auth_ok_does_not_replace_operator_reviewed_endpoints(self) -> None:

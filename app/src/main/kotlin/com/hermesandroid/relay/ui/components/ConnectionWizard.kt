@@ -20,6 +20,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -249,9 +251,10 @@ fun ConnectionWizard(
     var nearbyBusy by remember { mutableStateOf(false) }
     var nearbyResults by remember { mutableStateOf<List<HermesLanDiscoveryResult>>(emptyList()) }
     var nearbyMessage by remember { mutableStateOf<String?>(null) }
-    var dashboardAddress by rememberSaveable(wizardDraftIdentity, currentDashboardUrl) {
-        mutableStateOf(currentDashboardUrl)
+    var dashboardAddress by rememberSaveable(wizardDraftIdentity) {
+        mutableStateOf(if (connectionDraftId != null) "" else currentDashboardUrl)
     }
+    var dashboardHttpConsentOrigin by rememberSaveable(wizardDraftIdentity) { mutableStateOf<String?>(null) }
     var dashboardProbeBusy by remember { mutableStateOf(false) }
     var dashboardProbeError by remember { mutableStateOf<String?>(null) }
     var dashboardProbeResult by remember {
@@ -425,16 +428,24 @@ fun ConnectionWizard(
     val inspectDashboard: (String, String?) -> Unit = { address, suggestedHostname ->
         dashboardAddress = address
         dashboardSuggestedHostname = suggestedHostname
-        dashboardProbeBusy = true
         dashboardProbeError = null
-        connectionViewModel.probeHermesDashboard(address) { result ->
-            dashboardProbeBusy = false
-            if (result.ok) {
-                dashboardProbeResult = result
-                dashboardAddress = result.dashboardUrl
-                step = WizardStep.DashboardFound
-            } else {
-                dashboardProbeError = result.message
+        val normalized = Connection.normalizeDashboardUrlInput(address)
+        if (com.hermesandroid.relay.data.dashboardHttpConsentRequired(normalized) &&
+            dashboardHttpConsentOrigin != com.hermesandroid.relay.data.dashboardHttpOrigin(normalized)
+        ) {
+            dashboardEntryIntent = DashboardEntryIntent.Server
+            step = WizardStep.DashboardManual
+        } else {
+            dashboardProbeBusy = true
+            connectionViewModel.probeHermesDashboard(address, dashboardHttpConsentOrigin) { result ->
+                dashboardProbeBusy = false
+                if (result.ok) {
+                    dashboardProbeResult = result
+                    dashboardAddress = result.dashboardUrl
+                    step = WizardStep.DashboardFound
+                } else {
+                    dashboardProbeError = result.message
+                }
             }
         }
     }
@@ -552,6 +563,7 @@ fun ConnectionWizard(
         connectionViewModel.saveDashboardConnection(
             dashboardUrl = draft.dashboardUrl,
             discoveredHostname = draft.discoveredHostname,
+            httpConsentOrigin = draft.httpConsentOrigin,
         ) { saved ->
             standardBusy = false
             saved.fold(
@@ -652,7 +664,7 @@ fun ConnectionWizard(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
         if (step != WizardStep.Nearby) {
-            WizardStepIndicator(currentStep = step.indicatorIndex, method = chosenMethod)
+            WizardStepIndicator(currentStep = step.indicatorIndex, method = chosenMethod, directApi = step == WizardStep.StandardEntry)
         }
 
         AnimatedContent(
@@ -707,8 +719,11 @@ fun ConnectionWizard(
                     address = dashboardAddress,
                     onAddressChange = {
                         dashboardAddress = it
+                        dashboardHttpConsentOrigin = null
                         dashboardProbeError = null
                     },
+                    httpConsentOrigin = dashboardHttpConsentOrigin,
+                    onHttpConsentChange = { dashboardHttpConsentOrigin = it },
                     busy = dashboardProbeBusy,
                     error = dashboardProbeError,
                     onBack = { step = WizardStep.Nearby },
@@ -729,6 +744,7 @@ fun ConnectionWizard(
                                 dashboardUrl = result.dashboardUrl,
                                 signInRequired = result.signInRequired,
                                 discoveredHostname = dashboardSuggestedHostname,
+                                httpConsentOrigin = result.httpConsentOrigin,
                             )
                             val existing = findDuplicateFor("", "", result.dashboardUrl)
                             if (existing != null) {
@@ -1526,6 +1542,7 @@ private data class DashboardConnectionDraft(
     val dashboardUrl: String,
     val signInRequired: Boolean,
     val discoveredHostname: String? = null,
+    val httpConsentOrigin: String? = null,
 )
 
 private const val SetupGuideUrl = "https://hermes-relay.dev/docs/guide/getting-started"
@@ -1537,7 +1554,7 @@ private fun openExternalUrl(context: android.content.Context, url: String) {
 }
 
 @Composable
-private fun WizardStepIndicator(currentStep: Int, method: PairMethod) {
+private fun WizardStepIndicator(currentStep: Int, method: PairMethod, directApi: Boolean = false) {
     val totalSteps = 3
     Row(
         modifier = Modifier
@@ -1599,7 +1616,7 @@ private fun WizardStepIndicator(currentStep: Int, method: PairMethod) {
         text = when (currentStep) {
             0 -> stringResource(R.string.cw_step_1_3)
             1 -> when (method) {
-                PairMethod.Standard -> stringResource(R.string.cw_step_2_3_standard)
+                PairMethod.Standard -> stringResource(if (directApi) R.string.cw_hermes_label else R.string.cw_step_2_3_standard)
                 PairMethod.Scan -> stringResource(R.string.cw_step_2_3_scan)
                 PairMethod.EnterCode -> stringResource(R.string.cw_step_2_3_enter_code)
                 PairMethod.ShowCode -> stringResource(R.string.cw_step_2_3_show_code)
@@ -1644,6 +1661,7 @@ private fun NearbyHermesStep(
 }
 
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NewNearbyHermesStep(
     busy: Boolean,
@@ -1754,10 +1772,9 @@ private fun NewNearbyHermesStep(
             )
         }
 
-        Row(
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = { openExternalUrl(context, SetupGuideUrl) }) {
                 Icon(
@@ -1886,6 +1903,8 @@ private fun DashboardManualStep(
     intent: DashboardEntryIntent,
     address: String,
     onAddressChange: (String) -> Unit,
+    httpConsentOrigin: String?,
+    onHttpConsentChange: (String?) -> Unit,
     busy: Boolean,
     error: String?,
     onBack: () -> Unit,
@@ -1904,6 +1923,9 @@ private fun DashboardManualStep(
         optionalHttpUrlError(address, context)
     }
     val resolvedAddress = if (cloudSlugMode) resolveNousCloudDashboardAddress(address) else address.trim()
+    val normalizedAddress = Connection.normalizeDashboardUrlInput(resolvedAddress)
+    val httpAccepted = !com.hermesandroid.relay.data.dashboardHttpConsentRequired(normalizedAddress) ||
+        httpConsentOrigin == com.hermesandroid.relay.data.dashboardHttpOrigin(normalizedAddress)
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text(
             text = stringResource(
@@ -1959,7 +1981,7 @@ private fun DashboardManualStep(
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, autoCorrectEnabled = false),
             keyboardActions = KeyboardActions(onGo = {
-                if (address.isNotBlank() && fieldError == null && !busy) onSubmit(resolvedAddress)
+                if (address.isNotBlank() && fieldError == null && !busy && httpAccepted) onSubmit(resolvedAddress)
             }),
             modifier = Modifier.fillMaxWidth(),
         )
@@ -1983,13 +2005,17 @@ private fun DashboardManualStep(
         error?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
+        DashboardHttpConsentControl(normalizedAddress, httpConsentOrigin, onHttpConsentChange, enabled = !busy)
+        TextButton(onClick = { openExternalUrl(context, SetupGuideUrl) }) {
+            Text(stringResource(R.string.cw_setup_guide))
+        }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onBack, enabled = !busy, modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
                 Text(stringResource(R.string.cw_back))
             }
             Button(
                 onClick = { onSubmit(resolvedAddress) },
-                enabled = address.isNotBlank() && fieldError == null && !busy,
+                enabled = address.isNotBlank() && fieldError == null && !busy && httpAccepted,
                 modifier = Modifier.weight(1f).heightIn(min = 48.dp),
             ) {
                 if (busy) CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -2039,12 +2065,12 @@ private fun DashboardFoundStep(
         }
         FoundCapabilityLine(
             label = stringResource(R.string.cw_chat),
-            value = if (result.signInRequired) stringResource(R.string.cw_available_after_signin) else stringResource(R.string.cw_ready),
-            ready = !result.signInRequired,
+            value = if (result.signInRequired) stringResource(R.string.cw_available_after_signin) else stringResource(R.string.cw_chat_checked_on_open),
+            ready = false,
         )
         FoundCapabilityLine(
             label = stringResource(R.string.cw_manage),
-            value = if (result.signInRequired) stringResource(R.string.cw_available_after_signin) else stringResource(R.string.cw_ready),
+            value = if (result.signInRequired) stringResource(R.string.cw_available_after_signin) else stringResource(R.string.cw_auth_verified),
             ready = !result.signInRequired,
         )
         FoundCapabilityLine(

@@ -3,6 +3,8 @@ package com.hermesandroid.relay.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -69,6 +71,7 @@ import com.hermesandroid.relay.data.primaryRouteUrl
 import com.hermesandroid.relay.data.routeAuthority
 import com.hermesandroid.relay.network.shared.EndpointSurface
 import com.hermesandroid.relay.network.shared.RouteProbeOutcome
+import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import kotlinx.coroutines.launch
 import java.net.URI
@@ -427,11 +430,6 @@ private fun EndpointRow(
                             color = MaterialTheme.colorScheme.tertiary,
                         )
                     }
-                    Text(
-                        text = stringResource(R.string.secure_link_auth_note),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
             }
 
@@ -580,10 +578,10 @@ private fun RouteSurfaceMap(
     outcomeFor: (EndpointSurface) -> RouteProbeOutcome? = { null },
     modifier: Modifier = Modifier,
 ) {
-    val dashboardUrl = candidate.dashboard?.url
-        ?: candidate.api?.url?.let(Connection::deriveDefaultDashboardUrl)
-    val apiUrl = candidate.api?.url
-    val relayUrl = candidate.relay?.url
+    val proxy = candidate.pluginProxyRoutesOrNull()
+    val dashboardUrl = candidate.gatewayRouteUrl()
+    val apiUrl = candidate.api?.url ?: proxy?.apiBaseUrl
+    val relayUrl = candidate.relay?.url ?: proxy?.relayWebSocketUrl
     val dashboardOutcome = outcomeFor(EndpointSurface.Dashboard)
     val apiOutcome = outcomeFor(EndpointSurface.Api)
     val relayOutcome = outcomeFor(EndpointSurface.Relay)
@@ -925,10 +923,11 @@ internal fun EndpointCandidate.hasPlainRelayTransport(): Boolean {
 @Composable
 fun DashboardAddressEditorDialog(
     initialUrl: String,
-    onSave: (dashboardUrl: String, onResult: (String?) -> Unit) -> Unit,
+    onSave: (dashboardUrl: String, httpConsentOrigin: String?, onResult: (String?) -> Unit) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var url by remember(initialUrl) { mutableStateOf(initialUrl) }
+    var httpConsentOrigin by remember(url) { mutableStateOf<String?>(null) }
     var errorText by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     val normalized = remember(url) {
@@ -940,7 +939,7 @@ fun DashboardAddressEditorDialog(
         onDismissRequest = { if (!saving) onDismiss() },
         title = { Text(stringResource(R.string.dashboard_address_editor_title)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
                     text = stringResource(R.string.dashboard_address_editor_body),
                     style = MaterialTheme.typography.bodySmall,
@@ -973,14 +972,17 @@ fun DashboardAddressEditorDialog(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                DashboardHttpConsentControl(normalized, httpConsentOrigin, { httpConsentOrigin = it }, enabled = !saving)
             }
         },
         confirmButton = {
             TextButton(
-                enabled = valid && !saving && normalized != initialUrl.trim().trimEnd('/'),
+                enabled = valid && !saving && normalized != initialUrl.trim().trimEnd('/') &&
+                    (!com.hermesandroid.relay.data.dashboardHttpConsentRequired(normalized) ||
+                        httpConsentOrigin == com.hermesandroid.relay.data.dashboardHttpOrigin(normalized)),
                 onClick = {
                     saving = true
-                    onSave(normalized) { error ->
+                    onSave(normalized, httpConsentOrigin) { error ->
                         saving = false
                         if (error == null) onDismiss() else errorText = error
                     }
@@ -1029,7 +1031,7 @@ private fun isValidDashboardEditorAddress(address: String): Boolean {
 fun RouteEditorDialog(
     original: EndpointCandidate?,
     relayEnabled: Boolean = false,
-    onSave: (role: String, dashboardUrl: String, onResult: (String?) -> Unit) -> Unit,
+    onSave: (role: String, dashboardUrl: String, httpConsentOrigin: String?, onResult: (String?) -> Unit) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
@@ -1049,12 +1051,17 @@ fun RouteEditorDialog(
         )
     }
     var url by remember(original) { mutableStateOf(routeEditorInitialGatewayUrl(original)) }
+    var httpConsentOrigin by remember(url, selectedRole) { mutableStateOf<String?>(null) }
     var errorText by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
 
     val effectiveRole = if (selectedRole == CUSTOM_ROLE) customRole else selectedRole
+    val normalizedAddress = Connection.normalizeDashboardUrlInput(url)
+    val needsHttpConsent = com.hermesandroid.relay.data.dashboardHttpConsentRequired(normalizedAddress) ||
+        (effectiveRole == "public" && com.hermesandroid.relay.data.dashboardHttpOrigin(normalizedAddress) != null)
     val saveEnabled = !saving &&
         url.isNotBlank() &&
+        (!needsHttpConsent || httpConsentOrigin == com.hermesandroid.relay.data.dashboardHttpOrigin(normalizedAddress)) &&
         (selectedRole != CUSTOM_ROLE || customRole.isNotBlank())
 
     AlertDialog(
@@ -1066,7 +1073,7 @@ fun RouteEditorDialog(
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
                     text = stringResource(R.string.endpoints_route_editor_desc),
                     style = MaterialTheme.typography.bodySmall,
@@ -1154,6 +1161,10 @@ fun RouteEditorDialog(
                 previewCandidate?.let { candidate ->
                     RouteSurfaceMap(candidate = candidate)
                 }
+                DashboardHttpConsentControl(
+                    normalizedAddress, httpConsentOrigin, { httpConsentOrigin = it },
+                    enabled = !saving, required = needsHttpConsent,
+                )
                 if (selectedRole == "tailscale") {
                     Text(
                         text = stringResource(R.string.endpoints_tailscale_setup_hint),
@@ -1173,7 +1184,7 @@ fun RouteEditorDialog(
                 enabled = saveEnabled,
                 onClick = {
                     saving = true
-                    onSave(effectiveRole, url) { error ->
+                    onSave(effectiveRole, url, httpConsentOrigin) { error ->
                         saving = false
                         if (error == null) {
                             onDismiss()

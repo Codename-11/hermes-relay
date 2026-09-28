@@ -14,7 +14,7 @@ class ScenarioError(ValueError):
     """Raised when a scenario does not satisfy the fixture schema."""
 
 
-_STEP_OPS = {"event", "persist", "sleep", "close", "set_running", "clarify"}
+_STEP_OPS = {"event", "persist", "sleep", "close", "set_running", "clarify", "server_request"}
 _LIVE_STATUSES = {"starting", "working", "waiting", "idle"}
 _SAFE_NAME = re.compile(r"[A-Za-z0-9_.-]{1,120}")
 
@@ -31,6 +31,7 @@ class Scenario:
     active_list_supported: bool
     active_list_snapshots: tuple[tuple[dict[str, Any], ...], ...]
     session_initialization_error: str | None = None
+    dashboard_setup: bool = False
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Scenario":
@@ -41,6 +42,8 @@ class Scenario:
         if not isinstance(raw["turns"], list):
             raise ScenarioError("turns must be a list")
         initialization_error = raw.get("session_initialization_error")
+        if not isinstance(raw.get("dashboard_setup", False), bool):
+            raise ScenarioError("dashboard_setup must be a boolean")
         if initialization_error is not None and (
             not isinstance(initialization_error, str) or not initialization_error or len(initialization_error) > 500
         ):
@@ -68,6 +71,12 @@ class Scenario:
                     raise ScenarioError("event scope must be exact, foreign, or unscoped")
                 if step["op"] == "persist" and not isinstance(step.get("messages"), list):
                     raise ScenarioError("persist step requires a messages list")
+                if step["op"] == "server_request":
+                    rid, method, payload = step.get("id"), step.get("method"), step.get("payload")
+                    if isinstance(rid, bool) or not isinstance(rid, (str, int, float)):
+                        raise ScenarioError("server request requires a string or numeric id")
+                    if not isinstance(method, str) or not method or not isinstance(payload, dict):
+                        raise ScenarioError("server request requires a method and object payload")
                 if step["op"] == "clarify":
                     payload = step.get("payload")
                     if not isinstance(payload, dict) or not isinstance(payload.get("request_id"), str):
@@ -141,6 +150,7 @@ class Scenario:
             active_list_supported=active_list_supported,
             active_list_snapshots=tuple(validated_snapshots),
             session_initialization_error=initialization_error,
+            dashboard_setup=raw.get("dashboard_setup", False),
         )
 
 

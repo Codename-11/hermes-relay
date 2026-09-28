@@ -29,6 +29,19 @@ class GatewayFixture:
         self.scenario = scenario
         self.evidence = EvidenceLog(evidence_limit)
         self.app = web.Application()
+        self._setup_mode = "signin"
+        self._setup_cookie = secrets.token_urlsafe(24)
+        if scenario.dashboard_setup:
+            self.app.middlewares.append(self._setup_auth)
+            self.app.add_routes([
+                web.get("/api/status", self._setup_status),
+                web.get("/api/auth/providers", self._setup_providers),
+                web.get("/api/auth/me", self._setup_me),
+                web.post("/auth/password-login", self._setup_login),
+                web.get("/api/profiles", self._setup_profiles),
+                web.get("/api/profiles/active", self._setup_profile_scope),
+                web.post("/__fixture__/auth", self._setup_control),
+            ])
         self.app.add_routes(
             [
                 web.post("/api/auth/ws-ticket", self._ticket),
@@ -56,6 +69,8 @@ class GatewayFixture:
         self._tasks: set[asyncio.Task[None]] = set()
         self._sockets: set[web.WebSocketResponse] = set()
         self._clarify: dict[str, Any] | None = None
+        self._native_request: dict[str, Any] | None = None
+        self._capable: set[web.WebSocketResponse] = set()
         self._clarify_answers: dict[str, str] = {}
         self._clarify_done = asyncio.Event()
         self._clarify_owner: tuple[web.WebSocketResponse, int] | None = None
@@ -63,6 +78,61 @@ class GatewayFixture:
     @property
     def running(self) -> bool:
         return self._running
+
+    @web.middleware
+    async def _setup_auth(self, request: web.Request, handler: Any) -> web.StreamResponse:
+        protected = request.path.startswith("/api/") and request.path not in {
+            "/api/status", "/api/auth/providers", "/api/ws",
+        }
+        if protected and (self._setup_mode == "loopback" or
+                          request.cookies.get("hermes_session") != self._setup_cookie):
+            self.evidence.add("auth", outcome="rejected_cookie" if request.cookies else "no_cookie")
+            body = {"detail": "Unauthorized"}
+            if self._setup_mode != "loopback":
+                body["error"] = "session_expired" if self._setup_mode == "expired" else "unauthenticated"
+            return web.json_response(body, status=401)
+        return await handler(request)
+
+    async def _setup_status(self, _request: web.Request) -> web.Response:
+        return web.json_response({
+            "auth_required": self._setup_mode != "loopback",
+            "auth_providers": ["basic"], "auth_flows": [],
+            "profiles": [self.scenario.profile],
+            "gateway_mode": "multiplex",
+            "gateways": [{"profile": self.scenario.profile, "served_profiles": [self.scenario.profile]}],
+            "version": "synthetic-setup-fixture", "install_id": self.scenario.name,
+        })
+
+    async def _setup_providers(self, _request: web.Request) -> web.Response:
+        return web.json_response({"providers": [{"name": "basic", "supports_password": True}]})
+
+    async def _setup_me(self, _request: web.Request) -> web.Response:
+        return web.json_response({"authenticated": True, "username": "Fixture", "provider": "basic"})
+
+    async def _setup_profiles(self, _request: web.Request) -> web.Response:
+        return web.json_response({"profiles": [{"name": self.scenario.profile, "model": "fixture"}]})
+
+    async def _setup_profile_scope(self, _request: web.Request) -> web.Response:
+        return web.json_response({"active": self.scenario.profile, "current": self.scenario.profile})
+
+    async def _setup_login(self, request: web.Request) -> web.Response:
+        body = await request.json()
+        if body.get("username") != "fixture" or body.get("password") != "fixture":
+            return web.json_response({"detail": "Invalid fixture credentials"}, status=401)
+        response = web.json_response({"ok": True, "next": "/"})
+        response.set_cookie("hermes_session", self._setup_cookie, httponly=True, path="/")
+        return response
+
+    async def _setup_control(self, request: web.Request) -> web.Response:
+        mode = (await request.json()).get("mode")
+        if mode not in {"signin", "expired", "loopback"}:
+            raise web.HTTPBadRequest(text="invalid fixture auth mode")
+        self._setup_mode = mode
+        self._setup_cookie = secrets.token_urlsafe(24)
+        self._tickets.clear()
+        for socket in tuple(self._sockets):
+            await socket.close(code=4401, message=b"fixture auth changed")
+        return web.json_response({"mode": mode})
 
     async def close(self) -> None:
         self._closing = True
@@ -89,12 +159,19 @@ class GatewayFixture:
         return web.json_response({"ticket": token, "ttl_seconds": 30})
 
     async def _websocket(self, request: web.Request) -> web.StreamResponse:
-        ticket = request.query.get("ticket", "")
+        protocols = [p.strip() for p in request.headers.get("Sec-WebSocket-Protocol", "").split(",")]
+        protocol_tickets = [p.removeprefix("hermes-gateway-ticket.") for p in protocols
+                            if p.startswith("hermes-gateway-ticket.")]
+        if protocol_tickets and (len(protocol_tickets) != 1 or "hermes-gateway-v1" not in protocols):
+            raise web.HTTPUnauthorized(text="ambiguous ticket protocol")
+        ticket = protocol_tickets[0] if protocol_tickets else request.query.get("ticket", "")
         if ticket not in self._tickets:
             self.evidence.add("socket", outcome="ticket_rejected")
             raise web.HTTPUnauthorized(text="invalid or already-used ticket")
         self._tickets.remove(ticket)
-        socket = web.WebSocketResponse(heartbeat=None)
+        socket = web.WebSocketResponse(
+            heartbeat=None, protocols=["hermes-gateway-v1"] if protocol_tickets else [],
+        )
         await socket.prepare(request)
         self._sockets.add(socket)
         self._connection_sequence += 1
@@ -109,6 +186,7 @@ class GatewayFixture:
                     break
         finally:
             self._sockets.discard(socket)
+            self._capable.discard(socket)
             self.evidence.add("socket", connection=connection, outcome="closed")
         return socket
 
@@ -123,10 +201,24 @@ class GatewayFixture:
         method = frame.get("method")
         request_id = frame.get("id")
         params = frame.get("params") if isinstance(frame.get("params"), dict) else {}
+        if method is None and request_id is not None:
+            pending = self._native_request
+            if pending and request_id == pending["id"] and ("result" in frame or "error" in frame):
+                self.evidence.add("rpc", connection=connection, method=pending["method"], outcome="answered")
+                self._clarify_done.set()
+            return
         if not isinstance(method, str) or request_id is None:
             return
         self.evidence.add("rpc", connection=connection, method=method, outcome="received")
-        if method == "session.create":
+        if method == "client.capabilities":
+            if params.get("server_requests") is True:
+                self._capable.add(socket)
+            result = {"ok": True}
+        elif self.scenario.dashboard_setup and method == "profiles.list":
+            result = {"profiles": [{"name": self.scenario.profile, "model": "fixture", "is_default": True}]}
+        elif self.scenario.dashboard_setup and method == "pet.info":
+            result = {"enabled": False}
+        elif method == "session.create":
             result = self._session_snapshot(include_stored=True)
             if self.scenario.session_initialization_error:
                 result["info"]["lazy"] = True
@@ -139,7 +231,7 @@ class GatewayFixture:
                 await self._rpc_error(socket, request_id, 4040, "Stored session not found")
                 return
             result = self._session_snapshot(include_stored=True)
-            if self._clarify is not None:
+            if self._clarify is not None or self._native_request is not None:
                 self._clarify_owner = socket, connection
         elif method == "session.activate":
             requested = params.get("session_id")
@@ -147,12 +239,27 @@ class GatewayFixture:
                 await self._rpc_error(socket, request_id, 4041, "Live session not found")
                 return
             result = self._session_snapshot(include_stored=True)
-            if self._clarify is not None:
+            if self._clarify is not None or self._native_request is not None:
                 self._clarify_owner = socket, connection
         elif method == "prompt.submit":
             await self._rpc_result(socket, request_id, {"ok": True})
             await self._submit(socket, connection)
             return
+        elif method == "clarify.lock":
+            pending = self._native_request
+            if pending is None or params.get("request_id") != pending["id"]:
+                result = {"status": "expired"}
+            else:
+                qids = [q["qid"] for q in pending["params"].get("questions", [])]
+                qid = params.get("question_id")
+                if qid not in qids:
+                    await self._rpc_error(socket, request_id, 4002, "unknown question_id")
+                    return
+                self._clarify_answers[qid] = params.get("answer", "")
+                remaining = [q for q in qids if q not in self._clarify_answers]
+                result = {"status": "ok", "remaining": remaining}
+                if not remaining:
+                    self._clarify_done.set()
         elif method == "clarify.respond":
             pending = self._clarify
             if pending is None or params.get("request_id") != pending["request_id"]:
@@ -207,6 +314,10 @@ class GatewayFixture:
         }
         if include_stored:
             snapshot["stored_session_id"] = self.scenario.stored_session_id
+        snapshot["open_requests"] = []
+        if self._native_request is not None:
+            frame = self._native_request
+            snapshot["open_requests"] = [dict(frame, params=dict(frame["params"], answers=dict(self._clarify_answers)))]
         if self._clarify is not None:
             snapshot["pending_clarify"] = dict(self._clarify, answers=dict(self._clarify_answers))
             snapshot["info"]["pending_clarify"] = snapshot["pending_clarify"]
@@ -249,6 +360,20 @@ class GatewayFixture:
                 operation = step["op"]
                 if operation == "sleep":
                     await asyncio.sleep(step["milliseconds"] / 1_000)
+                elif operation == "server_request":
+                    if socket not in self._capable:
+                        self.evidence.add("rpc", connection=connection, method=step["method"], outcome="legacy_client")
+                        continue
+                    self._native_request = {"id": step["id"], "method": step["method"],
+                                            "params": dict(step["payload"], session_id=self.scenario.live_session_id)}
+                    self._clarify_answers = {}
+                    self._clarify_owner = socket, connection
+                    self._clarify_done.clear()
+                    await socket.send_json(dict(self._native_request, jsonrpc="2.0"))
+                    self.evidence.add("rpc", connection=connection, method=step["method"], outcome="sent")
+                    await self._clarify_done.wait()
+                    socket, connection = self._clarify_owner
+                    self._native_request = None
                 elif operation == "clarify":
                     self._clarify = dict(step["payload"])
                     self._clarify_answers = {}
@@ -288,6 +413,11 @@ class GatewayFixture:
                     )
                     self.evidence.add("fault", connection=connection, outcome="socket_gap")
         finally:
+            if self._native_request is not None:
+                await self._send_event(socket, connection, "request.cancel", {
+                    "id": self._native_request["id"], "method": self._native_request["method"], "reason": "interrupted",
+                }, self.scenario.live_session_id)
+            self._native_request = None
             self._clarify = None
             self._clarify_owner = None
             self._turn_active = False
@@ -340,10 +470,16 @@ class GatewayFixture:
         if profile not in (None, self.scenario.profile):
             raise web.HTTPNotFound(text="profile not found")
         self.evidence.add("directory", outcome="listed")
+        sessions = [{
+            "id": self.scenario.stored_session_id,
+            "title": "Fixture conversation", "source": "cli",
+            "model": "fixture", "message_count": len(self._history_rows),
+            "created_at": 1.0, "updated_at": 2.0,
+        }] if self.scenario.dashboard_setup and self._history_rows else []
         return web.json_response(
             {
-                "sessions": [],
-                "pagination": {"limit": 50, "offset": 0, "returned": 0},
+                "sessions": sessions,
+                "pagination": {"limit": 50, "offset": 0, "returned": len(sessions)},
             },
         )
 

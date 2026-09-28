@@ -103,7 +103,14 @@ jobs:
           python -m pytest \
             plugin/tests/test_manifest_compatibility.py \
             plugin/tests/test_relay_security.py \
+            plugin/tests/test_secure_proxy.py \
+            plugin/tests/test_secure_proxy_contract.py \
+            plugin/tests/test_secure_link_setup.py \
+            plugin/tests/test_secure_proxy_security.py \
             plugin/tests/test_voice_routes.py \
+            plugin/tests/test_realtime_agent_openai_provider.py \
+            plugin/tests/test_realtime_agent_xai_provider.py \
+            plugin/tests/test_voice_output_routes.py \
             plugin/tests/test_session_grants.py \
             plugin/tests/test_native_layout_imports.py \
             plugin/tests/test_profile_discovery.py \

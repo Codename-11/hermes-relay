@@ -24,6 +24,8 @@ import os
 import sys
 import urllib.error
 import urllib.request
+import urllib.parse
+from argparse import Namespace
 
 
 # ── hermes pair ───────────────────────────────────────────────────────────────
@@ -154,12 +156,24 @@ def register_relay_cli(subparser) -> None:
     """
     sub = subparser.add_subparsers(dest="relay_cmd", required=True)
 
+    setup = sub.add_parser("secure-link", help="Check Secure Link readiness and show setup instructions (read-only)")
+    setup.add_argument("--host", help="LAN, VPN, or DNS address the phone will use")
+    setup.add_argument("--port", type=int, help="Secure Link HTTPS port (default: current configuration)")
+    setup.add_argument("--relay-port", type=int, default=None, help="Running Relay loopback port")
+    setup.add_argument("--json", action="store_true", help="Emit the same readiness report used by Dashboard and Desktop")
+    setup.set_defaults(func=relay_secure_link_command)
+
     start = sub.add_parser(
         "start",
         help="Run the Hermes-Relay WSS server (chat + terminal + bridge)",
     )
     start.add_argument("--host", metavar="HOST", help="Bind address (default: 0.0.0.0)")
     start.add_argument("--port", type=int, help="Listen port (default: 8767)")
+    import argparse
+    start.add_argument("--secure-link", action=argparse.BooleanOptionalAction, default=None,
+                       help="Enable or disable the optional pinned-TLS listener")
+    start.add_argument("--secure-link-host", help="Secure Link bind/advertised address")
+    start.add_argument("--secure-link-port", type=int, help="Secure Link HTTPS port (default: 9443)")
     start.add_argument(
         "--no-ssl",
         action="store_true",
@@ -319,6 +333,45 @@ def relay_doctor_command(args) -> None:
         raise SystemExit(code)
 
 
+def relay_secure_link_command(args: Namespace) -> None:
+    """Read the running host's report without enabling, rotating, or restarting."""
+    relay_port = args.relay_port or int(os.environ.get("RELAY_PORT", "8767"))
+    if not 1 <= relay_port <= 65535:
+        raise SystemExit("Relay port must be between 1 and 65535")
+    query = urllib.parse.urlencode({
+        key: value for key, value in {"host": args.host, "port": args.port}.items() if value is not None
+    })
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{relay_port}/secure-link/preflight?{query}", timeout=15) as response:
+            report = json.load(response)
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        raise SystemExit("Secure Link checks are unavailable. Start/update Relay and retry; no configuration was changed.") from exc
+    if not isinstance(report, dict) or report.get("schema_version") != 1 or not isinstance(report.get("checks"), list):
+        raise SystemExit("Relay returned an unsupported setup report. Update Relay and retry; no configuration was changed.")
+    if args.json:
+        sys.stdout.write(json.dumps(report, indent=2) + "\n")
+    else:
+        lines = [f"Secure Link: {report['state'].replace('_', ' ')}"]
+        if report.get("url"):
+            lines.append(f"HTTPS origin: {report['url']}")
+        lines.extend(f"[{c['status']}] {c['label']}: {c['detail']}" for c in report["checks"])
+        lines.extend([report["restart_notice"], report.get("configuration_note", "")])
+        if report["ready_to_enable"] and not report["pairing_ready"]:
+            lines.append("Add these settings to the existing Relay environment, then restart its owner:")
+            lines.extend(f"{key}={value}" for key, value in report["environment"].items())
+            lines.extend([
+                "Or add to the existing Relay startup command: " + " ".join(report["start_arguments"]),
+                "Re-run this check after restart. Do not launch a second Relay.",
+            ])
+        if report["pairing_ready"]:
+            lines.extend(["Create a fresh signed QR: hermes pair --png",
+                          "Scan it, then sign into Dashboard on the client. Listener health is not Chat readiness."])
+        lines.append("To disable: set RELAY_SECURE_LINK_ENABLED=0 (or use --no-secure-link), then restart Relay's owner.")
+        sys.stdout.write("\n".join(lines) + "\n")
+    if not report["ready_to_enable"]:
+        raise SystemExit(1)
+
+
 def relay_compat_command(args) -> None:
     """Manage the optional legacy compatibility startup hook."""
     from .compat import compat_command
@@ -436,6 +489,12 @@ def relay_start_command(args) -> None:
         config.port = args.port
     if getattr(args, "webapi_url", None):
         config.webapi_url = args.webapi_url
+    if getattr(args, "secure_link", None) is not None:
+        config.secure_proxy_enabled = args.secure_link
+    if getattr(args, "secure_link_host", None):
+        config.secure_proxy_host = args.secure_link_host
+    if getattr(args, "secure_link_port", None) is not None:
+        config.secure_proxy_port = args.secure_link_port
     if getattr(args, "log_level", None):
         config.log_level = args.log_level
     if getattr(args, "shell", None):

@@ -642,6 +642,7 @@ private fun ProviderUsageDisplaySettings(
                     "openai-codex" to "Codex",
                     "nous" to "Nous",
                     "opencode-go" to "OpenCode Go",
+                    "supergrok" to "SuperGrok",
                 )
             } else {
                 providers.map { it.id to it.displayName }

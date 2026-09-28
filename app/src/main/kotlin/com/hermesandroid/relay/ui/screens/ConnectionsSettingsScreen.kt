@@ -53,6 +53,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.pluralStringResource
@@ -419,6 +420,29 @@ private fun ConnectionListCard(
         label = "connectionCardBorder",
     )
 
+    val configuration = LocalConfiguration.current
+    val stackActions = configuration.screenWidthDp < 360 || configuration.fontScale > 1.2f
+    val showSwitch = onSwitch != null || isSwitching || justSwitched
+    val switchAction: @Composable (Modifier) -> Unit = { actionModifier ->
+        OutlinedButton(
+            modifier = actionModifier,
+            onClick = { onSwitch?.invoke() },
+            enabled = !isSwitching && !justSwitched,
+        ) {
+            when {
+                isSwitching -> {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text(stringResource(R.string.conn_switching), modifier = Modifier.padding(start = 6.dp))
+                }
+                justSwitched -> {
+                    Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Text(stringResource(R.string.conn_switched), modifier = Modifier.padding(start = 6.dp))
+                }
+                else -> Text(stringResource(R.string.conn_switch))
+            }
+        }
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -500,29 +524,15 @@ private fun ConnectionListCard(
                     )
                 }
             }
-            if (onSwitch != null || isSwitching || justSwitched) {
-                OutlinedButton(
-                    onClick = { onSwitch?.invoke() },
-                    enabled = !isSwitching && !justSwitched,
-                ) {
-                    when {
-                        isSwitching -> {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Text(stringResource(R.string.conn_switching), modifier = Modifier.padding(start = 6.dp))
-                        }
-                        justSwitched -> {
-                            Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Text(stringResource(R.string.conn_switched), modifier = Modifier.padding(start = 6.dp))
-                        }
-                        else -> Text(stringResource(R.string.conn_switch))
-                    }
-                }
-            }
+            if (showSwitch && !stackActions) switchAction(Modifier)
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        if (showSwitch && stackActions) {
+            switchAction(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 12.dp))
         }
     }
 }

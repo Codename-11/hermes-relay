@@ -152,6 +152,14 @@ public `:8767`.
 
 ### Hermes Secure Link
 
+Start with the shared read-only setup check: **Relay → Remote Access → Secure
+Link** in Dashboard or the Desktop Relay pane, or
+`hermes relay secure-link --host <phone-reachable-address> --port 9443` on the
+host. It verifies prerequisites, previews environment/startup settings and
+restart impact, and requires a re-check of the active listener before offering
+the pairing handoff. It does not guess a service manager, write configuration,
+open ports, or rotate keys. See the [guided user flow](../user-docs/guide/remote-access.md#optional-hermes-secure-link).
+
 Enable Secure Link when a pairing-pinned unified route is desired. Its
 default listener is `https://<host>:9443`; Relay health is
 `GET /relay/health`, the authenticated Relay WebSocket is

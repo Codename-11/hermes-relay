@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import sys
@@ -241,16 +242,70 @@ class TestPressKey:
 
 class TestScreenshot:
     @responses.activate
-    def test_screenshot(self, bridge_url):
+    def test_screenshot_token_delivers_png_bytes(self, bridge_url):
+        png = b"\x89PNG\r\n\x1a\nreal-image-bytes"
         responses.add(
             responses.GET,
             f"{bridge_url}/screenshot",
-            json={"image": "aGVsbG8=", "width": 1080, "height": 1920},
+            json={"media": "MEDIA:hermes-relay://shot-token-123456"},
         )
-        with mock.patch("plugin.relay.client.register_media", return_value="shot-token"):
-            result = android_screenshot()
-        assert "Screenshot captured (1080x1920)" in result
-        assert "MEDIA:hermes-relay://shot-token" in result
+        responses.add(
+            responses.GET, f"{bridge_url}/media/shot-token-123456",
+            body=png, content_type="image/png",
+        )
+        result = android_screenshot()
+        assert result["_multimodal"] is True
+        assert "MEDIA:hermes-relay://shot-token-123456" in result["text_summary"]
+        assert result["content"][1]["image_url"]["url"] == (
+            "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+        )
+        via_registry = _HANDLERS["android_screenshot"]({})
+        assert via_registry["_multimodal"] is True
+
+    @responses.activate
+    def test_screenshot_legacy_inline(self, bridge_url):
+        png = b"\x89PNG\r\n\x1a\nold-image"
+        responses.add(responses.GET, f"{bridge_url}/screenshot",
+                      json={"data": {"image": base64.b64encode(png).decode("ascii")}})
+        result = android_screenshot()
+        assert result["content"][1]["image_url"]["url"].endswith(
+            base64.b64encode(png).decode("ascii")
+        )
+
+    @responses.activate
+    def test_sensitive_screenshot_registers_private_media(self, bridge_url):
+        png = b"\x89PNG\r\n\x1a\nsensitive"
+        responses.add(responses.GET, f"{bridge_url}/screenshot",
+                      json={"media": "MEDIA:hermes-relay://old-token-123456"})
+        responses.add(responses.GET, f"{bridge_url}/media/old-token-123456",
+                      body=png, content_type="image/png")
+        with mock.patch("plugin.relay.client.mark_media_sensitive", return_value=True) as mark:
+            result = android_screenshot(sensitive=True)
+        mark.assert_called_once_with("old-token-123456")
+        assert "MEDIA:hermes-relay://old-token-123456" in result["text_summary"]
+
+    @responses.activate
+    def test_sensitive_legacy_screenshot_registers_managed_file(self, bridge_url):
+        png = b"\x89PNG\r\n\x1a\nlegacy-private"
+        responses.add(responses.GET, f"{bridge_url}/screenshot",
+                      json={"image": base64.b64encode(png).decode("ascii")})
+        with mock.patch("plugin.relay.client.register_media", return_value="private-token") as register:
+            result = android_screenshot(sensitive=True)
+        path = register.call_args.args[0]
+        try:
+            assert Path(path).read_bytes() == png
+            assert register.call_args.kwargs["sensitive"] is True
+            assert register.call_args.kwargs["owned_file"] is True
+            assert "MEDIA:hermes-relay://private-token" in result["text_summary"]
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+    @responses.activate
+    def test_screenshot_rejects_invalid_token(self, bridge_url):
+        responses.add(responses.GET, f"{bridge_url}/screenshot",
+                      json={"media": "MEDIA:hermes-relay://../other"})
+        assert android_screenshot() == {"error": "Screenshot unavailable"}
+        assert len(responses.calls) == 1
 
 
 class TestScroll:

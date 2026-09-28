@@ -9,18 +9,23 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
+import androidx.annotation.MainThread
 import androidx.core.app.NotificationCompat
+import androidx.datastore.preferences.core.edit
 import com.hermesandroid.relay.MainActivity
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.data.setGatewayKeepAlive
+import com.hermesandroid.relay.data.KEY_GATEWAY_KEEP_ALIVE
+import com.hermesandroid.relay.data.relayDataStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 /**
  * Foreground service that holds the app process up so work the user already
@@ -48,16 +53,16 @@ import kotlinx.coroutines.launch
  *
  * The service's only job is to hold the process in the foreground. The socket
  * stays open because [GatewayChatClient.setKeepAliveInBackground] stops its
- * idle-close timer while retention is required. On task removal (user swipes the app
- * away) the ViewModel + socket die with the process, so the service stops
- * itself rather than leave a notification that lies about being connected.
+ * idle-close timer while retention is required. Task removal releases local
+ * foreground protection; it does not terminate server-owned work or assume
+ * that removing a task kills the application process.
  *
- * # Android 15 watchdog
+ * # Foreground-start obligation (Android 8+)
  *
- * On target SDK 35 any intent to a service that declares a foregroundServiceType
- * must call `startForeground` within 5s — so [onStartCommand] always does that
- * first, before branching on the action. Shutdown goes through [stop]
- * (`stopService`) to bypass [onStartCommand] entirely.
+ * An accepted startForegroundService must promote promptly, even if demand
+ * disappears before delivery. Never stopService a pending start: Android 12
+ * also treats teardown before promotion as a foreground-start failure.
+ * Main-thread demand is coalesced until onStartCommand acknowledges the start.
  */
 class GatewayKeepAliveService : Service() {
     companion object {
@@ -67,47 +72,76 @@ class GatewayKeepAliveService : Service() {
         const val NOTIFICATION_ID = 4713
         const val ACTION_STOP = "com.hermesandroid.relay.gateway.KEEPALIVE_STOP"
         private const val ACTION_REFRESH = "com.hermesandroid.relay.gateway.KEEPALIVE_REFRESH"
-        private const val EXTRA_PERSISTENT = "persistent"
-        private const val EXTRA_ACTIVE_TURNS = "active_turns"
-        private const val EXTRA_WAITING_SESSIONS = "waiting_sessions"
-        @Volatile private var runningInstance: GatewayKeepAliveService? = null
+        private const val EXTRA_START_TOKEN = "start_token"
+        private var runningInstance: GatewayKeepAliveService? = null
+        private var pendingStart: String? = null
+        private var desiredPersistent = false
+        private var desiredTurns = ActiveTurnKeepAliveRegistry.Snapshot()
+        private var wasForeground = false
+        private var taskRemoved = false
+        @Volatile private var persistentToken: String? = null
+        // Preference writes must survive service teardown, but never process death.
+        private val preferenceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+        @MainThread
         fun update(
             context: Context,
             persistent: Boolean,
             activeTurns: ActiveTurnKeepAliveRegistry.Snapshot,
+            appForeground: Boolean = true,
         ) {
-            if (!persistent && !activeTurns.required) {
-                stop(context)
+            checkMainThread()
+            if (appForeground && !wasForeground) taskRemoved = false
+            wasForeground = appForeground
+            if (persistent != desiredPersistent) {
+                persistentToken = if (persistent) UUID.randomUUID().toString() else null
+            }
+            desiredPersistent = persistent
+            desiredTurns = activeTurns
+            // Keep the accepted start alive until Android delivers its command.
+            if (pendingStart != null) return
+            runningInstance?.let {
+                it.reconcile()
                 return
             }
-            runningInstance?.let { service ->
-                service.applyState(persistent, activeTurns)
-                service.startForegroundNotification()
-                return
-            }
+            if (taskRemoved || !appForeground || (!persistent && !activeTurns.required)) return
+            val token = UUID.randomUUID().toString()
+            pendingStart = token
             val intent = Intent(context.applicationContext, GatewayKeepAliveService::class.java)
                 .setAction(ACTION_REFRESH)
-                .putExtra(EXTRA_PERSISTENT, persistent)
-                .putExtra(EXTRA_ACTIVE_TURNS, activeTurns.activeTurnCount)
-                .putExtra(EXTRA_WAITING_SESSIONS, activeTurns.waitingSessionCount)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.applicationContext.startForegroundService(intent)
-            } else {
-                context.applicationContext.startService(intent)
+                .putExtra(EXTRA_START_TOKEN, token)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.applicationContext.startForegroundService(intent)
+                } else {
+                    context.applicationContext.startService(intent)
+                }
+            } catch (e: Exception) {
+                pendingStart = null
+                Log.w(TAG, "Foreground service launch rejected; retaining server-owned work", e)
             }
         }
 
+        @MainThread
         fun stop(context: Context) {
-            // stopService() bypasses onStartCommand, so a "please shut down"
-            // never trips the Android 15 foreground-start watchdog.
-            context.applicationContext.stopService(
-                Intent(context.applicationContext, GatewayKeepAliveService::class.java),
-            )
+            update(context, false, ActiveTurnKeepAliveRegistry.Snapshot(), wasForeground)
+        }
+
+        private fun checkMainThread() {
+            check(Looper.myLooper() == Looper.getMainLooper())
+        }
+
+        internal fun resetForTest() {
+            runningInstance = null
+            pendingStart = null
+            desiredPersistent = false
+            desiredTurns = ActiveTurnKeepAliveRegistry.Snapshot()
+            persistentToken = null
+            wasForeground = false
+            taskRemoved = false
         }
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var persistent = false
     private var activeTurns = 0
     private var waitingSessions = 0
@@ -116,45 +150,63 @@ class GatewayKeepAliveService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        runningInstance = this
+        // No datastore, socket, coroutine or other owner work ahead of promotion.
+        // A cold stale notification action has no accepted foreground start.
+        if (pendingStart != null) {
+            applyState(desiredPersistent, desiredTurns)
+            startForegroundNotification()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val token = intent?.getStringExtra(EXTRA_START_TOKEN)
         if (intent?.action == ACTION_REFRESH) {
-            persistent = intent.getBooleanExtra(EXTRA_PERSISTENT, false)
-            activeTurns = intent.getIntExtra(EXTRA_ACTIVE_TURNS, 0).coerceAtLeast(0)
-            waitingSessions = intent.getIntExtra(EXTRA_WAITING_SESSIONS, 0)
-                .coerceIn(0, activeTurns)
-        }
-        startForegroundNotification()
-        if (intent?.action == ACTION_STOP) {
-            Log.i(TAG, "ACTION_STOP → user disabled continuous background connection")
-            scope.launch { runCatching { applicationContext.setGatewayKeepAlive(false) } }
-            persistent = false
-            if (activeTurns == 0) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            } else {
-                startForegroundNotification()
+            applyState(desiredPersistent, desiredTurns)
+            // Also promote reused service instances before acknowledging the start.
+            // A delivered start still owes promotion if process-local demand
+            // was lost or its token is stale. Never replay its old demand.
+            if (startForegroundNotification()) {
+                if (token == pendingStart) pendingStart = null
+                if (pendingStart == null) {
+                    runningInstance = this
+                    reconcile()
+                }
             }
-            return START_NOT_STICKY
+        } else if (intent?.action == ACTION_STOP &&
+            intent.data?.lastPathSegment == persistentToken && persistentToken != null
+        ) {
+            val actionToken = persistentToken
+            val context = applicationContext
+            preferenceScope.launch {
+                try {
+                    context.relayDataStore.edit { preferences ->
+                        // Recheck inside the serialized edit; an old action must
+                        // not undo a subsequent disable/re-enable cycle.
+                        if (persistentToken == actionToken) preferences[KEY_GATEWAY_KEEP_ALIVE] = false
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not disable persistent connection", e)
+                }
+            }
+            // The preference collector reconciles current active-turn demand
+            // after persistence. Never stop from the notification's old snapshot.
         }
+        if (runningInstance !== this && pendingStart == null) stopSelfResult(startId)
         return START_NOT_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        // The socket lives in the ViewModel, which dies when the task is
-        // removed — keeping the notification would be a lie. Stop cleanly.
         Log.i(TAG, "onTaskRemoved → app swiped away; stopping keep-alive")
-        ActiveTurnKeepAliveRegistry.releaseAll()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        taskRemoved = true
+        // Leases belong to chat owners. Keep them intact so a surviving
+        // process can protect unfinished turns again when the user returns.
+        // A queued new start still owes Android promotion before retirement.
+        if (pendingStart == null) retire()
     }
 
     override fun onDestroy() {
         if (runningInstance === this) runningInstance = null
-        scope.cancel()
         super.onDestroy()
     }
 
@@ -164,7 +216,23 @@ class GatewayKeepAliveService : Service() {
         // this foreground service (and its Gateway socket) alive. Re-post the
         // existing notification so its localized title/body follow the new
         // application resources without restarting either owner.
-        startForegroundNotification()
+        if (runningInstance === this) reconcile()
+    }
+
+    private fun reconcile() {
+        if (taskRemoved || (!desiredPersistent && !desiredTurns.required)) {
+            retire()
+        } else {
+            applyState(desiredPersistent, desiredTurns)
+            startForegroundNotification()
+        }
+    }
+
+    private fun retire() {
+        if (runningInstance === this) runningInstance = null
+        // Let Android remove the foreground notification with service teardown.
+        // Do not demote an instance while another start may be queued for it.
+        stopSelf()
     }
 
     private fun applyState(
@@ -181,10 +249,10 @@ class GatewayKeepAliveService : Service() {
     // satisfied. Suppress retained defensively — lint's ForegroundServiceType
     // check is finicky about correlating the runtime type arg with the manifest.
     @SuppressLint("ForegroundServiceType")
-    private fun startForegroundNotification() {
-        ensureChannel()
-        val notification = buildNotification()
+    private fun startForegroundNotification(): Boolean {
         try {
+            ensureChannel()
+            val notification = buildNotification()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                 startForeground(
                     NOTIFICATION_ID,
@@ -194,9 +262,12 @@ class GatewayKeepAliveService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
-        } catch (t: Throwable) {
-            Log.w(TAG, "startForeground failed — stopping keep-alive", t)
-            stopSelf()
+            return true
+        } catch (e: Exception) {
+            Log.w(TAG, "Foreground notification failed; retaining server-owned work", e)
+            pendingStart = null
+            retire()
+            return false
         }
     }
 
@@ -208,6 +279,7 @@ class GatewayKeepAliveService : Service() {
         val tapPending = PendingIntent.getActivity(this, 0, tapIntent, pendingFlags)
 
         val stopIntent = Intent(this, GatewayKeepAliveService::class.java).setAction(ACTION_STOP)
+            .setData(Uri.parse("hermes-relay://keep-alive/$persistentToken"))
         val stopPending = PendingIntent.getService(this, 1, stopIntent, pendingFlags)
 
         val (title, body) = when {

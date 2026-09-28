@@ -75,16 +75,25 @@ class RelayHttpClient(
     private val context: Context? = null,
     /** Dashboard-authenticated client for same-origin plugin ingress calls. */
     private val dashboardHttpClientProvider: ((String) -> OkHttpClient?)? = null,
+    /**
+     * Pinned-TLS client for Hermes Secure Link (`plugin_proxy`) relay URLs.
+     * Without this, HTTPS probes against the self-signed Secure Link cert fail
+     * with "Trust anchor for certification path not found" while the WSS path
+     * (which already uses buildPluginProxyClient) stays healthy — the UI then
+     * reports dashboard/relay surfaces offline despite an Active connection.
+     */
+    private val pluginProxyHttpClientProvider: ((String) -> OkHttpClient?)? = null,
 ) {
 
     private fun relayHttpBaseOrNull(url: String): String? =
         RelayEndpointContract.parseOrNull(url)?.httpBaseUrl
 
     private fun callClient(relayUrl: String): OkHttpClient =
-        if (isDashboardRelayIngressUrl(relayUrl)) {
-            dashboardHttpClientProvider?.invoke(relayUrl) ?: okHttpClient
-        } else {
-            okHttpClient
+        when {
+            isDashboardRelayIngressUrl(relayUrl) ->
+                dashboardHttpClientProvider?.invoke(relayUrl) ?: okHttpClient
+            else ->
+                pluginProxyHttpClientProvider?.invoke(relayUrl) ?: okHttpClient
         }
 
     companion object {
@@ -327,11 +336,11 @@ class RelayHttpClient(
                 Result.success(FetchedMedia(contentType, bytes, fileName, sensitive))
             }
         } catch (e: IOException) {
-            Log.w(TAG, "fetchMedia failed: ${e.message}")
-            Result.failure(e)
+            Log.w(TAG, "fetchMedia failed")
+            Result.failure(if (e is RelayMediaLimitException) e else IOException("Relay media request failed"))
         } catch (e: Exception) {
-            Log.w(TAG, "fetchMedia unexpected error: ${e.message}")
-            Result.failure(e)
+            Log.w(TAG, "fetchMedia unexpected error")
+            Result.failure(IOException("Relay media request failed"))
         }
     }
 
@@ -407,7 +416,7 @@ class RelayHttpClient(
                     val reason = when (response.code) {
                         401 -> "Unauthorized — re-pair with the relay"
                         403 -> "Path not allowed by relay sandbox"
-                        404 -> "File not found on relay: $path"
+                        404 -> "File not found on relay"
                         400 -> "Bad request — missing path"
                         in 500..599 -> "Relay error (HTTP ${response.code})"
                         else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
@@ -437,15 +446,15 @@ class RelayHttpClient(
                 Result.success(FetchedMedia(contentType, bytes, fileName, sensitive))
             }
         } catch (e: IOException) {
-            Log.w(TAG, "fetchMediaByPath failed for $path: ${e.message}")
+            Log.w(TAG, "fetchMediaByPath failed")
             if (e is RelayMediaLimitException) {
                 Result.failure(e)
             } else {
-                Result.failure(IOException("Relay unreachable: ${e.message ?: "IO error"}"))
+                Result.failure(IOException("Relay media request failed"))
             }
         } catch (e: Exception) {
-            Log.w(TAG, "fetchMediaByPath unexpected error for $path: ${e.message}")
-            Result.failure(e)
+            Log.w(TAG, "fetchMediaByPath unexpected error")
+            Result.failure(IOException("Relay media request failed"))
         }
     }
 
@@ -1360,7 +1369,16 @@ class RelayHttpClient(
                         IOException("Relay reports status=${status ?: "missing"} (expected 'ok')")
                     )
                 }
-                val version = (parsed["version"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                val surface = (parsed["surface"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                val versionRaw = (parsed["version"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+                // Secure Link /relay/health historically returned status=ok without
+                // version (surface=hermes_secure_proxy). Treat that as healthy so
+                // route probes don't spam "Missing version field".
+                val version = when {
+                    !versionRaw.isNullOrBlank() -> versionRaw
+                    surface.equals("hermes_secure_proxy", ignoreCase = true) -> "secure-link"
+                    else -> null
+                }
                 if (version.isNullOrBlank()) {
                     DiagnosticsLog.record(
                         category = DiagnosticCategory.Relay,

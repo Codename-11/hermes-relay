@@ -124,8 +124,15 @@ class EndpointResolver(
      * expected path for plain JVM tests.
      */
     private val context: Context? = null,
-    /** Route-aware client for pinned plugin proxy probes. */
-    private val clientForCandidate: ((EndpointCandidate) -> OkHttpClient?)? = null,
+    /**
+     * Route-aware client for pinned plugin proxy probes.
+     * Second arg is the concrete probe request URL when known — callers must
+     * pin only when *this* request targets the Secure Link authority. Using a
+     * pin client for every surface on a LAN candidate that merely *stores* a
+     * Secure Link relay URL breaks plain :9119/:8642 probes (authority guard
+     * throws IOException → "Unreachable - IOException").
+     */
+    private val clientForCandidate: ((EndpointCandidate, probeRequestUrl: String?) -> OkHttpClient?)? = null,
 ) {
 
     /**
@@ -556,7 +563,9 @@ class EndpointResolver(
                     )
                 }
             }
-        val fastClient = (clientForCandidate?.invoke(candidate) ?: httpClient).newBuilder()
+        val fastClient = (
+            clientForCandidate?.invoke(candidate, target.requestUrl) ?: httpClient
+            ).newBuilder()
             .connectTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             .readTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
             .writeTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)

@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -92,6 +93,37 @@ class AppearanceShapeScreenshotTest {
             }
         }
         compose.onRoot().captureRoboImage("build/ui-evidence/appearance-shape-balanced-sheet-dark.png")
+    }
+
+    @Test @Config(sdk = [34]) fun coldModelPickerLoadingSurface() {
+        compose.setContent {
+            HermesRelayTheme(themePreference = "dark") {
+                ModelPickerSheet(
+                    options = listOf(ChatInputPickerOption("Server default", null)),
+                    loading = true,
+                    onRefresh = {},
+                    onSelect = {},
+                    onDismiss = {},
+                )
+            }
+        }
+        compose.onNodeWithText("Loading provider catalog…").assertExists()
+        compose.onRoot().captureRoboImage("build/ui-evidence/model-picker-cold-loading.png")
+    }
+
+    @Test @Config(sdk = [34]) fun coldModelPickerEmptySurface() {
+        compose.setContent {
+            HermesRelayTheme(themePreference = "dark") {
+                ModelPickerSheet(
+                    options = listOf(ChatInputPickerOption("Server default", null)),
+                    onRefresh = {},
+                    onSelect = {},
+                    onDismiss = {},
+                )
+            }
+        }
+        compose.onNodeWithText("No models available. Try Refresh.").assertExists()
+        compose.onRoot().captureRoboImage("build/ui-evidence/model-picker-cold-empty.png")
     }
 
     private fun captureMode(shapeId: String, themeId: String, themePreference: String, fontScale: Float) {

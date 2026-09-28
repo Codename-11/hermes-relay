@@ -197,14 +197,33 @@ fun EndpointCandidate.isDashboardOnlyRoute(): Boolean =
 /** Dashboard-first URL identity for routing, diagnostics, and UI labels. */
 fun EndpointCandidate.primaryRouteUrl(): String? =
     dashboard?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        ?: proxyDashboardBaseUrlOrNull()
         ?: api?.url
         ?: relay?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
         ?: proxy?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
 
-/** Dashboard/Gateway identity only; Relay and broker transports are extensions. */
+/**
+ * Dashboard/Gateway identity only; Relay and broker transports are extensions.
+ *
+ * Hermes Secure Link stores the dashboard surface under [ProxyEndpoint.surfaces]
+ * (`…/dashboard`), not [DashboardEndpoint.url]. Without that hop, Routes/Access
+ * fall back to the saved plain `:9119` URL while Overview already rides the
+ * live Secure Link origin.
+ */
 fun EndpointCandidate.gatewayRouteUrl(): String? =
     dashboard?.url?.trim()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        ?: proxyDashboardBaseUrlOrNull()
         ?: api?.url?.let(Connection::deriveDefaultDashboardUrl)
+
+/** Secure Link dashboard base when the proxy advertises a dashboard surface. */
+internal fun EndpointCandidate.proxyDashboardBaseUrlOrNull(): String? {
+    val proxy = proxy ?: return null
+    if (!proxy.isValidPinnedProxy()) return null
+    val surfaces = proxy.surfaces.map { it.trim().lowercase() }.toSet()
+    if ("dashboard" !in surfaces) return null
+    val base = proxy.url.trim().trimEnd('/').takeIf { it.isNotBlank() } ?: return null
+    return "$base/dashboard"
+}
 
 /** Stable host/port identity without assuming that an API surface exists. */
 fun EndpointCandidate.routeAuthority(): String? {

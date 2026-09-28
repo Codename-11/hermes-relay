@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.components
 import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.ProxyEndpoint
 import com.hermesandroid.relay.data.RelayEndpoint
 import com.hermesandroid.relay.network.shared.EndpointSurface
 import org.junit.Assert.assertEquals
@@ -52,6 +53,51 @@ class GatewayRoutesAccessPresentationTest {
 
         val presentation = gatewayRoutePresentation(route, "")
 
+        assertEquals("http://192.168.1.20:9119", presentation.address)
+        assertEquals("LAN (HTTP)", presentation.label)
+    }
+
+    @Test
+    fun `Secure Link candidate presents pinned HTTPS dashboard not plain 9119`() {
+        val secureLink = EndpointCandidate(
+            role = "plugin_proxy",
+            priority = 0,
+            proxy = ProxyEndpoint(
+                url = "https://192.168.1.20:9443",
+                transportHint = "https",
+                pinSha256 = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                surfaces = listOf("relay", "api", "dashboard"),
+            ),
+        )
+
+        val presentation = gatewayRoutePresentation(
+            activeEndpoint = secureLink,
+            configuredDashboardUrl = "http://192.168.1.20:9119",
+        )
+
+        assertEquals("https://192.168.1.20:9443/dashboard", presentation.address)
+        assertEquals("Hermes Secure Link (HTTPS)", presentation.label)
+        assertFalse(presentation.publicHttpViolation)
+        assertTrue(presentation.configured)
+    }
+
+    @Test
+    fun `Secure Link without dashboard surface does not invent a Gateway address`() {
+        val relayOnlyProxy = EndpointCandidate(
+            role = "plugin_proxy",
+            proxy = ProxyEndpoint(
+                url = "https://192.168.1.20:9443",
+                pinSha256 = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                surfaces = listOf("relay"),
+            ),
+        )
+
+        val presentation = gatewayRoutePresentation(
+            activeEndpoint = relayOnlyProxy,
+            configuredDashboardUrl = "http://192.168.1.20:9119",
+        )
+
+        // No dashboard surface → fall back to the saved configured URL.
         assertEquals("http://192.168.1.20:9119", presentation.address)
         assertEquals("LAN (HTTP)", presentation.label)
     }

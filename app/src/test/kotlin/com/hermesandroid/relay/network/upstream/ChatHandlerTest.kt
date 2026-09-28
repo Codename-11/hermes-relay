@@ -183,6 +183,49 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun proactiveThreadMessage_dispatchesMediaAfterInsertionAndPreservesTextLines() {
+        val tokens = mutableListOf<Pair<String, String>>()
+        val paths = mutableListOf<Pair<String, String>>()
+        handler.onMediaAttachmentRequested = { id, token ->
+            assertTrue(handler.messages.value.any { it.id == id })
+            tokens += id to token
+        }
+        handler.onMediaBarePathRequested = { id, path -> paths += id to path }
+
+        val content = "Headline\nDetail one\n\nMEDIA:hermes-relay://tok123\nDetail two\nMEDIA:/tmp/report.png"
+        handler.addAgentThreadMessage(content, "push-1", "Agent")
+        handler.addAgentThreadMessage(content, "push-1", "Agent")
+
+        assertEquals(1, handler.messages.value.size)
+        assertEquals("Headline\nDetail one\n\nDetail two", handler.messages.value.single().content)
+        assertEquals(listOf("proactive-push-1" to "tok123"), tokens)
+        assertEquals(listOf("proactive-push-1" to "/tmp/report.png"), paths)
+    }
+
+    @Test
+    fun proactiveThreadMessage_keepsFencedAndProseMediaExamples() {
+        val tokens = mutableListOf<String>()
+        handler.onMediaAttachmentRequested = { _, token -> tokens += token }
+        val content = "Intro\n```\nMEDIA:hermes-relay://example123\n```\nExample: MEDIA:hermes-relay://example456"
+
+        handler.addAgentThreadMessage(content, "push-2", null)
+
+        assertEquals(content, handler.messages.value.single().content)
+        assertTrue(tokens.isEmpty())
+    }
+
+    @Test
+    fun proactiveThreadMessage_doesNotRemoveIdenticalMarkerInsideCodeFence() {
+        val tokens = mutableListOf<String>()
+        handler.onMediaAttachmentRequested = { _, token -> tokens += token }
+        val marker = "MEDIA:hermes-relay://same-token-123456"
+        handler.addAgentThreadMessage("Text\n```\n$marker\n```\n$marker", "push-3", null)
+
+        assertEquals("Text\n```\n$marker\n```", handler.messages.value.single().content)
+        assertEquals(listOf("same-token-123456"), tokens)
+    }
+
+    @Test
     fun onTextDelta_setsStreamingFlag() {
         handler.onTextDelta("assist-1", "delta")
 

@@ -1,0 +1,37 @@
+{
+  "name": "unsolicited_voice_completions",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260821_120000_fixture",
+  "profile": "default",
+  "contract_requirements": ["gateway.message_complete"],
+  "turns": [{
+    "steps": [
+      {"op": "set_running", "value": true},
+      {"op": "event", "type": "message.start"},
+      {"op": "persist", "messages": [{"id": 1, "role": "user", "content": "Start background work.", "timestamp": 1.0}, {"id": 2, "role": "assistant", "content": "Work started.", "timestamp": 2.0}]},
+      {"op": "set_running", "value": false},
+      {"op": "event", "type": "message.complete", "payload": {"text": "Work started.", "status": "complete"}},
+      {"op": "sleep", "milliseconds": 500},
+      {"op": "set_running", "value": true},
+      {"op": "event", "type": "message.start"},
+      {"op": "event", "type": "message.start"},
+      {"op": "event", "type": "message.delta", "payload": {"text": "Process finished."}},
+      {"op": "persist", "messages": [{"id": 1, "role": "user", "content": "Start background work.", "timestamp": 1.0}, {"id": 2, "role": "assistant", "content": "Work started.", "timestamp": 2.0}, {"id": 3, "role": "assistant", "content": "Process finished.", "timestamp": 3.0}]},
+      {"op": "set_running", "value": false},
+      {"op": "event", "type": "message.complete", "payload": {"text": "Process finished.", "status": "complete"}},
+      {"op": "event", "type": "message.complete", "payload": {"text": "Process finished.", "status": "complete"}},
+      {"op": "sleep", "milliseconds": 500},
+      {"op": "set_running", "value": true},
+      {"op": "event", "type": "message.start"},
+      {"op": "persist", "messages": [{"id": 1, "role": "user", "content": "Start background work.", "timestamp": 1.0}, {"id": 2, "role": "assistant", "content": "Work started.", "timestamp": 2.0}, {"id": 3, "role": "assistant", "content": "Process finished.", "timestamp": 3.0}, {"id": 4, "role": "assistant", "content": "Watch matched.", "timestamp": 4.0}]},
+      {"op": "set_running", "value": false},
+      {"op": "event", "type": "message.complete", "payload": {"text": "Watch matched.", "status": "complete"}},
+      {"op": "sleep", "milliseconds": 500},
+      {"op": "set_running", "value": true},
+      {"op": "event", "type": "message.start"},
+      {"op": "persist", "messages": [{"id": 1, "role": "user", "content": "Start background work.", "timestamp": 1.0}, {"id": 2, "role": "assistant", "content": "Work started.", "timestamp": 2.0}, {"id": 3, "role": "assistant", "content": "Process finished.", "timestamp": 3.0}, {"id": 4, "role": "assistant", "content": "Watch matched.", "timestamp": 4.0}, {"id": 5, "role": "assistant", "content": "Delegated work finished.", "timestamp": 5.0}]},
+      {"op": "set_running", "value": false},
+      {"op": "event", "type": "message.complete", "payload": {"text": "Delegated work finished.", "status": "complete"}}
+    ]
+  }]
+}

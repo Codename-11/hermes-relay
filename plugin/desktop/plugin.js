@@ -18,7 +18,7 @@ import {
   useQueryClient,
   useValue
 } from '@hermes/plugin-sdk'
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Fragment, jsx, jsxs } from 'react/jsx-runtime'
 
 const PLUGIN_ID = 'hermes-relay'
@@ -383,7 +383,111 @@ function createMedia(ctx) {
   }
 }
 
+export function secureLinkPreflightPath(address, port) {
+  const query = new URLSearchParams()
+  if (address.trim()) query.set('host', address.trim())
+  if (port) query.set('port', String(port))
+  return `/remote-access/secure-link/preflight?${query}`
+}
+
+export function secureLinkPairingBody(report) {
+  if (!report?.pairing_ready || !report.current_url) throw new Error('Check Secure Link before creating an invite.')
+  return { mode: 'auto', prefer: 'plugin_proxy', dashboard_url: `${report.current_url}/dashboard` }
+}
+
+export function createSecureLinkSetup(ctx) {
+  return function SecureLinkSetup({ status }) {
+    const current = (() => { try { return new URL(status?.url) } catch { return null } })()
+    const [address, setAddress] = useState(current?.hostname || '')
+    const [port, setPort] = useState(current?.port || '9443')
+    const [report, setReport] = useState(null)
+    const [busy, setBusy] = useState(false)
+    const [error, setError] = useState('')
+    const [invite, setInvite] = useState('')
+    const [copied, setCopied] = useState(false)
+    const sequence = useRef(0)
+    useEffect(() => {
+      sequence.current += 1
+      setReport(null); setInvite(''); setError(''); setBusy(false); setCopied(false)
+    }, [status?.url])
+    const edit = (setter, value) => {
+      sequence.current += 1
+      setter(value); setReport(null); setInvite(''); setError(''); setBusy(false); setCopied(false)
+    }
+    const check = async () => {
+      const request = ++sequence.current
+      setBusy('check'); setError(''); setInvite(''); setCopied(false)
+      try {
+        const value = await ctx.rest(secureLinkPreflightPath(address, port))
+        if (request !== sequence.current) return
+        if (value?.schema_version !== 1 || !Array.isArray(value.checks)) throw new Error('Update Relay to use Secure Link setup checks.')
+        setReport(value)
+        if (!address && value.host) setAddress(value.host)
+      } catch (e) { if (request === sequence.current) { setReport(null); setError(friendlyError(e)) } }
+      finally { if (request === sequence.current) setBusy(false) }
+    }
+    const pair = async () => {
+      const request = ++sequence.current
+      setBusy('pair'); setError(''); setInvite(''); setCopied(false)
+      try {
+        const value = await ctx.rest('/pairing', { method: 'POST', body: secureLinkPairingBody(report) })
+        if (request !== sequence.current) return
+        const payload = JSON.parse(value.qr_payload)
+        if (!payload.endpoints?.some(endpoint => endpoint.proxy?.url === report.current_url)) {
+          throw new Error('Secure Link changed. Check it again before pairing.')
+        }
+        setInvite(value.pairing_url || value.qr_payload)
+      } catch (e) { if (request === sequence.current) setError(friendlyError(e)) }
+      finally { if (request === sequence.current) setBusy(false) }
+    }
+    const environment = Object.entries(report?.environment || {}).map(([key, value]) => `${key}=${value}`).join('\n')
+    const copy = async value => {
+      if (await ctx.os.writeClipboard(value)) setCopied(true)
+      else setError('Clipboard unavailable. Select and copy the text below.')
+    }
+    return jsxs('div', {
+      className: 'mt-4 space-y-3 rounded-md border border-(--ui-stroke-tertiary) p-3',
+      children: [
+        jsx('h3', { className: 'text-sm font-semibold', children: 'Secure Link setup' }),
+        jsx('p', { className: 'text-xs text-(--ui-text-tertiary)', children: 'Read-only checks and startup instructions. No service is restarted and no certificate is created here.' }),
+        jsx('label', { htmlFor: 'relay-secure-host', className: 'text-xs', children: 'Address the phone will use' }),
+        jsx(Input, { id: 'relay-secure-host', value: address, placeholder: '192.168.1.20 or relay.example', onChange: event => edit(setAddress, event.target.value) }),
+        jsx('label', { htmlFor: 'relay-secure-port', className: 'text-xs', children: 'HTTPS port' }),
+        jsx(Input, { id: 'relay-secure-port', value: port, inputMode: 'numeric', onChange: event => edit(setPort, event.target.value) }),
+        jsx(Button, { size: 'sm', variant: 'outline', disabled: !!busy, onClick: check, children: busy === 'check' ? 'Checking…' : report || error ? 'Check again' : 'Check this server' }),
+        error ? jsx(ErrorState, { title: 'Secure Link check needed', description: error }) : null,
+        ...(report?.checks || []).map(item => jsx(Field, { label: `${item.label} · ${item.status}`, value: item.detail }, item.id)),
+        report ? jsx('p', { className: 'text-xs text-(--ui-text-tertiary)', children: `${report.connected_clients} Relay client(s) connected. ${report.restart_notice}` }) : null,
+        report?.ready_to_enable && !report.pairing_ready ? jsxs('div', { className: 'space-y-2', children: [
+          jsx(Field, { label: 'Proposed HTTPS origin', value: report.url }),
+          report.requires_repair ? jsx('p', { className: 'text-xs', children: 'The paired address or port changes. Existing clients must re-pair after activation; this check does not replace certificates.' }) : null,
+          jsx('p', { className: 'text-xs', children: 'Add these settings to the existing Relay environment, restart its owner, then check again. Do not start a second Relay.' }),
+          jsx('p', { className: 'text-xs text-(--ui-text-tertiary)', children: report.configuration_note }),
+          jsx('pre', { className: 'whitespace-pre-wrap break-all select-text text-xs', children: environment }),
+          jsx(Button, { size: 'sm', variant: 'outline', onClick: () => copy(environment), children: copied ? 'Copied' : 'Copy settings' })
+        ] }) : null,
+        report?.pairing_ready ? jsxs('div', { className: 'space-y-2', children: [
+          jsx(Field, { label: 'Listening', value: report.current_url }),
+          jsx('p', { className: 'text-xs', children: 'Create a fresh signed invite, then sign into Dashboard on the client. A healthy listener does not mean Chat is ready.' }),
+          jsx(Button, { size: 'sm', disabled: !!busy, onClick: pair, children: busy === 'pair' ? 'Creating invite…' : 'Create pairing invite' }),
+          jsx('p', { className: 'text-xs text-(--ui-text-tertiary)', children: 'For a scannable phone QR, use the Dashboard setup flow or hermes pair --png on the host.' })
+        ] }) : null,
+        invite ? jsxs('div', { className: 'space-y-2', children: [
+          jsx('p', { className: 'text-xs', children: 'One-time invite. Keep it private and pair before it expires.' }),
+          jsx('textarea', { readOnly: true, rows: 3, value: invite, 'aria-label': 'Secure Link pairing invite', className: 'w-full rounded border border-(--ui-stroke-tertiary) bg-transparent p-2 font-mono text-xs' }),
+          jsx(Button, { size: 'sm', onClick: () => copy(invite), children: copied ? 'Copied' : 'Copy invite' })
+        ] }) : null,
+        jsxs('details', { className: 'text-xs text-(--ui-text-tertiary)', children: [
+          jsx('summary', { children: 'Disable or recover' }),
+          jsx('p', { children: 'Set RELAY_SECURE_LINK_ENABLED=0 (or use --no-secure-link), then restart the existing Relay owner. Keep its certificate/key to reuse the same route. Certificate or address changes require re-pairing.' })
+        ] })
+      ]
+    })
+  }
+}
+
 function createRemoteAccess(ctx) {
+  const SecureLinkSetup = createSecureLinkSetup(ctx)
   return function RemoteAccess() {
     const t = usePluginI18n(PLUGIN_ID)
     const profile = useValue(host.state.profile)
@@ -422,7 +526,7 @@ function createRemoteAccess(ctx) {
       children: [
         jsx(SectionHeader, {
           title: t('remote.title'),
-          description: 'All changes require a labeled action and a second confirmation.'
+          description: 'Service changes require confirmation. Secure Link setup checks are read-only.'
         }),
         jsx(QueryState, {
           query: status,
@@ -438,6 +542,7 @@ function createRemoteAccess(ctx) {
                   jsx(Field, { label: 'Upstream helper', value: data.upstream_canonical ? 'available' : 'not detected' })
                 ]
               }),
+              jsx(SecureLinkSetup, { status: data.secure_link }, profile || 'default'),
               jsxs('div', {
                 className: 'mt-4 flex flex-wrap gap-2',
                 children: [

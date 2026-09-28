@@ -340,3 +340,47 @@ fn management_window_keeps_the_reviewed_compact_geometry() {
     assert!(ui.contains("hide().finally(() => setWindowVisible(true))"));
     assert!(ui.contains("document.visibilityState === 'visible'"));
 }
+
+#[test]
+fn secondary_windows_have_only_the_dismissal_permission() {
+    let config: serde_json::Value =
+        serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    let main: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+    let secondary: serde_json::Value =
+        serde_json::from_str(include_str!("../capabilities/secondary-windows.json")).unwrap();
+
+    let configured: std::collections::BTreeSet<&str> = config["app"]["windows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|window| window["label"].as_str().unwrap())
+        .collect();
+    let main_windows: std::collections::BTreeSet<&str> = main["windows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|label| label.as_str().unwrap())
+        .collect();
+    let secondary_windows: std::collections::BTreeSet<&str> = secondary["windows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|label| label.as_str().unwrap())
+        .collect();
+
+    assert_eq!(main_windows, ["main", "grant"].into_iter().collect());
+    assert_eq!(
+        secondary_windows,
+        ["notice", "evidence"].into_iter().collect()
+    );
+    assert_eq!(
+        configured,
+        main_windows.union(&secondary_windows).copied().collect()
+    );
+    assert!(main_windows.is_disjoint(&secondary_windows));
+    assert_eq!(
+        secondary["permissions"],
+        serde_json::json!(["core:window:allow-hide"])
+    );
+}

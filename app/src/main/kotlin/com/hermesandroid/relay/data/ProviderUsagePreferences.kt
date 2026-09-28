@@ -27,7 +27,7 @@ data class ProviderUsagePreferences(
     val visibleProviders: Set<String> = DEFAULT_VISIBLE_PROVIDERS,
 ) {
     companion object {
-        val DEFAULT_VISIBLE_PROVIDERS = setOf("openai-codex", "nous", "opencode-go")
+        val DEFAULT_VISIBLE_PROVIDERS = setOf("openai-codex", "nous", "opencode-go", "supergrok")
     }
 }
 

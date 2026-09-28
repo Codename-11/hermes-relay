@@ -226,6 +226,8 @@ class _MediaEntry:
     # at registration → False (not sensitive). See
     # docs/plans/2026-06-18-attachment-experience.md §C4.
     sensitive: bool = False
+    # Only relay-created upload files are deleted when this entry retires.
+    owned_file: bool = False
 
     @property
     def is_expired(self) -> bool:
@@ -531,16 +533,16 @@ class MediaRegistry:
         self.allowed_roots: list[str] = base_roots
 
         self._entries: "OrderedDict[str, _MediaEntry]" = OrderedDict()
+        self._owned_paths: set[str] = set()
         self._lock = asyncio.Lock()
 
         logger.info(
             "MediaRegistry initialized (max_entries=%d, ttl=%ds, "
-            "max_size=%d bytes, strict_sandbox=%s, roots=%s)",
+            "max_size=%d bytes, strict_sandbox=%s)",
             max_entries,
             ttl_seconds,
             max_size_bytes,
             strict_sandbox,
-            self.allowed_roots,
         )
 
     # ── Public API ──────────────────────────────────────────────────────
@@ -551,6 +553,7 @@ class MediaRegistry:
         content_type: str,
         file_name: str | None = None,
         sensitive: bool = False,
+        owned_file: bool = False,
     ) -> _MediaEntry:
         """Validate ``path`` and register a new media entry.
 
@@ -570,6 +573,13 @@ class MediaRegistry:
         real_path, size = validate_media_path(
             path, self.allowed_roots, self.max_size_bytes
         )
+        if owned_file and (
+            os.path.dirname(real_path) != os.path.realpath(tempfile.gettempdir())
+            or not os.path.basename(real_path).startswith(
+                ("hermes-relay-upload-", "android_screenshot_")
+            )
+        ):
+            raise MediaRegistrationError("managed upload path required")
 
         token = secrets.token_urlsafe(16)
         now = time.time()
@@ -583,24 +593,22 @@ class MediaRegistry:
             expires_at=now + self.ttl_seconds,
             last_accessed=now,
             sensitive=bool(sensitive),
+            owned_file=owned_file,
         )
 
         async with self._lock:
-            self._cleanup_locked()
             self._entries[token] = entry
+            if owned_file:
+                self._owned_paths.add(real_path)
+            self._cleanup_locked()
             # Evict oldest while over cap
             while len(self._entries) > self.max_entries:
-                evicted_token, evicted = self._entries.popitem(last=False)
-                logger.info(
-                    "MediaRegistry LRU eviction: token=%s... path=%s",
-                    evicted_token[:8],
-                    evicted.path,
-                )
+                _, evicted = self._entries.popitem(last=False)
+                self._retire_entry(evicted)
+                logger.info("MediaRegistry LRU eviction")
 
         logger.info(
-            "Registered media token=%s... path=%s size=%d type=%s sensitive=%s",
-            token[:8],
-            real_path,
+            "Registered media size=%d type=%s sensitive=%s",
             size,
             content_type,
             entry.sensitive,
@@ -622,9 +630,8 @@ class MediaRegistry:
                 return None
             if entry.is_expired:
                 del self._entries[token]
-                logger.info(
-                    "MediaRegistry expired on read: token=%s...", token[:8]
-                )
+                self._retire_entry(entry)
+                logger.info("MediaRegistry entry expired on read")
                 return None
             entry.last_accessed = time.time()
             self._entries.move_to_end(token)
@@ -634,6 +641,24 @@ class MediaRegistry:
         """Public wrapper around ``_cleanup_locked``. Returns pruned count."""
         async with self._lock:
             return self._cleanup_locked()
+
+    async def mark_sensitive(self, token: str) -> bool:
+        """Increase the sensitivity of an existing token without copying bytes."""
+        async with self._lock:
+            self._cleanup_locked()
+            entry = self._entries.get(token)
+            if entry is None:
+                return False
+            entry.sensitive = True
+            return True
+
+    async def close(self) -> None:
+        """Release relay-owned upload files on shutdown; leave caller files alone."""
+        async with self._lock:
+            self._entries.clear()
+            for path in list(self._owned_paths):
+                if self._unlink_owned_path(path):
+                    self._owned_paths.remove(path)
 
     async def list_all(
         self, *, include_expired: bool = False
@@ -698,7 +723,33 @@ class MediaRegistry:
         """Prune expired entries. Caller must hold ``self._lock``."""
         expired = [k for k, v in self._entries.items() if v.is_expired]
         for k in expired:
-            del self._entries[k]
+            self._retire_entry(self._entries.pop(k))
+        # A prior unlink can fail while another reader has the file open.
+        # Retry it on the periodic cleanup sweep after that reader exits.
+        for path in list(self._owned_paths):
+            if not any(entry.path == path for entry in self._entries.values()):
+                if self._unlink_owned_path(path):
+                    self._owned_paths.remove(path)
         if expired:
             logger.debug("MediaRegistry cleaned up %d expired entries", len(expired))
         return len(expired)
+
+    def _retire_entry(self, entry: _MediaEntry) -> None:
+        path = entry.path
+        if path not in self._owned_paths:
+            return
+        if any(active.path == path for active in self._entries.values()):
+            return
+        if self._unlink_owned_path(path):
+            self._owned_paths.remove(path)
+
+    @staticmethod
+    def _unlink_owned_path(path: str) -> bool:
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            logger.warning("Could not remove relay-owned media file")
+            return False
+        return True

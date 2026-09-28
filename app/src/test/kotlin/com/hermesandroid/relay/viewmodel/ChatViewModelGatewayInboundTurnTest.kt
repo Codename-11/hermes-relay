@@ -97,7 +97,13 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Before
     fun setUp() {
-        gatewayHarness = GatewayClientHarness()
+        gatewayHarness = GatewayClientHarness(advanceCallbacks = {
+            // Fixture waits on the test thread must allow paused Main continuations to open
+            // the socket and dispatch RPCs; blocking that looper creates artificial timeouts.
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                shadowOf(Looper.getMainLooper()).idleFor(20, TimeUnit.MILLISECONDS)
+            }
+        })
         apiServer = MockWebServer().apply {
             dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
@@ -165,6 +171,79 @@ class ChatViewModelGatewayInboundTurnTest {
             gatewayHarness.rpcLog.count { it.first == "model.options" },
         )
         assertEquals("gpt-5.6-sol", viewModel.gatewayCurrentModel.value)
+    }
+
+    @Test
+    fun coldPickerLoadCanBeForceRefreshedWithoutAChatTurnAndLateResultCannotEraseIt() {
+        assertTrue(viewModel.modelProviders.value.isEmpty())
+        gatewayHarness.suppressAckMethods += "model.options"
+
+        viewModel.refreshModelOptions(catalogOnly = true)
+        val coldRequest = gatewayHarness.awaitPendingAck()
+        assertEquals("model.options", coldRequest.method)
+        assertTrue(viewModel.modelOptionsLoading.value)
+        assertFalse(viewModel.modelOptionsRefreshing.value)
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "prompt.submit" || it.first == "session.create" })
+
+        viewModel.refreshModelOptions(refresh = true, catalogOnly = true)
+        val forcedRequest = gatewayHarness.awaitPendingAck()
+        assertEquals("model.options", forcedRequest.method)
+        assertTrue(viewModel.modelOptionsRefreshing.value)
+        assertEquals(
+            true,
+            (gatewayHarness.rpcLog.last { it.first == "model.options" }.second["refresh"] as? JsonPrimitive)?.content == "true",
+        )
+        gatewayHarness.releaseAck(forcedRequest, buildJsonObject {
+            put("providers", buildJsonArray {
+                add(buildJsonObject {
+                    put("slug", "openai")
+                    put("name", "OpenAI")
+                    put("models", buildJsonArray { add(JsonPrimitive("gpt-5.5")) })
+                    put("authenticated", true)
+                })
+            })
+            put("model", "gpt-5.5")
+            put("provider", "openai")
+        })
+        awaitCondition { viewModel.modelProviders.value.singleOrNull()?.models == listOf("gpt-5.5") }
+        assertFalse(viewModel.modelOptionsLoading.value)
+        assertFalse(viewModel.modelOptionsRefreshing.value)
+
+        gatewayHarness.releaseAck(coldRequest, buildJsonObject {
+            put("providers", buildJsonArray {})
+        })
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+        assertEquals(listOf("gpt-5.5"), viewModel.modelProviders.value.single().models)
+
+        viewModel.refreshModelOptions(refresh = true, catalogOnly = true)
+        val repeatedRefresh = gatewayHarness.awaitPendingAck()
+        assertEquals("model.options", repeatedRefresh.method)
+        gatewayHarness.releaseAck(repeatedRefresh, buildJsonObject {
+            put("providers", buildJsonArray {})
+        })
+        awaitCondition { !viewModel.modelOptionsLoading.value }
+        assertTrue(viewModel.modelProviders.value.isEmpty())
+    }
+
+    @Test
+    fun retiredConnectionCannotPublishLateColdCatalogOrKeepItsLoadingState() {
+        gatewayHarness.suppressAckMethods += "model.options"
+        viewModel.refreshModelOptions(catalogOnly = true)
+        val staleRequest = gatewayHarness.awaitPendingAck()
+        assertTrue(viewModel.modelOptionsLoading.value)
+
+        viewModel.updateGatewayClient(null)
+        assertFalse(viewModel.modelOptionsLoading.value)
+        gatewayHarness.releaseAck(staleRequest, buildJsonObject {
+            put("providers", buildJsonArray {
+                add(buildJsonObject {
+                    put("slug", "stale")
+                    put("models", buildJsonArray { add(JsonPrimitive("wrong-model")) })
+                })
+            })
+        })
+        shadowOf(Looper.getMainLooper()).idleFor(100, TimeUnit.MILLISECONDS)
+        assertTrue(viewModel.modelProviders.value.isEmpty())
     }
 
     @Test
@@ -642,7 +721,7 @@ class ChatViewModelGatewayInboundTurnTest {
         awaitCondition { loadedProfile == owner.name }
         assertEquals(owner.name, viewModel.conversationBinding.value.profileName)
         assertEquals(owner.name, gatewayClient.sessionProfileProvider())
-        assertEquals("X-bot", handler.activeAgentName)
+        assertEquals("x-bot", handler.activeAgentName)
         assertEquals("x-bot-session", persistedSession)
 
         viewModel.switchProfileContext(
@@ -694,7 +773,7 @@ class ChatViewModelGatewayInboundTurnTest {
         )
         assertEquals(alpha, selected)
         assertEquals(alpha.name, viewModel.conversationBinding.value.profileName)
-        assertEquals("Alpha", handler.activeAgentName)
+        assertEquals("alpha", handler.activeAgentName)
 
         viewModel.openProfileSession(
             profileName = beta.name,
@@ -706,7 +785,7 @@ class ChatViewModelGatewayInboundTurnTest {
         assertEquals(beta, selected)
         assertEquals(beta.name, viewModel.conversationBinding.value.profileName)
         assertEquals(beta.name, gatewayClient.sessionProfileProvider())
-        assertEquals("Beta", handler.activeAgentName)
+        assertEquals("beta", handler.activeAgentName)
         assertEquals("beta-session", handler.currentSessionId.value)
     }
 
@@ -900,6 +979,8 @@ class ChatViewModelGatewayInboundTurnTest {
         directoryResult.complete(Result.success(emptyList()))
 
         awaitCondition { gatewayHarness.ticketMints.get() == mintsBefore + 1 }
+        // Ticket completion resumes prewarm on the paused main looper before the WS can open.
+        awaitCondition { gatewayHarness.serverSockets.isNotEmpty() }
         gatewayHarness.awaitServerSocket()
     }
 
@@ -1462,7 +1543,7 @@ class ChatViewModelGatewayInboundTurnTest {
         assertEquals("default", viewModel.conversationBinding.value.profileName)
         assertEquals("default", gatewayClient.sessionProfileProvider())
         assertEquals(null, handler.currentSessionId.value)
-        assertEquals("Hermes", handler.activeAgentName)
+        assertEquals("default", handler.activeAgentName)
         assertEquals("cleared", persistedSession)
     }
 
@@ -2000,7 +2081,7 @@ class ChatViewModelGatewayInboundTurnTest {
             })
         }
         viewModel.setDashboardConfigLoader { Result.success(config) }
-        shadowOf(Looper.getMainLooper()).idle()
+        awaitCondition { viewModel.personalityNames.value == listOf("private-a") }
         assertEquals(listOf("private-a"), viewModel.personalityNames.value)
 
         viewModel.resetConnectionCatalogs()
@@ -2013,6 +2094,12 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Test
     fun unsolicitedGatewayCompletionAppearsAsOneAssistantTurnAndSettles() {
+        val spoken = mutableListOf<String>()
+        var admissions = 0
+        viewModel.gatewayInboundSpeechReceiver = {
+            admissions++
+            { text -> spoken.add(text); Unit }
+        }
         // Upstream's process-completion poller currently emits this adjacent
         // duplicate pair; it must still create exactly one placeholder.
         serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
@@ -2048,6 +2135,13 @@ class ChatViewModelGatewayInboundTurnTest {
         }
         assertFalse(handler.messages.value.single().isStreaming)
         assertFalse(gatewayHarness.rpcLog.any { it.first == "prompt.submit" })
+        assertEquals(1, admissions)
+        assertEquals(listOf(BACKGROUND_ANSWER), spoken)
+        serverWs.send(gatewayHarness.eventFrame("message.complete", buildJsonObject {
+            put("text", BACKGROUND_ANSWER)
+        }, "live-resumed"))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(listOf(BACKGROUND_ANSWER), spoken)
     }
 
     @Test
@@ -2075,6 +2169,42 @@ class ChatViewModelGatewayInboundTurnTest {
         assertTrue(activeOwner.isStreaming)
         assertEquals(MessageRole.ASSISTANT, activeOwner.role)
         assertTrue(activeOwner.content.isBlank())
+    }
+
+    @Test
+    fun inboundSpeechIgnoresForeignUnscopedAndFailedTurns() {
+        val spoken = mutableListOf<String>()
+        viewModel.gatewayInboundSpeechReceiver = { { text -> spoken.add(text); Unit } }
+        for (session in listOf("foreign-session", null)) {
+            serverWs.send(gatewayHarness.eventFrame("message.start", null, session))
+            serverWs.send(gatewayHarness.eventFrame("message.complete", buildJsonObject {
+                put("text", "Foreign answer")
+            }, session))
+        }
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(gatewayHarness.eventFrame("message.complete", buildJsonObject {
+            put("status", "error")
+            put("text", "Failed answer")
+            put("error", "Synthetic failure")
+        }, "live-resumed"))
+        awaitCondition { handler.messages.value.any { "Error" in it.badges } }
+        assertTrue(spoken.isEmpty())
+    }
+
+    @Test
+    fun inboundSpeechUsesFinalAnswerAfterToolInterim() {
+        val spoken = mutableListOf<String>()
+        viewModel.gatewayInboundSpeechReceiver = { { text -> spoken.add(text); Unit } }
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(gatewayHarness.eventFrame("message.interim", buildJsonObject {
+            put("text", "Checking the completed work.")
+            put("already_streamed", false)
+        }, "live-resumed"))
+        serverWs.send(gatewayHarness.eventFrame("message.complete", buildJsonObject {
+            put("text", "The completed work passed.")
+        }, "live-resumed"))
+        awaitCondition { spoken.isNotEmpty() }
+        assertEquals(listOf("The completed work passed."), spoken)
     }
 
     @Test
@@ -2499,6 +2629,12 @@ class ChatViewModelGatewayInboundTurnTest {
         gatewayHarness.awaitRpc("approval.respond")
         awaitCondition { !handler.isStreaming.value }
         awaitCondition { checkpointStore.checkpoint == null }
+        // The RPC log records request receipt, before its acknowledgement is
+        // dispatched back to Main. Checkpoint retirement is independent too.
+        awaitCondition {
+            handler.messages.value.singleOrNull { it.id == "ask-approval-1" }
+                ?.cardDispatches?.isNotEmpty() == true
+        }
         assertEquals(
             "once",
             handler.messages.value.single { it.id == "ask-approval-1" }

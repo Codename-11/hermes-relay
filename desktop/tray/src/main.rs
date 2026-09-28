@@ -2514,10 +2514,14 @@ mod app {
                 label,
                 event: WindowEvent::CloseRequested { api, .. },
                 ..
-            } if label == "main" => {
+            } if matches!(label.as_str(), "main" | "grant" | "notice" | "evidence") => {
                 api.prevent_close();
-                if let Some(window) = handle.get_webview_window("main") {
-                    request_main_hide(&window);
+                if let Some(window) = handle.get_webview_window(&label) {
+                    if label == "main" {
+                        request_main_hide(&window);
+                    } else {
+                        let _ = window.hide();
+                    }
                 }
             }
             _ => {}

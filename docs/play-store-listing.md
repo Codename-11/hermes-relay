@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.17.0 - Voice over other apps and clearer conversations
+v1.18.0 - Current Hermes prompts and safer connections
 
-Use optional voice controls over other apps, with clear permission setup and an immediate Stop action. Answer Clarify batches one question at a time, with progress preserved across reconnects. Enjoy cleaner chat cards, recognizable profile names, and context previews that show what your connection supports. Phone control remains sideload-only.
+Current Hermes Clarify, approval, sudo, and secret prompts work again. Set up Gateways with clearer authentication checks and explicit HTTP consent. Secure Link protects paired routes, Standard Voice speaks live background completions, and a wide Sessions sidebar improves navigation. Voice fallback now shows what happened; audible basic-TTS pauses remain under investigation.
 ```
 ## Category
 
@@ -200,6 +200,12 @@ entry points in its description and demonstration:
 The Play build declares `SYSTEM_ALERT_WINDOW` only for explicitly user-started Voice Overlay. It never enables Device Control. Overlay permission and notification refusal retain in-app voice.
 
 The Play build does **not** declare `FOREGROUND_SERVICE_MEDIA_PROJECTION` or the Device Control accessibility/bridge services — those are sideload-only.
+
+#### Reviewer recording retention
+
+Android 1.17.0 (57) recordings cover [microphone use: Voice Overlay and local wake](https://hermes-relay.dev/play-review/android-microphone-fgs-v1.17.0.mp4) and the [connection foreground service](https://hermes-relay.dev/play-review/android-connection-service-v1.17.0.mp4). The [reviewer page](https://hermes-relay.dev/play-review/) records their emulator scope and limitations. These versioned recordings do not certify later builds.
+
+Keep Console-linked footage in persistent media storage so website deployments preserve the links. Before updating a declaration, verify public access, `video/mp4` content type, byte-range playback and published checksums.
 
 ### Data safety
 

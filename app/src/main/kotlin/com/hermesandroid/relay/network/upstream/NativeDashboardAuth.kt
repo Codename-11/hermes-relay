@@ -22,6 +22,7 @@ import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLException
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -29,6 +30,7 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.Authenticator
+import okhttp3.Call
 import okhttp3.Dns
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
@@ -104,17 +106,22 @@ class NativeDashboardAuthorization internal constructor(
     internal val state: String,
     internal val generation: Long,
     internal val usesAlternateOrigin: Boolean,
-)
+) {
+    internal val consumed = AtomicBoolean(false)
+}
 
 class NativeDashboardAuthClient(
     baseUrl: String,
     private val tokenStore: NativeDashboardTokenStore,
     private val client: OkHttpClient = OkHttpClient.Builder()
         .dns(RetryingNativeAuthDns())
+        .followRedirects(false)
+        .followSslRedirects(false)
         .retryOnConnectionFailure(false)
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(30, TimeUnit.SECONDS)
         .build(),
     private val json: Json = Json { ignoreUnknownKeys = true },
     private val random: SecureRandom = SecureRandom(),
@@ -199,16 +206,19 @@ class NativeDashboardAuthClient(
         callbackTarget: String,
         commitAllowed: () -> Boolean = { true },
         onValidated: () -> Unit = {},
+        onCallStarted: (Call) -> Unit = {},
     ): NativeDashboardTokens {
-        val callback = callbackTarget.toHttpUrlOrNull()
-            ?: "http://127.0.0.1$callbackTarget".toHttpUrlOrNull()
+        if (callbackTarget.substringBefore('?') != CALLBACK_PATH || '#' in callbackTarget) {
+            throw NativeDashboardCallbackException("Native sign-in callback path was not accepted")
+        }
+        val callback = "http://127.0.0.1$callbackTarget".toHttpUrlOrNull()
             ?: throw NativeDashboardCallbackException("Native sign-in callback was malformed")
         if (callback.host != "127.0.0.1" || callback.encodedPath != CALLBACK_PATH) {
             throw NativeDashboardCallbackException(
                 "Native sign-in callback did not use the expected loopback path",
             )
         }
-        if (callback.queryParameter("state") != authorization.state) {
+        if (callback.queryParameterValues("state") != listOf(authorization.state)) {
             throw NativeDashboardCallbackException("Native sign-in callback state did not match")
         }
         callback.queryParameter("error")?.let {
@@ -217,11 +227,18 @@ class NativeDashboardAuthClient(
                 retryable = false,
             )
         }
+        if (callback.queryParameterValues("code").size != 1) {
+            throw NativeDashboardCallbackException("Native sign-in callback code was ambiguous")
+        }
         val code = callback.queryParameter("code")
             ?.takeIf(String::isNotBlank)
             ?: throw NativeDashboardCallbackException(
                 "Native sign-in callback did not include an authorization code",
             )
+        if (!commitAllowed() ||
+            NativeTokenRefreshCoordinator.currentGeneration(tokenStore.coordinationKey) != authorization.generation ||
+            !authorization.consumed.compareAndSet(false, true)
+        ) throw NativeDashboardInactiveAuthorizationException()
         runCatching(onValidated)
         val payload = NativeTokenExchange(code = code, codeVerifier = authorization.verifier)
         return postTokens(
@@ -230,6 +247,7 @@ class NativeDashboardAuthClient(
             clearOnAuthFailure = false,
             expectedGeneration = authorization.generation,
             commitAllowed = commitAllowed,
+            onCallStarted = onCallStarted,
         )
     }
 
@@ -283,6 +301,7 @@ class NativeDashboardAuthClient(
         clearOnAuthFailure: Boolean,
         expectedGeneration: Long,
         commitAllowed: () -> Boolean = { true },
+        onCallStarted: (Call) -> Unit = {},
     ): NativeDashboardTokens {
         val url = "$baseUrl$path".toHttpUrlOrNull()
             ?: throw IOException("Dashboard URL is not a valid http(s) address")
@@ -290,7 +309,7 @@ class NativeDashboardAuthClient(
             .url(url)
             .post(payload.toRequestBody(JSON_MEDIA))
             .build()
-        val tokens = client.newCall(request).execute().use { response ->
+        val tokens = client.newCall(request).also(onCallStarted).execute().use { response ->
             if (!response.isSuccessful) {
                 if (clearOnAuthFailure && (response.code == 400 || response.code == 401)) {
                     tokenStore.clear()
@@ -390,14 +409,27 @@ internal class NativeDashboardCallbackException(
     val retryable: Boolean = true,
 ) : IOException(message)
 
-internal fun isNativeDashboardTransportEligible(baseUrl: String): Boolean {
+internal fun isNativeDashboardTransportEligible(
+    baseUrl: String,
+    httpConsentOrigins: Set<String> = emptySet(),
+): Boolean {
     val url = baseUrl.trim().trimEnd('/').toHttpUrlOrNull() ?: return false
     return url.scheme == "https" ||
         (
             url.scheme == "http" &&
-                (url.host == "127.0.0.1" || isPrivateNetworkLiteral(url.host))
+                (url.host == "127.0.0.1" || isPrivateNetworkLiteral(url.host) ||
+                    com.hermesandroid.relay.data.dashboardHttpConsentMatches(baseUrl, httpConsentOrigins))
             )
 }
+
+/** A cleartext exception never authorizes following a request onto another origin. */
+internal fun dashboardClientWithHttpConsent(
+    client: OkHttpClient,
+    baseUrl: String,
+    httpConsentOrigins: Set<String>,
+): OkHttpClient = if (com.hermesandroid.relay.data.dashboardHttpConsentMatches(baseUrl, httpConsentOrigins)) {
+    client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+} else client
 
 /**
  * Hermes already permits explicitly configured HTTP dashboard sessions on
@@ -674,6 +706,8 @@ internal class NativeDashboardInactiveAuthorizationException :
     IOException("Dashboard sign-in is no longer active")
 
 internal fun nativeDashboardSignInFailureStage(error: Throwable): String {
+    if (error.firstCauseOfType<NativeDashboardSignInTimeoutException>() != null) return "callback_timeout"
+    if (error.firstCauseOfType<java.net.BindException>() != null) return "callback_bind_failed"
     error.firstCauseOfType<NativeDashboardCallbackException>()?.let { return "callback_error" }
     error.firstCauseOfType<NativeDashboardAuthHttpException>()?.let {
         return "token_http_${it.statusCode}"

@@ -51,7 +51,9 @@ class FakeCuaSession {
     return {
       snapshot_id: `s0000000${this.snapshotNumber}`,
       elements: [{ element_index: 7, element_token: 'e1234abcd', role: 'button', label: 'Seven' }],
-      tree_markdown: '[7] button Seven'
+      tree_markdown: '[7] button Seven',
+      screenshot_base64: 'aW1hZ2U=',
+      screenshot_mime_type: 'image/png'
     }
   }
 
@@ -140,9 +142,13 @@ test('CUA handlers issue a Hermes token, execute once, and verify with a fresh s
       ok: boolean
       backend: string
       elements: Array<{ snapshot_token: string; element_token?: string }>
+      screenshot_base64: string
+      screenshot_mime_type: string
     }
     assert.equal(observed.ok, true)
     assert.equal(observed.backend, 'cua_driver')
+    assert.equal(observed.screenshot_base64, 'aW1hZ2U=')
+    assert.equal(observed.screenshot_mime_type, 'image/png')
     assert.equal(observed.elements[0]!.element_token, undefined)
     assert.match(observed.elements[0]!.snapshot_token, /^hermes-snapshot-/)
 

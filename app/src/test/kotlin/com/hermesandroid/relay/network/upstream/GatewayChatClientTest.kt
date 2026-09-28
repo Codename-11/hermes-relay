@@ -5,6 +5,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -20,6 +22,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -51,6 +54,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 class GatewayClientHarness(
     autoRespond: Boolean = true,
+    private val advanceCallbacks: () -> Unit = {},
 ) {
     val json = Json { ignoreUnknownKeys = true }
     val server = MockWebServer()
@@ -58,6 +62,7 @@ class GatewayClientHarness(
     val serverSockets = LinkedBlockingQueue<WebSocket>()
     private val allServerSockets = ConcurrentLinkedQueue<WebSocket>()
     val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
+    val serverResponses = LinkedBlockingQueue<JsonObject>()
     var failTicketMint = false
     var malformedTicketMint = false
     val transientTicketFailures = AtomicInteger(0)
@@ -76,6 +81,7 @@ class GatewayClientHarness(
     var recoveryRunning = false
     @Volatile
     var recoveryClarify: JsonObject? = null
+    var recoveryOpenRequests: JsonArray? = null
 
     @Volatile
     var recoveryAssistant = ""
@@ -270,7 +276,8 @@ class GatewayClientHarness(
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             val frame = json.parseToJsonElement(text) as JsonObject
-            val method = (frame["method"] as? JsonPrimitive)?.contentOrNull ?: return
+            val method = (frame["method"] as? JsonPrimitive)?.contentOrNull
+            if (method == null) { serverResponses.offer(frame); return }
             val id = (frame["id"] as? JsonPrimitive)?.contentOrNull ?: return
             val params = frame["params"] as? JsonObject ?: JsonObject(emptyMap())
             rpcLog.add(method to params)
@@ -418,6 +425,11 @@ class GatewayClientHarness(
                     })))
                 }
                 "file.attach" -> fileAttachPayload
+                "session.events.since" -> buildJsonObject { put("open_requests", recoveryOpenRequests ?: JsonArray(emptyList())) }
+                "clarify.lock" -> buildJsonObject {
+                    put("status", askResponseStatus)
+                    put("remaining", JsonArray(if (params["question_id"] == JsonPrimitive("b")) emptyList() else listOf(JsonPrimitive("b"))))
+                }
                 "clarify.respond", "sudo.respond", "secret.respond" ->
                     buildJsonObject { put("status", askResponseStatus) }
                 "approval.respond" -> buildJsonObject { put("resolved", approvalResolved) }
@@ -589,6 +601,7 @@ class GatewayClientHarness(
 
     private fun recoveryPayload(sessionId: String, requestedProfile: String? = null): JsonObject = buildJsonObject {
         recoveryClarify?.let { put("pending_clarify", it) }
+        recoveryOpenRequests?.let { put("open_requests", it) }
         put("session_id", sessionId)
         put("running", recoveryRunning)
         put("status", if (recoveryRunning) "streaming" else "idle")
@@ -676,8 +689,14 @@ class GatewayClientHarness(
             })
         }.toString()
 
-    fun awaitServerSocket(): WebSocket =
-        serverSockets.poll(5, TimeUnit.SECONDS) ?: error("server socket never opened")
+    fun awaitServerSocket(): WebSocket {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (System.nanoTime() < deadline) {
+            advanceCallbacks()
+            serverSockets.poll(20, TimeUnit.MILLISECONDS)?.let { return it }
+        }
+        error("server socket never opened")
+    }
 
     fun sendGatewayReady(webSocket: WebSocket) {
         webSocket.send(eventFrame("gateway.ready", null, null))
@@ -686,14 +705,21 @@ class GatewayClientHarness(
     fun awaitRpc(method: String): JsonObject {
         val deadline = System.currentTimeMillis() + 5_000
         while (System.currentTimeMillis() < deadline) {
+            advanceCallbacks()
             rpcLog.firstOrNull { it.first == method }?.let { return it.second }
             Thread.sleep(20)
         }
         error("rpc $method never arrived; saw ${rpcLog.map { it.first }}")
     }
 
-    fun awaitPendingAck(): PendingAck =
-        pendingAcks.poll(5, TimeUnit.SECONDS) ?: error("suppressed ack never captured")
+    fun awaitPendingAck(): PendingAck {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (System.nanoTime() < deadline) {
+            advanceCallbacks()
+            pendingAcks.poll(20, TimeUnit.MILLISECONDS)?.let { return it }
+        }
+        error("suppressed ack never captured")
+    }
 
     /** Release a withheld ack with a caller-supplied or generic success result. */
     fun releaseAck(
@@ -713,6 +739,7 @@ class GatewayClientHarness(
     fun awaitRpcCount(method: String, count: Int): List<JsonObject> {
         val deadline = System.currentTimeMillis() + 5_000
         while (System.currentTimeMillis() < deadline) {
+            advanceCallbacks()
             val seen = rpcLog.filter { it.first == method }
             if (seen.size >= count) return seen.map { it.second }
             Thread.sleep(20)
@@ -739,6 +766,263 @@ class GatewayClientHarness(
 }
 
 class GatewayChatClientTest {
+    private fun nativeRequest(ws: WebSocket, id: JsonPrimitive, method: String, params: String) {
+        ws.send(buildJsonObject {
+            put("jsonrpc", "2.0"); put("id", id); put("method", method)
+            put("params", harness.json.parseToJsonElement(params))
+        }.toString())
+    }
+
+    @Test
+    fun `native asks use typed ids and method specific result fields without legacy RPCs`() = runBlocking {
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        assertEquals(true, harness.awaitRpc("client.capabilities")["server_requests"]?.jsonPrimitive?.booleanOrNull)
+        assertTrue(harness.rpcLog.indexOfFirst { it.first == "client.capabilities" } < harness.rpcLog.indexOfFirst { it.first == "session.create" })
+        val cases = listOf(
+            Triple("clarify", JsonPrimitive("srq-single"), "answer"),
+            Triple("sudo", JsonPrimitive(41), "value"),
+            Triple("secret", JsonPrimitive("41"), "value"),
+            Triple("approval", JsonPrimitive("srq-approval"), "choice"),
+        )
+        for ((method, id, field) in cases) {
+            nativeRequest(ws, id, method, """{"session_id":"live-1","question":"Choose?","prompt":"Secret?","env_var":"TOKEN","command":"echo safe","choices":["once","deny"]}""")
+            awaitCondition { r.interactions.any { it.requestId == "jsonrpc:$id" } }
+            val ask = r.interactions.last()
+            assertTrue(ask.serverRequest)
+            client.respondAsk(ask, if (method == "approval") "deny" else "fixture-value").getOrThrow()
+            val response = harness.serverResponses.poll(5, TimeUnit.SECONDS) ?: error("no response")
+            assertEquals(id, response["id"])
+            assertEquals(setOf(field), (response["result"] as JsonObject).keys)
+            assertTrue(client.respondAsk(ask, "duplicate").isFailure)
+            nativeRequest(ws, id, method, """{"session_id":"live-1","question":"Choose?"}""")
+        }
+        assertTrue(harness.rpcLog.none { it.first.endsWith(".respond") })
+        ws.send(harness.eventFrame("gateway.ready", null, null))
+        harness.awaitRpc("client.capabilities")
+        assertEquals(1, harness.rpcLog.count { it.first == "client.capabilities" })
+    }
+
+    @Test
+    fun `unsupported and foreign requests return errors without exposing a card`() = runBlocking {
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        for (method in listOf("display.install.sudo", "vault.unlock_prompt", "vault.save_login", "vault.code", "preview.read", "preview.act", "terminal.read", "window.read", "tour", "future.method")) {
+            nativeRequest(ws, JsonPrimitive(method), method, """{"session_id":"live-1"}""")
+            val response = harness.serverResponses.poll(5, TimeUnit.SECONDS) ?: error("no error for $method")
+            assertEquals(-32601, (response["error"] as JsonObject)["code"]?.jsonPrimitive?.intOrNull)
+        }
+        nativeRequest(ws, JsonPrimitive(100), "clarify", """{"session_id":"foreign","question":"No"}""")
+        val foreign = harness.serverResponses.poll(5, TimeUnit.SECONDS) ?: error("no ownership error")
+        assertEquals(-32602, (foreign["error"] as JsonObject)["code"]?.jsonPrimitive?.intOrNull)
+        assertTrue(r.interactions.isEmpty())
+    }
+
+    @Test
+    fun `native cancellation requires exact session method and id`() = runBlocking {
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        nativeRequest(ws, JsonPrimitive("srq-cancel"), "secret", """{"session_id":"live-1","prompt":"Value?","env_var":"TOKEN"}""")
+        awaitCondition { r.interactions.size == 1 }
+        ws.send(harness.eventFrame("request.cancel", buildJsonObject { put("id", "srq-cancel"); put("method", "secret"); put("reason", "timeout") }, "foreign"))
+        ws.send(harness.eventFrame("request.cancel", buildJsonObject { put("id", "srq-cancel"); put("method", "secret"); put("reason", "timeout") }, "live-1"))
+        awaitCondition { r.interactionExpiries.size == 1 }
+        assertTrue(client.respondAsk(r.interactions.single(), "late-secret").isFailure)
+        assertTrue(harness.serverResponses.isEmpty())
+    }
+
+    @Test
+    fun `reconnect snapshot cannot expire a later live request`() = verifyReplayOrdering(cancel = false)
+
+    @Test
+    fun `cancellation received before snapshot consumption prevents replay resurrection`() = verifyReplayOrdering(cancel = true)
+
+    private fun verifyReplayOrdering(cancel: Boolean): Unit = runBlocking {
+        client.shutdown()
+        val dispatcher = java.util.concurrent.Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        scope = CoroutineScope(SupervisorJob() + dispatcher)
+        client = buildClient()
+        val release = CountDownLatch(1)
+        try {
+            val r = Recorder()
+            client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+            val ws = harness.awaitServerSocket()
+            harness.awaitRpc("prompt.submit")
+            nativeRequest(ws, JsonPrimitive("srq-old"), "clarify", """{"session_id":"live-1","question":"Old?"}""")
+            awaitCondition { r.interactions.size == 1 }
+            harness.recoveryRunning = true
+            harness.suppressAckMethods += "session.activate"
+            ws.close(1001, "fixture gap")
+            val replacement = harness.awaitServerSocket()
+            val activation = harness.awaitPendingAck()
+            val blocked = CountDownLatch(1)
+            scope.launch { blocked.countDown(); release.await(5, TimeUnit.SECONDS) }
+            assertTrue(blocked.await(5, TimeUnit.SECONDS))
+            harness.releaseAck(activation, buildJsonObject {
+                put("session_id", "live-1"); put("running", true)
+                put("open_requests", buildJsonArray {
+                    if (cancel) add(harness.json.parseToJsonElement("""{"id":"srq-old","method":"clarify","params":{"session_id":"live-1","question":"Old?"}}"""))
+                })
+            })
+            if (cancel) {
+                replacement.send(harness.eventFrame("request.cancel", buildJsonObject {
+                    put("id", "srq-old"); put("method", "clarify"); put("reason", "timeout")
+                }, "live-1"))
+                awaitCondition { r.interactionExpiries.size == 1 }
+            } else {
+                // Withdraw old first, then a new question arrives after the snapshot's wire boundary.
+                replacement.send(harness.eventFrame("request.cancel", buildJsonObject {
+                    put("id", "srq-old"); put("method", "clarify"); put("reason", "resolved")
+                }, "live-1"))
+                nativeRequest(replacement, JsonPrimitive("srq-new"), "clarify", """{"session_id":"live-1","question":"New?"}""")
+                awaitCondition { r.interactions.size == 2 }
+            }
+            release.countDown()
+            // A subsequent operation on the single client dispatcher runs after snapshot processing.
+            val drained = CountDownLatch(1)
+            scope.launch { drained.countDown() }
+            assertTrue(drained.await(5, TimeUnit.SECONDS))
+            if (cancel) {
+                assertEquals(1, r.interactions.size)
+                assertTrue(client.respondAsk(r.interactions.single(), "late").isFailure)
+            } else {
+                assertEquals(1, r.interactionExpiries.size)
+                client.respondAsk(r.interactions.last(), "new answer").getOrThrow()
+            }
+        } finally {
+            release.countDown()
+            client.shutdown()
+            dispatcher.close()
+        }
+    }
+
+    @Test
+    fun `another client response is retired from read only open request snapshot`() = runBlocking {
+        val r = Recorder()
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        nativeRequest(ws, JsonPrimitive("srq-other-client"), "clarify", """{"session_id":"live-1","question":"Choose?"}""")
+        awaitCondition { r.interactions.size == 1 }
+        ws.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "Answered elsewhere") }, "live-1"))
+        harness.awaitRpc("session.events.since")
+        awaitCondition { r.interactionExpiries.size == 1 }
+        assertTrue(client.respondAsk(r.interactions.single(), "late").isFailure)
+        assertTrue(harness.rpcLog.none { it.first == "session.activate" || it.first == "session.interrupt" })
+        assertTrue(harness.serverResponses.isEmpty())
+    }
+
+    @Test
+    fun `native request waits for server deadline even after ordinary progress events`(): Unit = runBlocking {
+        rebuildClient(turnIdleTimeoutMs = 500L)
+        val r = Recorder()
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        nativeRequest(ws, JsonPrimitive("srq-wait"), "clarify", """{"session_id":"live-1","question":"Choose?"}""")
+        awaitCondition { r.interactions.size == 1 }
+        ws.send(harness.eventFrame("status.update", buildJsonObject { put("text", "Waiting") }, "live-1"))
+        delay(800)
+        assertTrue(client.hasActiveTurn())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+        client.respondAsk(r.interactions.single(), "answer").getOrThrow()
+        ws.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "Done") }, "live-1"))
+    }
+
+    @Test
+    fun `numeric server request cannot consume an ordinary response with the same id`() = runBlocking {
+        val r = Recorder()
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        harness.suppressAckMethods += "profiles.list"
+        val profiles = async(Dispatchers.IO) { client.listProfiles() }
+        val pending = harness.awaitPendingAck()
+        nativeRequest(ws, JsonPrimitive(pending.id), "clarify", """{"session_id":"live-1","question":"Choose?"}""")
+        awaitCondition { r.interactions.size == 1 }
+        assertFalse(profiles.isCompleted)
+        client.respondAsk(r.interactions.single(), "answer").getOrThrow()
+        harness.releaseAck(pending, buildJsonObject { put("profiles", JsonArray(emptyList())) })
+        assertTrue(profiles.await().isSuccess)
+        assertEquals(JsonPrimitive(pending.id), harness.serverResponses.poll(5, TimeUnit.SECONDS)?.get("id"))
+    }
+
+    @Test
+    fun `native approval queue keeps each decision and rejects answers after session clear`() = runBlocking {
+        val r = Recorder()
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        val params = """{"session_id":"live-1","command":"echo fixture","choices":["once","deny"]}"""
+        nativeRequest(ws, JsonPrimitive("srq-first"), "approval", params)
+        nativeRequest(ws, JsonPrimitive("srq-second"), "approval", params)
+        awaitCondition { r.interactions.size == 1 }
+        client.respondAsk(r.interactions.single(), "deny").getOrThrow()
+        client.advanceServerRequests()
+        awaitCondition { r.interactions.size == 2 }
+        assertEquals("jsonrpc:\"srq-second\"", r.interactions.last().requestId)
+        client.clearSession()
+        assertTrue(client.respondAsk(r.interactions.last(), "once").isFailure)
+        assertEquals(1, harness.serverResponses.size)
+    }
+
+    @Test
+    fun `native reconnect renegotiates before activation and restores partial locks`() = runBlocking {
+        val r = Recorder()
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        val params = """{"session_id":"live-1","questions":[{"qid":"a","question":"A?"},{"qid":"b","question":"B?"}]}"""
+        nativeRequest(ws, JsonPrimitive("srq-replay"), "clarify", params)
+        awaitCondition { r.interactions.size == 1 }
+        val oldAsk = r.interactions.single()
+        harness.recoveryRunning = true
+        harness.suppressAckMethods += "session.activate"
+        ws.close(1001, "fixture gap")
+        harness.awaitServerSocket()
+        val activation = harness.awaitPendingAck()
+        assertEquals("session.activate", activation.method)
+        assertEquals(2, harness.rpcLog.count { it.first == "client.capabilities" })
+        assertTrue(client.respondAsk(oldAsk, "retry", "a").isFailure)
+        harness.releaseAck(activation, buildJsonObject {
+            put("session_id", "live-1"); put("running", true)
+            put("open_requests", buildJsonArray { add(buildJsonObject {
+                put("id", "srq-replay"); put("method", "clarify")
+                put("params", JsonObject((harness.json.parseToJsonElement(params) as JsonObject) +
+                    ("answers" to buildJsonObject { put("a", "accepted") })))
+            }) })
+        })
+        awaitCondition { r.interactions.last().answers["a"] == "accepted" }
+        assertTrue(client.respondAsk(r.interactions.last(), "overwrite", "a").isFailure)
+        assertTrue(harness.rpcLog.none { it.first == "clarify.respond" })
+    }
+
+    @Test
+    fun `native batch locks individual questions and cancellation omits answers`() = runBlocking {
+        val r = Recorder()
+        client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        nativeRequest(ws, JsonPrimitive("srq-batch"), "clarify", """{"session_id":"live-1","questions":[{"qid":"a","question":"A?"},{"qid":"b","question":"B?"}]}""")
+        awaitCondition { r.interactions.size == 1 }
+        val ask = r.interactions.single()
+        client.respondAsk(ask, "first", "a").getOrThrow()
+        val lock = harness.awaitRpc("clarify.lock")
+        assertEquals(JsonPrimitive("srq-batch"), lock["request_id"])
+        assertEquals("a", lock["question_id"]?.jsonPrimitive?.content)
+        assertTrue(client.respondAsk(ask, "overwrite", "a").isFailure)
+        client.respondAsk(ask, "", cancel = true).getOrThrow()
+        val cancel = harness.serverResponses.poll(5, TimeUnit.SECONDS) ?: error("no cancel")
+        assertEquals(JsonObject(emptyMap()), cancel["result"])
+        assertTrue(harness.rpcLog.none { it.first == "clarify.respond" })
+    }
+
     @Test
     fun `personality completion parser keeps configured names and excludes none`() {
         val result = buildJsonObject {
@@ -2088,6 +2372,85 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `active route retarget replaces socket policy and preserves the live turn`() {
+        val replacement = GatewayClientHarness()
+        fun dashboardFor(target: GatewayClientHarness): DashboardApiClient = DashboardApiClient(
+            baseUrl = target.server.url("/").toString(),
+            okHttpClient = OkHttpClient.Builder().addInterceptor { chain ->
+                if (chain.request().url.port != target.server.port) {
+                    throw java.io.IOException("transport belongs to another paired authority")
+                }
+                chain.proceed(chain.request())
+            }.build(),
+        )
+        client.shutdown()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        client = GatewayChatClient(
+            initialDashboardClient = dashboardFor(harness),
+            scope = scope,
+            callbackDispatcher = { it() },
+            midTurnRejoinWindowMs = 3_000L,
+        )
+        try {
+            val recorder = Recorder()
+            client.sendTurn(null, "follow the route", null, recorder.callbacks) {
+                recorder.preflightFailures += it
+            }
+            harness.awaitServerSocket()
+            harness.awaitRpc("prompt.submit")
+            client.retarget(dashboardFor(replacement))
+            val moved = replacement.awaitServerSocket()
+            val activation = replacement.awaitRpc("session.activate")
+            assertEquals("live-1", activation["session_id"]?.jsonPrimitive?.content)
+            moved.send(replacement.eventFrame("message.complete", buildJsonObject {
+                put("text", "Finished on the new route")
+            }, "live-1"))
+            assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
+            assertTrue(recorder.errors.isEmpty())
+            assertTrue(recorder.preflightFailures.isEmpty())
+            assertFalse(replacement.rpcLog.any { it.first == "prompt.submit" })
+        } finally {
+            client.shutdown()
+            replacement.shutdown()
+        }
+    }
+
+    @Test
+    fun `retarget during ticket mint discards old ticket before socket upgrade`() = runBlocking {
+        val replacement = GatewayClientHarness()
+        val mintStarted = CountDownLatch(1)
+        val releaseMint = CountDownLatch(1)
+        val oldTransport = OkHttpClient.Builder().addInterceptor { chain ->
+            val response = chain.proceed(chain.request())
+            if (chain.request().url.encodedPath.endsWith("/ws-ticket")) {
+                mintStarted.countDown()
+                check(releaseMint.await(5, TimeUnit.SECONDS))
+            }
+            response
+        }.build()
+        client.shutdown()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        client = GatewayChatClient(
+            initialDashboardClient = DashboardApiClient(harness.server.url("/").toString(), oldTransport),
+            scope = scope,
+            callbackDispatcher = { it() },
+        )
+        try {
+            val pending = async(Dispatchers.IO) { client.prewarmAwait("stored-session") }
+            assertTrue(mintStarted.await(3, TimeUnit.SECONDS))
+            client.retarget(DashboardApiClient(replacement.server.url("/").toString()))
+            releaseMint.countDown()
+            assertTrue(pending.await())
+            assertEquals(1, replacement.ticketMints.get())
+            assertTrue("old ticket must never dial a socket", harness.serverSockets.isEmpty())
+        } finally {
+            releaseMint.countDown()
+            client.shutdown()
+            replacement.shutdown()
+        }
+    }
+
+    @Test
     fun `each connect attempt mints a fresh ticket`() {
         val r1 = Recorder()
         client.sendTurn(null, "one", null, r1.callbacks) { r1.preflightFailures += it }
@@ -2281,6 +2644,11 @@ class GatewayChatClientTest {
 
     @Test
     fun `lost submit ack before first event rejoins without duplicate fallback`() {
+        // Resume a failed RPC inline on the reader thread, before onSocketDown can continue.
+        // Recovery ownership must already be visible at that exact boundary.
+        client.shutdown()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        client = buildClient()
         harness.suppressAckMethods += "prompt.submit"
         val r = Recorder()
         client.sendTurn(null, "only once", null, r.callbacks) { r.preflightFailures += it }

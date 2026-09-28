@@ -62,9 +62,17 @@ class GatewayExternalFixtureInstrumentedTest {
     private var gatewayScope: CoroutineScope? = null
     private var gatewayClient: GatewayChatClient? = null
     private var viewModel: ChatViewModel? = null
+    private var voiceViewModel: VoiceViewModel? = null
+    private var voicePlayer: com.hermesandroid.relay.audio.VoicePlayer? = null
+    private var voiceSfx: com.hermesandroid.relay.audio.VoiceSfxPlayer? = null
 
     @After
     fun tearDown() {
+        compose.runOnUiThread {
+            voiceViewModel?.exitVoiceMode()
+            voicePlayer?.release()
+            voiceSfx?.release()
+        }
         viewModel?.updateGatewayClient(null)
         gatewayClient?.shutdown()
         gatewayScope?.cancel()
@@ -247,6 +255,80 @@ class GatewayExternalFixtureInstrumentedTest {
         assertEquals(2, evidence.rpcCount("prompt.submit"))
         assertEquals(1, evidence.rpcCount("session.interrupt"))
         assertEquals(0, evidence.rpcCount("session.redirect"))
+        assertEquals("gateway", vm.streamingEndpoint)
+    }
+
+    @Test
+    fun unsolicitedVoiceCompletions_surviveActivityPauseWithoutHistorySpeech() {
+        val base = InstrumentationRegistry.getArguments().getString(ARG_FIXTURE_BASE_URL)
+            ?.trim()?.trimEnd('/')
+        assumeTrue("Pass the unsolicited_voice_completions fixture URL", !base.isNullOrBlank())
+        requireNotNull(base)
+        val http = OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build()
+        assertEquals("unsolicited_voice_completions", readFixtureJson(http, "$base/__fixture__/state")["scenario"]?.jsonString())
+        val dashboard = DashboardApiClient(base, http)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { gatewayScope = it }
+        val gateway = GatewayChatClient(
+            initialDashboardClient = dashboard, okHttpClient = http,
+            callbackDispatcher = { Handler(Looper.getMainLooper()).post(it) }, scope = scope,
+        ).also { gatewayClient = it }
+        val handler = ChatHandler().also { it.setSessionId(STORED_SESSION_ID) }
+        val spoken = java.util.concurrent.CopyOnWriteArrayList<String>()
+        lateinit var vm: ChatViewModel
+        compose.runOnUiThread {
+            val app = compose.activity.application
+            vm = ChatViewModel().also {
+                it.initialize(null, handler)
+                it.streamingEndpoint = "gateway"
+                it.setProfileMessageLoaderWithMode { profile, id, mode ->
+                    dashboard.getSessionMessages(id, profile, mode)
+                }
+                it.updateGatewayClient(gateway)
+                viewModel = it
+            }
+            val audio = object : com.hermesandroid.relay.network.shared.VoiceAudioClient {
+                override val route = com.hermesandroid.relay.data.VoiceAudioRoute.Standard
+                override suspend fun transcribe(audioFile: java.io.File) = Result.success("")
+                override suspend fun synthesize(text: String): Result<java.io.File> {
+                    spoken.add(text)
+                    // A short silent WAV exercises the production play/drain path without a provider.
+                    val pcm = ByteArray(3200)
+                    val header = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                        .put("RIFF".toByteArray()).putInt(36 + pcm.size).put("WAVEfmt ".toByteArray())
+                        .putInt(16).putShort(1).putShort(1).putInt(16000).putInt(32000)
+                        .putShort(2).putShort(16).put("data".toByteArray()).putInt(pcm.size).array()
+                    val file = java.io.File.createTempFile("fixture-voice", ".wav", app.cacheDir)
+                    file.writeBytes(header + pcm)
+                    return Result.success(file)
+                }
+            }
+            val player = com.hermesandroid.relay.audio.VoicePlayer(app).also { voicePlayer = it }
+            val sfx = com.hermesandroid.relay.audio.VoiceSfxPlayer(app).also { voiceSfx = it }
+            voiceViewModel = VoiceViewModel(app).also {
+                it.initialize(
+                    voiceClient = com.hermesandroid.relay.network.relay.RelayVoiceClient(app, http, { null }, { null }),
+                    voiceAudioClient = audio, chatViewModel = vm,
+                    recorder = com.hermesandroid.relay.audio.VoiceRecorder(app, scope),
+                    player = player, sfxPlayer = sfx,
+                )
+                it.enterVoiceMode()
+            }
+        }
+        compose.setContent {
+            val messages by vm.messages.collectAsStateWithLifecycle()
+            Text(messages.joinToString("\n") { it.content }, Modifier.testTag("voice-fixture-history"))
+        }
+        assertTrue(runBlocking { gateway.prewarmAwait(STORED_SESSION_ID) })
+        compose.runOnUiThread { vm.sendMessage("Start background work.") }
+        compose.waitUntil(10_000) { handler.messages.value.any { it.content == "Work started." } }
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.STARTED)
+        compose.waitUntil(15_000) { spoken.size == 3 }
+        compose.activityRule.scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
+        compose.runOnUiThread { voiceViewModel?.onAppResumed() }
+        compose.waitForIdle()
+        assertEquals(listOf("Process finished.", "Watch matched.", "Delegated work finished."), spoken.toList())
+        assertEquals(1, readFixtureJson(http, "$base/__fixture__/evidence")["entries"].let { it as JsonArray }.rpcCount("prompt.submit"))
+        assertTrue(handler.messages.value.any { it.content == "Delegated work finished." })
         assertEquals("gateway", vm.streamingEndpoint)
     }
 

@@ -6,6 +6,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConnectionCapabilitiesTest {
+    @Test
+    fun emptySetupPlaceholderRetainsGatewayIntentBeforeAddressIsSaved() {
+        val placeholder = connection(dashboardUrl = null, apiServerUrl = "", relayUrl = "")
+        assertEquals(SessionTransport.GATEWAY, placeholder.automaticChatTransport)
+        assertEquals(SessionTransport.GATEWAY, placeholder.chatTransportForPreference("auto"))
+        assertEquals(SessionTransport.SSE, placeholder.chatTransportForPreference("completions"))
+        assertEquals(SessionTransport.SSE, placeholder.copy(apiServerUrl = "http://127.0.0.1:8642").automaticChatTransport)
+        assertEquals(SessionTransport.GATEWAY, placeholder.copy(dashboardUrl = "https://gateway.example.test").automaticChatTransport)
+    }
 
     @Test
     fun dashboardOnlyConnection_exposesStandardHermesCapabilities() {

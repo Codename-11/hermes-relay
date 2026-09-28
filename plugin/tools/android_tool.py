@@ -366,7 +366,7 @@ def _get(path: str, *, device: Optional[str] = None) -> dict:
     return r.json()
 
 
-def _dispatch_android_tool(func: Callable[..., str], args: Optional[dict] = None) -> str:
+def _dispatch_android_tool(func: Callable[..., Any], args: Optional[dict] = None) -> Any:
     """Call an android_* function with optional per-call device scoping.
 
     Public tool schemas can include a ``device`` selector without forcing every
@@ -665,79 +665,71 @@ def android_press_key(key: str) -> str:
         return json.dumps({"error": str(e)})
 
 
-def android_screenshot(sensitive: bool = False) -> str:
+def android_screenshot(sensitive: bool = False) -> dict:
     """
     Capture a screenshot of the Android screen.
 
-    Writes the JPEG to a temp file, then asks the local Hermes-Relay to
-    mint an opaque token via ``POST /media/register``. On success the
-    tool returns ``MEDIA:hermes-relay://<token>`` in its output, which
-    the phone parses and fetches via bearer-auth'd ``GET /media/<token>``
-    on the same relay.
+    Resolve the phone's relay media token with the same bridge bearer, then
+    attach the bounded image bytes as a native multimodal tool result. The
+    marker remains in the text summary for phone-side media delivery.
 
-    Set ``sensitive=True`` when the captured screen may contain private or
-    NSFW content (e.g. a lock screen, a 2FA code, a banking app). The bit is
-    transported verbatim to the phone via the relay's ``X-Media-Sensitive``
-    header so the client can blur the image per the user's setting — the
-    relay performs no classification of its own. Defaults to ``False``.
+    ``sensitive=True`` marks a current relay token private in place, preserving
+    the phone-side blur header without duplicating the image. Legacy inline
+    images use a managed temporary file that the relay retires with its token.
 
-    Fallback: if the relay is not running (or rejects the registration),
-    the tool returns the old ``MEDIA:/tmp/<path>`` form and logs a warning.
-    The phone's parser renders a "relay offline" placeholder for that case.
+    Older Android builds that return inline base64 are also accepted.
     """
     try:
         import base64
-        import logging
-        import tempfile
+        try:
+            from .android_screenshot_media import resolve_screenshot
+        except ImportError:  # direct-script compatibility
+            from android_screenshot_media import resolve_screenshot
 
         data = _get("/screenshot")
-        if "error" in data:
-            return json.dumps(data)
+        img_bytes, mime, marker = resolve_screenshot(data, _bridge_request, _timeout())
+        if sensitive:
+            if marker:
+                from ..relay.client import mark_media_sensitive
 
-        # Extract base64 image from the nested result
-        result = data.get("data", data)
-        img_b64 = result.get("image", "")
-        if not img_b64:
-            return json.dumps({"error": "No image data returned"})
+                if not mark_media_sensitive(marker.removeprefix("MEDIA:hermes-relay://")):
+                    return {"error": "Sensitive screenshot registration failed"}
+            else:
+                import os
+                import tempfile
+                from ..relay.client import register_media
 
-        # Save to temp file
-        img_bytes = base64.b64decode(img_b64)
-        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", prefix="android_screenshot_", delete=False)
-        tmp.write(img_bytes)
-        tmp.close()
-
-        w = result.get("width", "?")
-        h = result.get("height", "?")
-
-        # Try to register with the local relay so the phone gets an opaque
-        # token instead of a literal path. Relay must be running on the
-        # same host (it's loopback-only). Any failure falls back to the
-        # bare path form — the phone shows a placeholder in that case.
-        try:
-            from ..relay.client import register_media
-            token = register_media(
-                tmp.name,
-                "image/jpeg",
-                file_name="screenshot.jpg",
-                sensitive=bool(sensitive),
-            )
-        except Exception:
-            logging.getLogger("hermes_relay.tools").warning(
-                "register_media raised; falling back to bare MEDIA: path",
-                exc_info=True,
-            )
-            token = None
-
-        if token:
-            return f"Screenshot captured ({w}x{h})\nMEDIA:hermes-relay://{token}"
-
-        logging.getLogger("hermes_relay.tools").warning(
-            "relay not reachable; falling back to bare MEDIA: path "
-            "(phone will show a placeholder)"
-        )
-        return f"Screenshot captured ({w}x{h})\nMEDIA:{tmp.name}"
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+                with tempfile.NamedTemporaryFile(
+                    suffix=".png" if mime == "image/png" else ".jpg",
+                    prefix="android_screenshot_", delete=False,
+                ) as tmp:
+                    tmp.write(img_bytes)
+                    path = tmp.name
+                token = None
+                try:
+                    token = register_media(path, mime, sensitive=True, owned_file=True)
+                finally:
+                    if not token:
+                        os.unlink(path)
+                if not token:
+                    return {"error": "Sensitive screenshot registration failed"}
+                marker = f"MEDIA:hermes-relay://{token}"
+        image_url = f"data:{mime};base64,{base64.b64encode(img_bytes).decode('ascii')}"
+        summary = "Screenshot captured; image attached for visual inspection."
+        if marker:
+            summary += f"\n{marker}"
+        if sensitive:
+            summary += "\nSensitive screen: handle privately."
+        return {
+            "_multimodal": True,
+            "content": [
+                {"type": "text", "text": summary},
+                {"type": "image_url", "image_url": {"url": image_url}},
+            ],
+            "text_summary": summary,
+        }
+    except Exception:
+        return {"error": "Screenshot unavailable"}
 
 
 def android_scroll(direction: str, node_id: Optional[str] = None) -> str:
@@ -1672,7 +1664,13 @@ def android_macro(steps: list, name: str = "unnamed", pace_ms: int = 500) -> str
             except (json.JSONDecodeError, TypeError):
                 parsed = {"raw": raw}
         elif isinstance(raw, dict):
-            parsed = raw
+            # A screenshot's native image belongs in the direct tool result;
+            # retaining its data URL in every macro trace would multiply
+            # memory use and expose pixels to text-only callers.
+            parsed = (
+                {"summary": raw.get("text_summary", "Screenshot captured")}
+                if raw.get("_multimodal") else raw
+            )
         else:
             parsed = {"raw": raw}
 
@@ -2062,7 +2060,7 @@ _SCHEMAS = {
     },
     "android_screenshot": {
         "name": "android_screenshot",
-        "description": "Take a screenshot of the current Android screen. Returns base64 PNG. Use when the accessibility tree is missing context or the screen uses canvas/game rendering.",
+        "description": "Take a screenshot of the current Android screen. Attaches a bounded image for visual inspection. Use when the accessibility tree is missing context or the screen uses canvas/game rendering.",
         "parameters": {
             "type": "object",
             "properties": {

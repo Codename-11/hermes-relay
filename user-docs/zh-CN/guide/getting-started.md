@@ -33,6 +33,10 @@ Hermes Dashboard 已可访问，请使用[快速开始](./quick-start)。
 
 ## 2. 让手机可以访问 Hermes
 
+Dashboard 必须能从手机访问并配置身份验证提供方。`hermes dashboard` 默认仅监听回环地址。请先设置登录，再使用 `hermes dashboard --host 0.0.0.0 --port 9119 --no-open` 启动直接 LAN/VPN 访问。转发到回环的反向代理需要外部 `dashboard.public_url` 和身份验证提供方。不要把内部会话令牌复制到手机。
+
+选择 **Hermes nearby** 或 **Remote gateway**。建议使用 HTTPS。其他 HTTP 地址需要为此连接的准确主机和端口明确接受风险。应用不会检测或强制执行 VPN 保护；VPN 断开时的凭据和对话泄露风险由用户承担。更换源后需要重新同意并登录。取消会保留原地址，历史和草稿也会保留。Direct API 必须明确选择，不会自动接管 Gateway 聊天。仅凭 401 不能确定 `dashboard.public_url` 配置错误。
+
 Android 的标准连接是 `:9119` 上的 Hermes Dashboard/Gateway。它提供 Chat、
 会话、登录、Manage、标准 Voice 和经过身份验证的入站文件。请使用
 `hermes dashboard` 启动，并确保手机可访问。

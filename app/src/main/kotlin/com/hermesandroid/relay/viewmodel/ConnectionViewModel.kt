@@ -16,6 +16,7 @@ import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppThemes
+import com.hermesandroid.relay.ui.theme.AppearanceNightMode
 import com.hermesandroid.relay.ui.theme.normalizeAccentHex
 import com.hermesandroid.relay.ui.theme.AppearanceShape
 import com.hermesandroid.relay.ui.components.avatar.PetImporter
@@ -31,6 +32,7 @@ import com.hermesandroid.relay.auth.PairedDeviceInfo
 import com.hermesandroid.relay.auth.PairedSession
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.AppearancePreferences
+import com.hermesandroid.relay.data.PersistedAppearance
 import com.hermesandroid.relay.data.CustomThemePreset
 import com.hermesandroid.relay.data.DataManager
 import com.hermesandroid.relay.data.DemoContent
@@ -64,6 +66,10 @@ import com.hermesandroid.relay.data.LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE
 import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.computeConnectionSecurity
 import com.hermesandroid.relay.data.normalizeCredentialFreeAuthenticatedDashboardOrigin
+import com.hermesandroid.relay.data.dashboardHttpConsentMatches
+import com.hermesandroid.relay.data.dashboardHttpOrigin
+import com.hermesandroid.relay.data.updatedDashboardHttpConsents
+import com.hermesandroid.relay.network.upstream.verifySetup
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.data.BotChatTarget
 import com.hermesandroid.relay.data.BotModeState
@@ -515,7 +521,7 @@ internal fun resolveEffectiveDashboardUrl(
 ): String {
     if (connection == null) return ""
     connection.authenticatedDashboardOrigin
-        ?.let(::normalizeCredentialFreeAuthenticatedDashboardOrigin)
+        ?.let { normalizeCredentialFreeAuthenticatedDashboardOrigin(it, connection.dashboardHttpConsentOrigins) }
         ?.let { return it }
     // The resolver publishes independently of the active connection. During a
     // switch its last winner can still belong to the outgoing installation.
@@ -571,12 +577,14 @@ internal fun normalizeDashboardAddressForEdit(raw: String): String? {
 internal fun publicDashboardAddressRequiresHttps(
     role: String?,
     normalizedAddress: String,
+    httpConsentOrigins: Set<String> = emptySet(),
 ): Boolean {
     val uri = runCatching { URI(normalizedAddress) }.getOrNull() ?: return false
     val explicitRole = role?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
     val inferredRole = Connection.inferRouteRole(normalizedAddress)
     return uri.scheme.equals("http", ignoreCase = true) &&
-        (explicitRole == "public" || inferredRole == "public")
+        (explicitRole == "public" || inferredRole == "public") &&
+        !dashboardHttpConsentMatches(normalizedAddress, httpConsentOrigins)
 }
 
 internal fun standardApiDashboardSecurityError(
@@ -596,6 +604,7 @@ internal data class PendingConnectionDraft(
     val previousConnectionId: String?,
     var pairingPayload: com.hermesandroid.relay.ui.components.HermesPairingPayload? = null,
     var label: String? = null,
+    val dashboardHttpConsentOrigins: Set<String> = emptySet(),
 )
 
 /** Hide user-confirmed removals immediately while serialized cleanup finishes. */
@@ -1032,6 +1041,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Chat scroll behavior
         private val KEY_SMOOTH_AUTO_SCROLL = booleanPreferencesKey("smooth_auto_scroll")
         private val KEY_CLOSE_DRAWER_ON_SEND = booleanPreferencesKey("close_drawer_on_send")
+        private val KEY_SESSIONS_SIDEBAR_PINNED =
+            booleanPreferencesKey("sessions_sidebar_pinned")
         private val KEY_KEEP_COMPOSER_FOCUSED_ON_SEND =
             booleanPreferencesKey("keep_composer_focused_on_send")
 
@@ -1178,9 +1189,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     private val endpointResolver = EndpointResolver(
         httpClient = endpointProbeClient,
-        clientForCandidate = { candidate ->
-            candidate.pluginProxyRoutesOrNull()?.let { proxy ->
-                val tokenProvider = { (authManager.authState.value as? AuthState.Paired)?.token }
+        clientForCandidate = { candidate, probeRequestUrl ->
+            val tokenProvider = { (authManager.authState.value as? AuthState.Paired)?.token }
+            candidate.pluginProxyRoutesOrNull()?.takeIf { proxy ->
+                proxy.authority.equals(
+                    probeRequestUrl?.let(com.hermesandroid.relay.auth.CertPinStore::hostPortFromUrl),
+                    ignoreCase = true,
+                )
+            }?.let { proxy ->
                 if (candidate.hermesReachRouteOrNull() != null) {
                     buildHermesReachClient(
                         baseBuilder = endpointProbeClient.newBuilder(),
@@ -1195,6 +1211,28 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         sessionTokenProvider = tokenProvider,
                     )
                 }
+            } ?: run {
+                // LAN sometimes stores Secure Link relay URL (wss://…:9443/…).
+                // Pin ONLY when this probe actually hits that authority —
+                // not for plain dashboard :9119 / API :8642 on the same
+                // candidate (pin client's authority guard → IOException).
+                val requestUrl = probeRequestUrl?.trim().orEmpty()
+                if (requestUrl.isBlank()) return@run null
+                val targetAuthority = com.hermesandroid.relay.auth.CertPinStore
+                    .hostPortFromUrl(requestUrl)
+                    ?: return@run null
+                activeConnection.value?.routeCandidates.orEmpty()
+                    .mapNotNull { it.pluginProxyRoutesOrNull() }
+                    .firstOrNull { routes ->
+                        routes.authority.equals(targetAuthority, ignoreCase = true)
+                    }
+                    ?.let { routes ->
+                        buildPluginProxyClient(
+                            baseBuilder = endpointProbeClient.newBuilder(),
+                            routes = routes,
+                            sessionTokenProvider = tokenProvider,
+                        )
+                    }
             }
         },
         context = application,
@@ -1285,6 +1323,15 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             (authManager.authState.value as? AuthState.Paired)?.token
         },
         dashboardHttpClientProvider = ::dashboardHttpClientForRelayIngress,
+        // Secure Link relay HTTP must use the same pin TrustManager as WSS;
+        // default OkHttp only has the system CA store and rejects the leaf.
+        pluginProxyHttpClientProvider = { url ->
+            pluginProxyClientForUrl(
+                url = url,
+                baseClient = relayOkHttp,
+                includeRelaySessionHeader = false,
+            )
+        },
     )
 
     // Pairing-management collaborator — owns the paired-devices list
@@ -1331,6 +1378,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     ?: connection?.dashboardAuthProviders.orEmpty(),
             )
         },
+        dashboardHttpConsentOriginsProvider = { cid -> dashboardHttpConsentsFor(cid) },
         pinnedClientProvider = { url, base ->
             pluginProxyClientForUrl(url, base, includeRelaySessionHeader = false)
         },
@@ -1553,7 +1601,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             ?: connectionManager.activeRelayEndpoint.value?.relay?.url
             ?: autoRelayUrlSnapshot()
 
-    private fun pluginProxyClientForUrl(
+    internal fun pluginProxyClientForUrl(
         url: String,
         baseClient: OkHttpClient? = null,
         includeRelaySessionHeader: Boolean = true,
@@ -1788,8 +1836,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         origin: String,
         allowMissingInstallIdentity: Boolean = false,
     ): Boolean {
-        val normalized = normalizeAuthenticatedDashboardOrigin(origin) ?: return false
         val activeId = connectionStore.activeConnectionId.value ?: return false
+        val normalized = normalizeCredentialFreeAuthenticatedDashboardOrigin(
+            origin, dashboardHttpConsentsFor(activeId),
+        ) ?: return false
         val previous = connectionStore.connections.value
             .firstOrNull { it.id == activeId }
             ?: return false
@@ -1808,7 +1858,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             withTimeoutOrNull(8_000L) {
                 val status = verificationClient.getStatus().getOrNull() ?: return@withTimeoutOrNull false
                 candidateInstallId = status.installId
-                !status.authRequired || verificationClient.currentSession().getOrNull()?.authenticated == true
+                verificationClient.currentSession().getOrNull()?.authenticated == true &&
+                    verificationClient.requestWsTicket().isSuccess
             } == true
         } finally {
             verificationClient.shutdown()
@@ -1867,6 +1918,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun retireNativeDashboardAuthentication(connectionId: String) =
         upstreamTransport.retireNativeDashboardAuthentication(connectionId)
+
+    private fun dashboardHttpConsentsFor(connectionId: String): Set<String> =
+        pendingConnectionDraft?.takeIf { it.id == connectionId }?.dashboardHttpConsentOrigins
+            ?: connectionStore.connections.value.firstOrNull { it.id == connectionId }
+                ?.dashboardHttpConsentOrigins.orEmpty()
 
     fun nativeDashboardAuthClientForActive(dashboardUrl: String): NativeDashboardAuthClient? =
         upstreamTransport.nativeDashboardAuthClientForActive(dashboardUrl)
@@ -2148,10 +2204,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     @Deprecated("Use relayConnectionState", replaceWith = ReplaceWith("relayConnectionState"))
     val connectionState: StateFlow<ConnectionState> = relayConnectionState
 
+    // One snapshot from the DataStore emission that also releases splash
+    // readiness. The app root must not compose a first frame from separately
+    // hydrated theme, preset, font, and shape StateFlows.
+    private val _appearance = MutableStateFlow(PersistedAppearance())
+    internal val appearance: StateFlow<PersistedAppearance> = _appearance.asStateFlow()
+
     // Theme preference — light/dark/auto mode axis.
     val theme: StateFlow<String> = application.relayDataStore.data
         .map { preferences ->
-            preferences[AppearancePreferences.themeKey] ?: "auto"
+            AppearanceNightMode.normalizePreference(preferences[AppearancePreferences.themeKey])
         }
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
 
@@ -2870,12 +2932,16 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // this Home-Assistant-class persistent-connection use case). Mirrors
         // BridgeViewModel's masterToggle → BridgeForegroundService driver.
         viewModelScope.launch {
-            combine(gatewayKeepAlive, ActiveTurnKeepAliveRegistry.snapshot) { persistent, turns ->
-                persistent to turns
-            }.distinctUntilChanged().collect { (persistent, turns) ->
+            combine(
+                gatewayKeepAlive,
+                ActiveTurnKeepAliveRegistry.snapshot,
+                AppForegroundTracker.isForeground,
+            ) { persistent, turns, foreground ->
+                Triple(persistent, turns, foreground)
+            }.distinctUntilChanged().collect { (persistent, turns, foreground) ->
                 upstreamTransport.applyGatewayKeepAlive(persistent || turns.required)
                 val ctx = getApplication<Application>()
-                runCatching { GatewayKeepAliveService.update(ctx, persistent, turns) }
+                GatewayKeepAliveService.update(ctx, persistent, turns, foreground)
             }
         }
     }
@@ -3090,6 +3156,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_CLOSE_DRAWER_ON_SEND] = enabled
+            }
+        }
+    }
+
+    // Pinned Sessions sidebar (wide layout only). Persisted intent: when the
+    // chat surface is >= 840dp wide the drawer renders as an always-visible
+    // 320dp sidebar instead of a modal sheet; below the threshold the modal
+    // drawer behavior applies and the intent waits for the next wide layout.
+    val sessionsSidebarPinned: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_SESSIONS_SIDEBAR_PINNED] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setSessionsSidebarPinned(pinned: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_SESSIONS_SIDEBAR_PINNED] = pinned
             }
         }
     }
@@ -5098,6 +5180,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             var prevApiKey: String? = null
 
             application.relayDataStore.data.collect { preferences ->
+                val persistedAppearance = AppearancePreferences.decode(preferences)
+                _appearance.value = persistedAppearance
+                AppearanceNightMode.applyFromAppearance(persistedAppearance)
+
                 // Restore insecure mode
                 val insecure = preferences[KEY_INSECURE_MODE] ?: false
                 connectionManager.setInsecureMode(insecure)
@@ -6459,6 +6545,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         val signInRequired: Boolean = false,
         val authenticated: Boolean = false,
         val voiceAvailability: StandardVoiceAvailability = StandardVoiceAvailability.Unknown,
+        val httpConsentOrigin: String? = null,
     )
 
     /**
@@ -6468,9 +6555,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun probeHermesDashboard(
         address: String,
+        httpConsentOrigin: String? = null,
         onResult: (DashboardSetupResult) -> Unit,
     ) {
-        val dashboardUrl = Connection.normalizeApiUrlInput(
+        val dashboardUrl = Connection.normalizeDashboardUrlInput(
             address,
             defaultPort = Connection.DEFAULT_DASHBOARD_PORT,
         )
@@ -6484,7 +6572,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             )
             return
         }
-        if (publicDashboardAddressRequiresHttps(role = null, normalizedAddress = dashboardUrl)) {
+        if (publicDashboardAddressRequiresHttps(null, dashboardUrl, setOfNotNull(httpConsentOrigin))) {
             onResult(
                 DashboardSetupResult(
                     ok = false,
@@ -6495,27 +6583,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
         viewModelScope.launch {
-            val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
+            val client = upstreamTransport.dashboardClientForActive(dashboardUrl, setupProbe = true)
             try {
-                val statusResult = client.getStatus()
-                val status = statusResult.getOrNull()
-                if (status == null) {
-                    onResult(
-                        DashboardSetupResult(
-                            ok = false,
-                            dashboardUrl = dashboardUrl,
-                            message = statusResult.exceptionOrNull()?.message
-                                ?: "Hermes was not found at this address",
-                        ),
-                    )
-                    return@launch
-                }
-                val session = if (status.authRequired) {
-                    client.currentSession().getOrNull()
-                } else {
-                    null
-                }
-                val authenticated = !status.authRequired || session?.authenticated == true
+                val verification = client.verifySetup()
+                val status = verification.status
+                val authenticated = verification.authenticated
                 val voice = when {
                     !authenticated -> StandardVoiceAvailability.SignInRequired
                     client.audioRoutesPresent() -> StandardVoiceAvailability.Ready
@@ -6526,9 +6598,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         ok = true,
                         dashboardUrl = dashboardUrl,
                         message = status.message ?: "Hermes is ready",
-                        signInRequired = status.authRequired && !authenticated,
+                        signInRequired = !authenticated,
                         authenticated = authenticated,
                         voiceAvailability = voice,
+                        httpConsentOrigin = httpConsentOrigin?.takeIf { it == dashboardHttpOrigin(dashboardUrl) },
                     ),
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -6538,7 +6611,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     DashboardSetupResult(
                         ok = false,
                         dashboardUrl = dashboardUrl,
-                        message = e.message ?: "Hermes was not found at this address",
+                        message = if (e is com.hermesandroid.relay.network.upstream.DashboardLocalAuthenticationRequiredException) {
+                            getApplication<Application>().getString(R.string.dashboard_local_auth_help)
+                        } else e.message ?: "Hermes was not found at this address",
                     ),
                 )
             } finally {
@@ -6551,6 +6626,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     fun saveDashboardConnection(
         dashboardUrl: String,
         discoveredHostname: String? = null,
+        httpConsentOrigin: String? = null,
         onComplete: (Result<Unit>) -> Unit,
     ) {
         val normalized = Connection.normalizeDashboardUrlInput(
@@ -6561,7 +6637,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             onComplete(Result.failure(IllegalArgumentException("Hermes address is required")))
             return
         }
-        if (publicDashboardAddressRequiresHttps(role = null, normalizedAddress = normalized)) {
+        if (publicDashboardAddressRequiresHttps(null, normalized, setOfNotNull(httpConsentOrigin))) {
             onComplete(Result.failure(IllegalArgumentException("Public Gateway addresses require HTTPS")))
             return
         }
@@ -6573,7 +6649,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         draft = draft,
                         dashboardUrl = normalized,
                         discoveredHostname = discoveredHostname,
-                    )
+                    ).copy(dashboardHttpConsentOrigins = updatedDashboardHttpConsents(
+                        draft.dashboardHttpConsentOrigins, null, normalized, httpConsentOrigin,
+                    ))
                     true
                 }
                 if (stagedDraft) return@runCatching
@@ -6597,6 +6675,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 val next = current.copy(
                         label = nextLabel,
                         dashboardUrl = normalized,
+                        dashboardHttpConsentOrigins = updatedDashboardHttpConsents(
+                            current.dashboardHttpConsentOrigins, current.configuredDashboardUrl, normalized, httpConsentOrigin,
+                        ),
                         authenticatedDashboardOrigin = current.authenticatedDashboardOrigin
                             ?.takeIf {
                                 it.trimEnd('/').equals(normalized.trimEnd('/'), ignoreCase = true)
@@ -6635,6 +6716,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun updateDashboardAddress(
         url: String,
+        httpConsentOrigin: String? = null,
         onResult: (String?) -> Unit,
     ) {
         val normalized = normalizeDashboardAddressForEdit(url)
@@ -6642,7 +6724,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             onResult("Enter an http:// or https:// Hermes Dashboard address")
             return
         }
-        if (publicDashboardAddressRequiresHttps(role = null, normalizedAddress = normalized)) {
+        if (publicDashboardAddressRequiresHttps(null, normalized, setOfNotNull(httpConsentOrigin))) {
             onResult("Public Gateway addresses require HTTPS")
             return
         }
@@ -6660,7 +6742,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 return@launch
             }
             val originChanged = !sameDashboardBase(current.resolvedDashboardUrl, normalized)
-            val next = withExplicitDashboardAddress(current, normalized)
+            val next = withExplicitDashboardAddress(current, normalized).copy(
+                dashboardHttpConsentOrigins = updatedDashboardHttpConsents(
+                    current.dashboardHttpConsentOrigins, current.configuredDashboardUrl, normalized, httpConsentOrigin,
+                ),
+            )
             connectionStore.updateConnection(next)
             if (originChanged) {
                 withContext(Dispatchers.IO) {
@@ -6747,6 +6833,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             tokenStoreKey = Connection.buildTokenStoreKey(connectionId),
             dashboardUrl = dashboardUrl,
             routeCandidates = routes,
+            dashboardHttpConsentOrigins = draft.dashboardHttpConsentOrigins,
             pairedAt = paired?.let { System.currentTimeMillis() },
             transportHint = pairedSession?.transportHint,
             expiresAt = pairedSession?.expiresAt?.let { it * 1000L },
@@ -6787,16 +6874,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     private suspend fun probeDashboardAddress(
         dashboardUrl: String,
     ): Result<Pair<DashboardStatus, DashboardAuthSession?>> {
-        val client = upstreamTransport.dashboardClientForActive(dashboardUrl)
+        val client = upstreamTransport.dashboardClientForActive(dashboardUrl, setupProbe = true)
         return try {
             withTimeoutOrNull(8_000L) {
-                val status = client.getStatus().getOrElse { throw it }
-                val session = if (status.authRequired) {
-                    client.currentSession().getOrNull()
-                } else {
-                    null
-                }
-                Result.success(status to session)
+                val verification = client.verifySetup()
+                Result.success(verification.status to verification.session)
             } ?: Result.failure(java.net.SocketTimeoutException("Dashboard check timed out"))
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
@@ -6819,7 +6901,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 reachable = true,
                 authRequired = status.authRequired,
                 authProviders = status.authProviders,
-                authenticated = if (status.authRequired) session?.authenticated else true,
+                authenticated = session?.authenticated == true,
                 authProvider = session?.provider,
                 message = status.message,
                 gatewayMode = status.gatewayMode,
@@ -7300,6 +7382,13 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                     },
                     apiBearerTokenProvider = { authManager.getApiKey() },
                     dashboardHttpClientProvider = ::dashboardHttpClientForRelayIngress,
+                    pluginProxyHttpClientProvider = { url ->
+                        pluginProxyClientForUrl(
+                            url = url,
+                            baseClient = relayOkHttp,
+                            includeRelaySessionHeader = false,
+                        )
+                    },
                     dashboardIngressWebSocketRequestProvider = ::dashboardRelayRequestForIngress,
                 ).getVoiceConfig()
             } else {
@@ -7740,6 +7829,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         role: String,
         dashboardUrl: String,
         original: EndpointCandidate? = null,
+        httpConsentOrigin: String? = null,
         onResult: (String?) -> Unit,
     ) {
         if (original?.priority == 0) {
@@ -7755,7 +7845,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             // Accept bare hosts/IPs — http:// is assumed and the standard
             // Dashboard/Gateway port defaults to 9119.
             val trimmedUrl = Connection.normalizeDashboardUrlInput(dashboardUrl)
-            if (publicDashboardAddressRequiresHttps(role, trimmedUrl)) {
+            if (publicDashboardAddressRequiresHttps(role, trimmedUrl, setOfNotNull(httpConsentOrigin))) {
                 onResult("Public Gateway routes require HTTPS")
                 return@launch
             }
@@ -7808,7 +7898,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             }
             val next = (withoutOriginal + candidate)
                 .sortedWith(compareBy<EndpointCandidate> { it.priority }.thenBy { it.role })
-            connectionStore.updateConnection(current.copy(routeCandidates = next))
+            connectionStore.updateConnection(current.copy(
+                routeCandidates = next,
+                dashboardHttpConsentOrigins = updatedDashboardHttpConsents(
+                    current.dashboardHttpConsentOrigins, original?.dashboard?.url, trimmedUrl, httpConsentOrigin,
+                ),
+            ))
             // Full probe cycle (not a bare refresh) so the just-saved route
             // immediately shows a reachability verdict in the Routes card.
             probeNow()
@@ -8375,9 +8470,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // --- Shared methods ---
 
     fun setTheme(theme: String) {
+        val normalized = AppearanceNightMode.normalizePreference(theme)
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { preferences ->
-                preferences[AppearancePreferences.themeKey] = theme
+                preferences[AppearancePreferences.themeKey] = normalized
             }
         }
     }

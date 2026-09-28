@@ -363,7 +363,7 @@ data class DashboardFetchedFile(
  */
 class DashboardApiClient(
     baseUrl: String,
-    private val okHttpClient: OkHttpClient = defaultClient(),
+    internal val okHttpClient: OkHttpClient = defaultClient(),
     private val ownsHttpClient: Boolean = true,
     private val json: Json = Json {
         ignoreUnknownKeys = true
@@ -2157,9 +2157,10 @@ fun sameDashboardBase(candidate: String, trusted: String): Boolean {
 fun trustedDashboardBearerAuthOrNull(
     candidate: String,
     trusted: String,
+    httpConsentOrigins: Set<String> = emptySet(),
     tokenStoreProvider: () -> NativeDashboardTokenStore,
 ): DashboardBearerAuth? =
-    if (isNativeDashboardTransportEligible(candidate) &&
+    if (isNativeDashboardTransportEligible(candidate, httpConsentOrigins) &&
         sameDashboardBase(candidate, trusted)
     ) {
         DashboardBearerAuth(candidate, tokenStoreProvider())

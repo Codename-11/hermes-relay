@@ -8,6 +8,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.ApiEndpoint
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.ProxyEndpoint
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -17,10 +18,34 @@ import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(qualifiers = "w320dp-h720dp-xxhdpi")
+@Config(sdk = [35], qualifiers = "w320dp-h720dp-xxhdpi")
 class EndpointsCardCompactLayoutTest {
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun `Secure Link details show derived namespaces rather than unconfigured placeholders`() {
+        val route = EndpointCandidate(
+            role = "plugin_proxy",
+            proxy = ProxyEndpoint(
+                url = "https://relay.example:9443",
+                pinSha256 = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                surfaces = listOf("relay", "dashboard"),
+            ),
+        )
+        compose.setContent {
+            MaterialTheme {
+                EndpointsCard(
+                    endpoints = listOf(route), activeEndpoint = route,
+                    preferredRole = null, manualOverrideRole = null,
+                    onUseNow = {}, onCancelUseNow = {}, onPreferEndpoint = {},
+                    onClearPreferred = {}, onProbeNow = {}, onViewPin = { null },
+                )
+            }
+        }
+        compose.onNodeWithText("https://relay.example:9443/dashboard").assertExists()
+        compose.onNodeWithText("wss://relay.example:9443/relay/ws").assertExists()
+    }
 
     @Test
     fun `long route title keeps active state on a separate visible row`() {

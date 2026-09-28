@@ -555,9 +555,10 @@ class GatewayEventMapper(
 
             "approval.request" -> GatewayAsk(
                 kind = GatewayAsk.Kind.APPROVAL,
-                // Upstream approvals correlate per-SESSION, never
-                // per-request — a stray request_id must not be adopted.
-                requestId = null,
+                // Legacy approvals correlate per session. Only an admitted native
+                // frame supplies the typed request key through this internal marker.
+                requestId = payload.string("request_id").takeIf { payload.boolean("_server_request") == true },
+                serverRequest = payload.boolean("_server_request") == true,
                 text = listOfNotNull(payload.string("command"), payload.string("description"))
                     .joinToString(" — ")
                     .ifBlank { "a command approval" },
@@ -569,16 +570,18 @@ class GatewayEventMapper(
             "sudo.request" -> GatewayAsk(
                 kind = GatewayAsk.Kind.SUDO,
                 requestId = payload.string("request_id"),
-                text = "Elevated permissions requested",
-                timeoutSeconds = SUDO_TIMEOUT_SECONDS,
+                serverRequest = payload.boolean("_server_request") == true,
+                text = payload.string("command")?.takeIf(String::isNotBlank) ?: "Elevated permissions requested",
+                timeoutSeconds = if (payload.boolean("_server_request") == true) 0 else SUDO_TIMEOUT_SECONDS,
             )
 
             "secret.request" -> GatewayAsk(
                 kind = GatewayAsk.Kind.SECRET,
                 requestId = payload.string("request_id"),
+                serverRequest = payload.boolean("_server_request") == true,
                 text = payload.string("prompt") ?: "The agent needs a secret value",
                 envVar = payload.string("env_var"),
-                timeoutSeconds = SECRET_TIMEOUT_SECONDS,
+                timeoutSeconds = if (payload.boolean("_server_request") == true) 0 else SECRET_TIMEOUT_SECONDS,
             )
 
             else -> null
@@ -606,6 +609,7 @@ class GatewayEventMapper(
             return GatewayAsk(
                 kind = GatewayAsk.Kind.CLARIFY,
                 requestId = payload.string("request_id"),
+                serverRequest = payload.boolean("_server_request") == true,
                 text = payload.string("question") ?: "The agent needs clarification",
                 choices = choices,
                 multiSelect = payload.boolean("multi_select") == true && choices != null,
@@ -635,11 +639,10 @@ class GatewayEventMapper(
                 requestId = payload.string("request_id"),
             )
 
-            // Forward-compatible consumer for a future upstream approval
-            // expiry event. Approvals correlate by session, never request id.
+            // Legacy approval expiry is session-scoped; native cancellation is exact-id.
             "approval.expire" -> GatewayAskExpiry(
                 kind = GatewayAsk.Kind.APPROVAL,
-                requestId = null,
+                requestId = payload.string("request_id").takeIf { payload.boolean("_server_request") == true },
             )
 
             else -> null
@@ -763,4 +766,4 @@ private fun GatewayAsk.sameRequestAs(other: GatewayAsk): Boolean =
 
 private fun GatewayAsk.matches(expiry: GatewayAskExpiry): Boolean =
     kind == expiry.kind &&
-        (kind == GatewayAsk.Kind.APPROVAL || requestId == expiry.requestId)
+        requestId == expiry.requestId

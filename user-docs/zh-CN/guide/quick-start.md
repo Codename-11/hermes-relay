@@ -25,13 +25,13 @@ canonical_source: /guide/quick-start
 
 ## 2. 启动 Hermes
 
-Hermes Dashboard/Gateway 必须运行，并且手机可以访问。如有需要，在主机上运行
-`hermes dashboard`。服务器准备步骤见[安装与设置](/zh-CN/guide/getting-started)。
-这就是标准 Chat、会话、Manage、Voice 和入站文件所需的全部服务器端设置。
+Dashboard 必须能从手机访问并配置身份验证提供方。`hermes dashboard` 默认仅监听回环地址。请先设置登录，再使用 `hermes dashboard --host 0.0.0.0 --port 9119 --no-open` 启动直接 LAN/VPN 访问。转发到回环的反向代理需要外部 `dashboard.public_url` 和身份验证提供方。不要把内部会话令牌复制到手机。
+
+选择 **Hermes nearby** 或 **Remote gateway**。建议使用 HTTPS。其他 HTTP 地址需要为此连接的准确主机和端口明确接受风险。应用不会检测或强制执行 VPN 保护；VPN 断开时的凭据和对话泄露风险由用户承担。更换源后需要重新同意并登录。取消会保留原地址，历史和草稿也会保留。Direct API 必须明确选择，不会自动接管 Gateway 聊天。仅凭 401 不能确定 `dashboard.public_url` 配置错误。
 
 ## 3. 添加标准 Hermes 连接 {#other-supported-paths}
 
-在 Android 中打开 **Connect**。使用 **Find Hermes on LAN**，或手动输入
+在 Android 中打开 **Connect**。使用 **Hermes nearby**，或手动输入
 Dashboard 地址（通常为 `http://<host>:9119`）。按提示登录。这样即可创建不含
 plugin 或 Relay URL 的完整标准连接。
 

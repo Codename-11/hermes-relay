@@ -6,6 +6,47 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ---
 
+## Measure Standard Voice fallback playback seams
+
+Issue [#639](https://github.com/Codename-11/hermes-relay/issues/639) remains open
+for physical audio evidence after fallback disclosure and timing diagnostics.
+Compare short/long sentences, audio queue wait, Media3 start delay, and silence
+within decoded files. If ready-file restarts dominate, implement bounded player
+prefetch with actual media-transition ownership for interruption/resume, final
+drain, and cleanup. If synthesis starvation dominates, evaluate coalescing against
+first-audio latency before increasing queue depth. See
+[fallback diagnosis](../standard-voice-fallback.md). No gapless device claim yet.
+
+---
+
+## Confirm the reported Android 16 native password handoff
+
+Issue [#632](https://github.com/Codename-11/hermes-relay/issues/632) still needs a
+real-provider/browser retest on the affected Samsung environment after the
+bounded listener fix. Use the secret-free socket/read/rejection timeline to
+distinguish browser navigation from callback handling. JVM and controlled API 36
+socket tests do not establish the cause of that original device stall. See
+[callback verification](../native-dashboard-callback-testing.md).
+
+The broad `check-upstream-route-contract.py` scanner also needs a separate update
+for current upstream's split router modules; its two-file scan reports routes
+that remain declared in those modules as missing.
+
+---
+
+## Secure Link managed activation
+
+The first guided setup uses shared read-only checks, copyable startup settings,
+explicit operator restart, and a re-checked pairing handoff. Add automatic
+activation only for explicitly supported service-manager adapters that prove
+ownership, preview the exact change and interruption, preserve the prior
+configuration, verify the new listener, and roll back a failed activation.
+Unknown/embedded managers must retain the guided-command path. Never infer a
+service name, change an upstream bind, open firewall ports, rotate keys, or
+restart Gateway merely because a user opens setup.
+
+---
+
 ## Restore the plugin manifest v2 declaration after the Hermes installer fix ships
 
 Hermes installers in affected stable releases reject `manifest_version: 2`

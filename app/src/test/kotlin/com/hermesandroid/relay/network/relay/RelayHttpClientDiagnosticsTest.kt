@@ -79,6 +79,35 @@ class RelayHttpClientDiagnosticsTest {
     }
 
     @Test
+    fun secureLinkHealthWithoutVersionStillSucceeds() = runTest {
+        val server = MockWebServer()
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"status":"ok","surface":"hermes_secure_proxy","security":"pinned_tls"}""",
+            ),
+        )
+        server.start()
+        try {
+            val configuredRelay = "ws://${server.hostName}:${server.port}/relay/ws"
+            val client = RelayHttpClient(
+                okHttpClient = OkHttpClient(),
+                relayUrlProvider = { configuredRelay },
+                sessionTokenProvider = { null },
+            )
+
+            val result = client.probeHealth(configuredRelay)
+            assertTrue(result.isSuccess)
+            assertEquals("secure-link", result.getOrNull()?.version)
+            assertTrue(
+                DiagnosticsLog.recent(setOf(DiagnosticCategory.Relay))
+                    .none { it.detail == "Missing version field" },
+            )
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
     fun dashboardIngressUsesOuterAuthClientAndSeparateRelayHeader() = runTest {
         val server = MockWebServer()
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"sessions":[]}"""))

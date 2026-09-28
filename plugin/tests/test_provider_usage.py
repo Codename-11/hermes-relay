@@ -18,6 +18,7 @@ from plugin.relay.provider_usage import (
     fetch_codex_usage,
     fetch_nous_usage,
     fetch_opencode_go_usage,
+    fetch_supergrok_usage,
     resolve_profile_home,
     serialize_account_snapshot,
     unavailable_provider,
@@ -57,12 +58,34 @@ class _FakeSession:
         return self.response
 
 
+class _SequencedSession:
+    """Yield queued responses in call order, like aiohttp's request context manager."""
+
+    def __init__(self, responses: list[_FakeResponse]):
+        self._responses = list(responses)
+        self.calls: list[dict] = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def get(self, url, *, headers=None, timeout=None):
+        self.calls.append({"url": url, "headers": headers or {}})
+        if not self._responses:
+            raise AssertionError("unexpected extra provider request")
+        return self._responses.pop(0)
+
+
 class ProviderUsageModelTests(unittest.IsolatedAsyncioTestCase):
     def test_profile_home_is_exact_and_rejects_traversal(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
-            root = Path(raw)
+            # Resolve the temp root so macOS /var -> /private/var matches
+            # Path.resolve() inside resolve_profile_home.
+            root = Path(raw).resolve()
             (root / "config.yaml").write_text("model: {}\n", encoding="utf-8")
-            victor = root / "profiles" / "victor"
+            victor = (root / "profiles" / "victor").resolve()
             victor.mkdir(parents=True)
             (victor / "config.yaml").write_text("model: {}\n", encoding="utf-8")
             self.assertEqual(resolve_profile_home(str(root / "config.yaml"), "Victor"), victor)
@@ -159,6 +182,173 @@ class ProviderUsageModelTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("limits", result)
         self.assertEqual(fake.headers["Authorization"], "Bearer secret")
 
+    async def test_supergrok_without_oauth_is_not_configured(self) -> None:
+        result = await fetch_supergrok_usage(credential_resolver=lambda: {})
+
+        self.assertEqual(result["id"], "supergrok")
+        self.assertEqual(result["status"], "not_configured")
+        self.assertEqual(result["windows"], [])
+
+    async def test_supergrok_missing_oauth_state_is_not_configured(self) -> None:
+        class MissingOAuthState(Exception):
+            code = "xai_auth_missing"
+
+        def resolve_credentials() -> dict:
+            raise MissingOAuthState("No credentials stored")
+
+        result = await fetch_supergrok_usage(credential_resolver=resolve_credentials)
+
+        self.assertEqual(result["status"], "not_configured")
+
+    async def test_supergrok_oauth_refresh_failure_is_unavailable(self) -> None:
+        class RefreshFailure(Exception):
+            code = "xai_refresh_failed"
+
+        def resolve_credentials() -> dict:
+            raise RefreshFailure("private token details")
+
+        result = await fetch_supergrok_usage(credential_resolver=resolve_credentials)
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["message"], "Could not resolve SuperGrok credentials")
+        self.assertNotIn("private token details", str(result))
+
+    async def test_supergrok_maps_subscription_and_product_windows(self) -> None:
+        session = _SequencedSession(
+            [
+                _FakeResponse(payload={"userId": "user-1"}),
+                _FakeResponse(
+                    payload={
+                        "subscriptionTier": "SuperGrok",
+                        "onDemandEnabled": True,
+                        "config": {
+                            "creditUsagePercent": 14,
+                            "currentPeriod": {
+                                "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                                "start": "2026-09-06T08:34:12.348291+00:00",
+                                "end": "2026-09-13T08:34:12.348291+00:00",
+                            },
+                            "productUsage": [
+                                {"product": "GrokBuild", "usagePercent": 11},
+                                {"product": "GrokImagine", "usagePercent": 2},
+                                {"product": "GrokChat", "usagePercent": None},
+                            ],
+                            "onDemandCap": {"val": 500},
+                            "onDemandUsed": {"val": 125},
+                            "prepaidBalance": {"val": 0},
+                        },
+                    }
+                ),
+            ]
+        )
+
+        result = await fetch_supergrok_usage(
+            session_factory=lambda: session,
+            credential_resolver=lambda: {"api_key": "secret"},
+        )
+
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["source"], "provider_api")
+        self.assertEqual(result["plan"], "SuperGrok")
+        self.assertEqual(
+            [row["id"] for row in result["windows"]],
+            ["period", "product_grok_build", "product_grok_imagine"],
+        )
+        self.assertEqual(result["windows"][0]["label"], "Weekly")
+        self.assertEqual(result["windows"][0]["used_percent"], 14.0)
+        self.assertEqual(result["windows"][0]["reset_at"], "2026-09-13T08:34:12.348291+00:00")
+        self.assertEqual(result["windows"][1]["label"], "Grok Build")
+        self.assertEqual(result["windows"][1]["used_percent"], 11.0)
+        self.assertEqual(result["details"], ["On-demand: $1.25 used of $5.00"])
+        self.assertEqual(session.calls[0]["headers"]["Authorization"], "Bearer secret")
+        self.assertEqual(session.calls[1]["headers"]["x-userid"], "user-1")
+        self.assertIn("/billing?format=credits", session.calls[1]["url"])
+        self.assertNotIn("secret", str(result))
+
+    async def test_supergrok_stops_before_billing_without_account_identity(self) -> None:
+        session = _SequencedSession([_FakeResponse(payload={"userId": ""})])
+
+        result = await fetch_supergrok_usage(
+            session_factory=lambda: session,
+            credential_resolver=lambda: {"api_key": "secret"},
+        )
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(len(session.calls), 1)
+        self.assertNotIn("secret", str(result))
+
+    async def test_supergrok_reports_top_level_on_demand_state_without_amounts(self) -> None:
+        session = _SequencedSession(
+            [
+                _FakeResponse(payload={"userId": "user-1"}),
+                _FakeResponse(
+                    payload={
+                        "onDemandEnabled": True,
+                        "config": {
+                            "creditUsagePercent": 0,
+                            "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY"},
+                        },
+                    }
+                ),
+            ]
+        )
+
+        result = await fetch_supergrok_usage(
+            session_factory=lambda: session,
+            credential_resolver=lambda: {"api_key": "secret"},
+        )
+
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["details"], ["On-demand enabled"])
+
+    async def test_supergrok_fresh_period_surfaces_window_without_inventing_a_percent(self) -> None:
+        session = _SequencedSession(
+            [
+                _FakeResponse(payload={"userId": "user-1"}),
+                _FakeResponse(
+                    payload={
+                        "config": {
+                            "currentPeriod": {
+                                "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                                "start": "2026-09-13T08:34:12.348291+00:00",
+                                "end": "2026-09-20T08:34:12.348291+00:00",
+                            },
+                            "billingPeriodEnd": "2026-09-20T08:34:12.348291+00:00",
+                        }
+                    }
+                ),
+            ]
+        )
+
+        result = await fetch_supergrok_usage(
+            session_factory=lambda: session,
+            credential_resolver=lambda: {"api_key": "secret"},
+        )
+
+        self.assertEqual(result["status"], "available")
+        self.assertEqual(len(result["windows"]), 1)
+        self.assertEqual(result["windows"][0]["label"], "Weekly")
+        self.assertIsNone(result["windows"][0]["used_percent"])
+        self.assertEqual(result["windows"][0]["reset_at"], "2026-09-20T08:34:12.348291+00:00")
+        self.assertEqual(result["windows"][0]["detail"], "No usage reported yet")
+
+    async def test_supergrok_unusable_payload_is_unavailable(self) -> None:
+        session = _SequencedSession(
+            [
+                _FakeResponse(payload={"userId": "user-1"}),
+                _FakeResponse(payload={"config": {"isUnifiedBillingUser": True}}),
+            ]
+        )
+
+        result = await fetch_supergrok_usage(
+            session_factory=lambda: session,
+            credential_resolver=lambda: {"api_key": "secret"},
+        )
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(result["windows"], [])
+        self.assertEqual(result["message"], "Provider returned no usage windows")
+
     async def test_collection_keeps_provider_order_and_schema(self) -> None:
         async def codex(_home, **_kwargs):
             return unavailable_provider("openai-codex", "Codex")
@@ -169,19 +359,23 @@ class ProviderUsageModelTests(unittest.IsolatedAsyncioTestCase):
         async def opencode(*, profile_home=None):
             return unavailable_provider("opencode-go", "OpenCode Go")
 
+        async def supergrok(*, profile_home=None):
+            return unavailable_provider("supergrok", "SuperGrok")
+
         result = await collect_provider_usage(
             codex_fetcher=codex,
             nous_fetcher=nous,
             opencode_fetcher=opencode,
+            supergrok_fetcher=supergrok,
         )
         self.assertEqual(result["schema_version"], 2)
         self.assertEqual(
             result["capabilities"],
-            ["credential_pools", "structured_balances", "opencode_go"],
+            ["credential_pools", "structured_balances", "opencode_go", "supergrok"],
         )
         self.assertEqual(
             [row["id"] for row in result["providers"]],
-            ["openai-codex", "nous", "opencode-go"],
+            ["openai-codex", "nous", "opencode-go", "supergrok"],
         )
 
     async def test_codex_pool_marks_exact_live_session_credential_active(self) -> None:

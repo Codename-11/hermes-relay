@@ -133,3 +133,19 @@ Potential future lanes are emulator instrumentation, current-upstream
 conformance, Desktop/TUI adapters, and physical-device ADB certification. This
 package does not configure timers, cron jobs, scheduled workflows, or mandatory
 device runs.
+
+
+## Android onboarding and authentication
+
+The opt-in `dashboard_onboarding` scenario adds public discovery, a password
+provider, protected auth/session routes and the ordinary Gateway turn. It uses
+only synthetic data. Start it on loopback with the normal CLI and use an
+explicit emulator ADB reverse. Username and password are both `fixture`;
+these values are test-only and never forwarded to a provider.
+
+`POST /__fixture__/auth` with `{"mode":"expired"}` invalidates the synthetic
+cookie and sockets so Android must sign in again. `{"mode":"loopback"}`
+returns `auth_required=false` from public status while protected routes return
+plain Unauthorized. `{"mode":"signin"}` restores gated sign-in. These controls
+are available only for this opt-in scenario; existing contract scenarios keep
+their behavior. They do not model a real VPN, TLS proxy or OIDC provider.

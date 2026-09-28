@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 from plugin.relay.channels.desktop import (
+    DesktopCommandRecord,
     DesktopError,
     DesktopHandler,
     DesktopRequesterContext,
@@ -66,6 +67,18 @@ async def _register_two() -> tuple[DesktopHandler, _FakeWs, _FakeWs]:
 
 
 class DesktopMultiDeviceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_screenshot_bytes_never_enter_activity_summary(self) -> None:
+        handler = DesktopHandler()
+        handler.recent_commands.append(DesktopCommandRecord(
+            request_id="req-1", tool="desktop_computer_screenshot"
+        ))
+        handler._update_record_from_response("req-1", {
+            "status": 200,
+            "result": {"bytes_base64": "private-pixels", "saved_path": "/private/shot.png"},
+        })
+        summary = handler.get_recent()[0]["result_summary"]
+        self.assertEqual(summary, "Desktop screenshot response received")
+
     async def test_tool_schema_exposes_script_and_device_selector(self) -> None:
         parameters = desktop_tool._SCHEMAS["desktop_powershell"]["parameters"]
         self.assertEqual(parameters["required"], ["script"])

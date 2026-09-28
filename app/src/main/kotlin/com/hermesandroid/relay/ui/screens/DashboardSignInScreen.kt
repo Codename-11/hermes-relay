@@ -317,7 +317,7 @@ fun DashboardSignInScreen(
                 ?.takeIf { it.isNotEmpty() }
                 ?: status.authProviderDetails
             authFlows = status.authFlows
-            var session = if (status.authRequired) client.currentSession().getOrNull() else null
+            var session = client.currentSession().getOrNull()
             var ticketAvailable = if (session?.authenticated == true) {
                 client.requestWsTicket().isSuccess
             } else {
@@ -359,10 +359,12 @@ fun DashboardSignInScreen(
                 gatewayTicketAvailable = ticketAvailable,
             )
             if (
-                !status.authRequired ||
                 session?.let { dashboardAuthenticationReady(it, ticketAvailable) } == true
             ) {
                 finishAuthentication()
+            } else if (!status.authRequired) {
+                actionMessage = resources.getString(R.string.dashboard_local_auth_help)
+                actionIsError = true
             }
         } finally {
             loading = false
@@ -435,11 +437,6 @@ fun DashboardSignInScreen(
             oauthProvider = provider
             return
         }
-        if (!isNativeDashboardTransportEligible(dashboardUrl)) {
-            embeddedFallbackFromNative = true
-            oauthProvider = provider
-            return
-        }
         val authClient = connectionViewModel.nativeDashboardAuthClientForActive(dashboardUrl)
         if (authClient == null) {
             embeddedFallbackFromNative = true
@@ -472,6 +469,15 @@ fun DashboardSignInScreen(
                 )
                 NativeDashboardSignInCoordinator(authClient).signIn(
                     provider = authorizationProvider,
+                    onDiagnostic = { stage ->
+                        recordNativeDashboardAuthDiagnostic(
+                            stage = stage,
+                            attempt = attemptNumber,
+                            providerKind = attemptProviderKind,
+                            dashboardUrl = dashboardUrl,
+                            startedAtElapsedMs = attemptStartedAtElapsedMs,
+                        )
+                    },
                     onAuthorizationPrepared = { usesAlternateOrigin ->
                         recordNativeDashboardAuthDiagnostic(
                             stage = "authorization_prepared",
@@ -912,7 +918,8 @@ internal fun nativeDashboardSignInMessageKind(failureStage: String): NativeDashb
         failureStage == "token_shape" -> NativeDashboardSignInMessageKind.ResponseUnsupported
         failureStage == "inactive_generation" -> NativeDashboardSignInMessageKind.AttemptInactive
         failureStage == "token_store" -> NativeDashboardSignInMessageKind.SecureStorage
-        failureStage.startsWith("token_transport") -> NativeDashboardSignInMessageKind.Transport
+        failureStage.startsWith("token_transport") || failureStage == "callback_timeout" ||
+            failureStage == "callback_bind_failed" -> NativeDashboardSignInMessageKind.Transport
         else -> NativeDashboardSignInMessageKind.Generic
     }
 

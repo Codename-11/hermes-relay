@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import urllib.error
 import urllib.request
 
@@ -68,7 +69,7 @@ def _post_loopback(
             try:
                 return json.loads(raw)
             except json.JSONDecodeError:
-                logger.warning("POST %s returned non-JSON body: %r", url, raw[:200])
+                logger.warning("Relay POST returned non-JSON body")
                 return None
     except (urllib.error.URLError, urllib.error.HTTPError, OSError, ValueError) as exc:
         logger.warning("POST %s failed: %s", url, exc)
@@ -83,6 +84,7 @@ def register_media(
     port: int | None = None,
     timeout: float = 5.0,
     sensitive: bool = False,
+    owned_file: bool = False,
 ) -> str | None:
     """Register ``path`` with the local relay and return an opaque token.
 
@@ -104,6 +106,7 @@ def register_media(
         "content_type": content_type,
         "file_name": file_name,
         "sensitive": bool(sensitive),
+        "owned_file": bool(owned_file),
     }
 
     data = _post_loopback(host, port, "/media/register", payload, timeout)
@@ -111,9 +114,7 @@ def register_media(
         return None
 
     if not data.get("ok"):
-        logger.warning(
-            "Relay rejected media registration: %s", data.get("error")
-        )
+        logger.warning("Relay rejected media registration")
         return None
 
     token = data.get("token")
@@ -122,3 +123,21 @@ def register_media(
         return None
 
     return token
+
+
+def mark_media_sensitive(token: str, port: int | None = None) -> bool:
+    """Mark an existing relay token private without copying its image bytes."""
+    if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", token):
+        return False
+    relay_port = _default_port() if port is None else port
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{relay_port}/media/{token}/sensitive",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5.0) as response:
+            return response.status == 200
+    except (urllib.error.URLError, OSError, ValueError):
+        return False

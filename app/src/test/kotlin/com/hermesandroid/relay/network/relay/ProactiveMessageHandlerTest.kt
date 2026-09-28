@@ -49,6 +49,15 @@ class ProactiveMessageHandlerTest {
     }
 
     @Test
+    fun `notification previews omit media markers while thread text remains complete`() {
+        val text = "Headline\nDetail\nMEDIA:hermes-relay://private-token-123456\nMEDIA:/tmp/report.png"
+        assertEquals("Headline Detail", mediaFreeProactivePreview(text))
+        assertEquals("Attachment", mediaFreeProactivePreview("MEDIA:hermes-relay://private-token-123456"))
+        val fenced = "Example\n```\nMEDIA:/tmp/example.png\n```"
+        assertTrue(mediaFreeProactivePreview(fenced).contains("MEDIA:/tmp/example.png"))
+    }
+
+    @Test
     fun `inbox surfacing persists silently`() {
         val persisted = mutableListOf<ProactiveMessage>()
         val handler = ProactiveMessageHandler(context, toInbox = persisted::add).apply {

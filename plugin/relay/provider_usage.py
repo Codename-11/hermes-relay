@@ -2,8 +2,8 @@
 
 Hermes already owns provider credentials and the canonical account-usage model.
 Relay reuses that model, adds credential-pool and balance structure for Android,
-and supplies the missing OpenCode Go adapter. Provider keys remain host-side
-and are never serialized into the response.
+and supplies the missing OpenCode Go and Grok subscription adapters. Provider
+keys remain host-side and are never serialized into the response.
 """
 
 from __future__ import annotations
@@ -24,9 +24,18 @@ RELAY_CAPABILITIES = (
     "credential_pools",
     "structured_balances",
     "opencode_go",
+    "supergrok",
 )
 _OPENCODE_GO_DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
 _OPENCODE_GO_USER_AGENT = "curl/8.4.0"
+# Grok subscription usage is only served by xAI's CLI proxy, not the public API.
+_SUPERGROK_IDENTITY_URL = "https://cli-chat-proxy.grok.com/v1/user"
+_SUPERGROK_BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+_SUPERGROK_PERIOD_TYPE_PREFIX = "USAGE_PERIOD_TYPE_"
+_SUPERGROK_MAX_PRODUCT_WINDOWS = 8
+_SUPERGROK_CENTS_PER_USD = 100.0
+_SUPERGROK_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_SUPERGROK_SLUG = re.compile(r"[^a-z0-9]+")
 _MAX_DETAIL_LENGTH = 240
 _PROFILE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
@@ -505,6 +514,242 @@ async def fetch_opencode_go_usage(
     }
 
 
+def _supergrok_percent(value: Any) -> float | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    number = float(value)
+    if not math.isfinite(number):
+        return None
+    return max(0.0, min(100.0, number))
+
+
+def _supergrok_cents(value: Any) -> float | None:
+    """Unwrap xAI's ``{"val": <int cents>}`` money wrapper."""
+    if not isinstance(value, dict):
+        return None
+    cents = value.get("val")
+    if not isinstance(cents, (int, float)) or isinstance(cents, bool):
+        return None
+    amount = float(cents)
+    if not math.isfinite(amount) or amount < 0:
+        return None
+    return amount
+
+
+def _supergrok_period_label(period_type: Any) -> str:
+    raw = str(period_type or "").strip()
+    if raw.startswith(_SUPERGROK_PERIOD_TYPE_PREFIX):
+        raw = raw[len(_SUPERGROK_PERIOD_TYPE_PREFIX) :]
+    return raw.replace("_", " ").strip().title() or "Current period"
+
+
+def _supergrok_product_label(product: Any) -> str | None:
+    raw = _bounded_text(product, 60)
+    if raw is None:
+        return None
+    return _SUPERGROK_CAMEL_BOUNDARY.sub(" ", raw).strip() or raw
+
+
+def _supergrok_windows(config: dict[str, Any]) -> list[dict[str, Any]]:
+    period = config.get("currentPeriod")
+    period = period if isinstance(period, dict) else {}
+    reset_at = _iso(period.get("end")) or _iso(config.get("billingPeriodEnd"))
+
+    percent = _supergrok_percent(config.get("creditUsagePercent"))
+    if percent is None:
+        used = _supergrok_cents(config.get("used"))
+        limit = _supergrok_cents(config.get("monthlyLimit"))
+        if used is not None and limit is not None and limit > 0:
+            percent = max(0.0, min(100.0, (used / limit) * 100))
+
+    windows: list[dict[str, Any]] = []
+    if percent is not None:
+        windows.append(
+            {
+                "id": "period",
+                "label": _supergrok_period_label(period.get("type")),
+                "used_percent": percent,
+                "reset_at": reset_at,
+                "detail": None,
+            }
+        )
+    elif reset_at:
+        # A period with no recorded usage yet omits the figure entirely rather
+        # than reporting zero. The window is real, so surface it without
+        # inventing a percentage for it.
+        windows.append(
+            {
+                "id": "period",
+                "label": _supergrok_period_label(period.get("type")),
+                "used_percent": None,
+                "reset_at": reset_at,
+                "detail": "No usage reported yet",
+            }
+        )
+
+    products = config.get("productUsage")
+    if isinstance(products, list):
+        for item in products[:_SUPERGROK_MAX_PRODUCT_WINDOWS]:
+            if not isinstance(item, dict):
+                continue
+            product_percent = _supergrok_percent(item.get("usagePercent"))
+            label = _supergrok_product_label(item.get("product"))
+            if product_percent is None or label is None:
+                continue
+            windows.append(
+                {
+                    "id": f"product_{_SUPERGROK_SLUG.sub('_', label.lower()).strip('_')[:32]}",
+                    "label": label,
+                    "used_percent": product_percent,
+                    "reset_at": reset_at,
+                    "detail": None,
+                }
+            )
+    return windows
+
+
+def _supergrok_details(config: dict[str, Any], payload: dict[str, Any]) -> list[str]:
+    details: list[str] = []
+    cap = _supergrok_cents(config.get("onDemandCap"))
+    used = _supergrok_cents(config.get("onDemandUsed"))
+    enabled = payload.get("onDemandEnabled") is True or config.get("onDemandEnabled") is True
+    if enabled or (cap or 0) > 0 or (used or 0) > 0:
+        parts = [
+            part
+            for part in (
+                f"${used / _SUPERGROK_CENTS_PER_USD:.2f} used" if used is not None else None,
+                f"of ${cap / _SUPERGROK_CENTS_PER_USD:.2f}" if cap is not None else None,
+            )
+            if part is not None
+        ]
+        if parts:
+            details.append(f"On-demand: {' '.join(parts)}")
+        elif enabled:
+            details.append("On-demand enabled")
+    prepaid = _supergrok_cents(config.get("prepaidBalance"))
+    if prepaid:
+        details.append(f"Prepaid balance: ${prepaid / _SUPERGROK_CENTS_PER_USD:.2f}")
+    return details
+
+
+async def fetch_supergrok_usage(
+    *,
+    profile_home: Path | None = None,
+    session_factory: Callable[[], Any] = aiohttp.ClientSession,
+    credential_resolver: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """Fetch Grok subscription usage behind the ``xai-oauth`` sign-in.
+
+    Subscription windows are only served by xAI's CLI proxy, so this adapter
+    speaks the pinned ``cli-chat-proxy.grok.com`` contract: the
+    Hermes-managed ``xai-oauth`` bearer reads the account identity, then the
+    credits billing snapshot scoped to that identity.
+    """
+    home_token = _set_home(profile_home)
+    try:
+        if credential_resolver is None:
+            from hermes_cli.auth import resolve_xai_oauth_runtime_credentials
+
+            credential_resolver = resolve_xai_oauth_runtime_credentials
+
+        credentials = await asyncio.to_thread(credential_resolver)
+    except Exception as exc:
+        if getattr(exc, "code", None) == "xai_auth_missing":
+            return unavailable_provider("supergrok", "SuperGrok")
+        return unavailable_provider(
+            "supergrok",
+            "SuperGrok",
+            status="unavailable",
+            message="Could not resolve SuperGrok credentials",
+        )
+    finally:
+        _reset_home(home_token)
+
+    access_token = str((credentials or {}).get("api_key") or "").strip()
+    if not access_token:
+        return unavailable_provider("supergrok", "SuperGrok")
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Accept": "application/json",
+    }
+    try:
+        async with session_factory() as session:
+            async with session.get(
+                _SUPERGROK_IDENTITY_URL,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as response:
+                if response.status != 200:
+                    return unavailable_provider(
+                        "supergrok",
+                        "SuperGrok",
+                        status="unavailable",
+                        message=f"Provider returned HTTP {response.status}",
+                    )
+                identity = await response.json()
+            user_id = (
+                str(identity.get("userId") or "").strip()
+                if isinstance(identity, dict)
+                else ""
+            )
+            if not user_id:
+                return unavailable_provider(
+                    "supergrok",
+                    "SuperGrok",
+                    status="unavailable",
+                    message="Provider returned no account identity",
+                )
+            async with session.get(
+                _SUPERGROK_BILLING_URL,
+                headers={**headers, "x-userid": user_id},
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as response:
+                if response.status != 200:
+                    return unavailable_provider(
+                        "supergrok",
+                        "SuperGrok",
+                        status="unavailable",
+                        message=f"Provider returned HTTP {response.status}",
+                    )
+                payload = await response.json()
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError):
+        return unavailable_provider(
+            "supergrok",
+            "SuperGrok",
+            status="unavailable",
+            message="Could not load SuperGrok usage",
+        )
+
+    config = payload.get("config") if isinstance(payload, dict) else None
+    if not isinstance(config, dict):
+        return unavailable_provider(
+            "supergrok",
+            "SuperGrok",
+            status="unavailable",
+            message="Provider returned an unsupported usage payload",
+        )
+    windows = _supergrok_windows(config)
+    if not windows:
+        return unavailable_provider(
+            "supergrok",
+            "SuperGrok",
+            status="unavailable",
+            message="Provider returned no usage windows",
+        )
+    return {
+        "id": "supergrok",
+        "display_name": "SuperGrok",
+        "status": "available",
+        "source": "provider_api",
+        "fetched_at": _now_iso(),
+        "plan": _bounded_text(payload.get("subscriptionTier"), 80),
+        "windows": windows,
+        "details": _supergrok_details(config, payload),
+        "message": None,
+    }
+
+
 async def collect_provider_usage(
     *,
     profile_home: Path | None = None,
@@ -513,6 +758,7 @@ async def collect_provider_usage(
     codex_fetcher: Callable[..., Awaitable[dict[str, Any]]] = fetch_codex_usage,
     nous_fetcher: Callable[[Path | None], Awaitable[dict[str, Any]]] = fetch_nous_usage,
     opencode_fetcher: Callable[..., Awaitable[dict[str, Any]]] = fetch_opencode_go_usage,
+    supergrok_fetcher: Callable[..., Awaitable[dict[str, Any]]] = fetch_supergrok_usage,
 ) -> dict[str, Any]:
     providers = await asyncio.gather(
         codex_fetcher(
@@ -522,6 +768,7 @@ async def collect_provider_usage(
         ),
         nous_fetcher(profile_home),
         opencode_fetcher(profile_home=profile_home),
+        supergrok_fetcher(profile_home=profile_home),
     )
     return {
         "schema_version": SCHEMA_VERSION,

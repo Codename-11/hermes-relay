@@ -68,9 +68,11 @@ the upstream contract identifiers it depends on.
 |---|---|
 | `initial_history_bind` | Durable, profile-scoped history is already available when the client resumes and first binds its rendered transcript |
 | `ordinary_turn` | Normal message start, deltas, completion, and persisted history |
+| `unsolicited_voice_completions` | One submitted turn followed by live same-session process, watch, and delegation answers, including duplicate start/terminal frames; Standard Voice receives each admitted answer once |
 | `clarify_legacy` | Top-level single question and unkeyed `clarify.respond` |
-| `clarify_normalized_single` | One normalized `questions[]` entry still requires its exact `qid` |
-| `clarify_batch` | Independent qid responses, partial acknowledgement, and answered-question replay on reconnect |
+| `clarify_normalized_single` | Native request with one normalized question, capability advertisement and exact `clarify.lock` |
+| `clarify_batch` | Native request, per-question locks, partial progress and `open_requests` replay |
+| `clarify_batch_legacy`, `clarify_normalized_single_legacy` | Notification-era batch compatibility |
 | `session_initialization_failure` | Exact-session initialization error arrives before a lazy create acknowledgement; Android must fail the pending send without waiting for the readiness deadline |
 | `subagent_child_preview` | Child activity continues after the parent terminal, followed by child completion and a separate completion wake; preview ownership remains on the same profile/session |
 | `ownership_rejection` | A submit acknowledged before the defense-in-depth ownership check emits the canonical terminal refusal; no user/model row is persisted and clients must not enter history recovery |
@@ -179,6 +181,47 @@ redacted.
 
 ## Current-upstream conformance
 
+The `secure_link_gateway_auth` scenario exercises query and subprotocol ticket
+admission through the real Secure Link proxy, single-use rejection, a completed
+turn, and live-session activation after reconnect. Run its wire regression with
+`python -m unittest plugin.tests.test_secure_proxy_contract`; it also checks
+compression boundaries, health coalescing, and bounded Dashboard rewrites.
+Pass that scenario's JSON manifest to the conformance checker below to verify
+the upstream ticket/public-protocol and live-activation seams. Android's focused
+`PluginProxyTransportTest`, `GatewayChatClientTest`, and `RelayVoiceClientRoutingTest`
+cover pin rejection, route replacement during an active turn or ticket mint, and
+the voice HTTP/WebSocket client selection. These are protocol tests, not physical
+device or OEM TLS certification.
+
+Standard Voice receives successful unsolicited assistant answers from live Chat
+admission, with a receipt captured before the new assistant placeholder exists.
+The receipt belongs to the active voice generation and conversation binding;
+history reads, passive Desktop observation, unmatched terminal recovery, and
+queued-checkpoint restoration do not create speech receipts. Stop, voice exit,
+engine changes, and conversation changes invalidate pending receipts. An active
+microphone capture or earlier spoken answer finishes before queued speech starts.
+The existing Continuous microphone release barrier still owns rearming.
+
+Process completion/watch notifications and async delegation wakes enter upstream's
+ordinary prompt runner (`tui_gateway/session_notifications.py` and `prompt_turn.py`
+in current split upstream sources). The resulting assistant answer uses the same
+live admission contract, regardless of its trigger. Raw process output, child
+previews, and `background.complete` side-agent events are not assistant answers
+and do not independently trigger narration. Reconnect history remains silent;
+new live turns after reconnect can receive new receipts for the same owner.
+
+`VoiceInboundCompletionTest` exercises the voice receipt and configured synthesis
+path; `ChatViewModelGatewayInboundTurnTest` exercises real WebSocket admission.
+The `unsolicited_voice_completions` manifest certifies the upstream terminal
+contract without making provider or physical-audio claims.
+
+For emulator lifecycle coverage, start that fixture on host loopback and run
+`GatewayExternalFixtureInstrumentedTest#unsolicitedVoiceCompletions_surviveActivityPauseWithoutHistorySpeech`
+on `standardPhoneApi36`, passing its emulator-accessible URL through
+`gatewayFixtureBaseUrl`. The test uses production Chat/Voice view models and a
+synthetic Standard audio client returning silent WAVs; it asserts three synthesis
+requests across Activity pause/resume, with no provider calls or microphone capture.
+
 Run against a clean checkout of `NousResearch/hermes-agent`:
 
 ```powershell
@@ -207,3 +250,21 @@ The scenario format is intentionally usable by future official Desktop and TUI
 client adapters. Potential later work includes hosted emulator/device lanes,
 performance scenarios, and explicitly approved scheduled execution. None of
 those are configured today.
+
+
+## Server request migration
+
+See [the method matrix and wire semantics](gateway-server-requests.md). Current
+Clarify scenarios require `gateway.server_requests`; the old `gateway.clarify`
+conformance identifier is retained only for historical notification servers.
+In addition to the source checker, run the real upstream registry without a
+Gateway, provider, database or operator credentials:
+
+```powershell
+python scripts/check-gateway-server-requests-runtime.py <clean-upstream-checkout>
+```
+
+This runner verifies response settlement, capability refusal, per-question locks,
+replay, partial timeout, skip, cancel-all and unsupported-method errors against
+the imported upstream implementation. It requires upstream's Pydantic dependency.
+It reports the exact clean upstream SHA; it does not certify a physical device.

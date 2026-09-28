@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from aiohttp.test_utils import TestClient, TestServer
+from aiohttp import ClientConnectionError
 
 from plugin.relay.secure_proxy import (
     PROXY_HTTP_IDLE_TIMEOUT_SECONDS,
@@ -18,7 +19,11 @@ from plugin.relay.secure_proxy import (
 
 class SecureProxySecurityTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
+        self.enterContext(mock.patch("plugin.relay.secure_proxy._api_available", new=mock.AsyncMock(return_value=False)))
+        self.enterContext(mock.patch("plugin.relay.secure_proxy._dashboard_gate_enabled", new=mock.AsyncMock(return_value=False)))
         relay = SimpleNamespace(
+            client_count=0,
+            sessions=SimpleNamespace(active_count=lambda: 0),
             config=SimpleNamespace(
                 port=8767,
                 webapi_url="http://127.0.0.1:8642",
@@ -54,6 +59,8 @@ class SecureProxySecurityTests(unittest.IsolatedAsyncioTestCase):
             "/relay/security",
             "/bridge/status",
             "/pairing/mint",
+            "/secure-link/preflight",
+            "/relay/secure-link/preflight",
             "/media/inspect",
             "/relay/ws/../sessions",
             "/relay/%2e%2e/sessions",
@@ -65,7 +72,8 @@ class SecureProxySecurityTests(unittest.IsolatedAsyncioTestCase):
 
         # Fixed API/Dashboard namespaces exist, but never expose arbitrary
         # Relay/operator routes or an unauthenticated loopback Dashboard.
-        self.assertEqual((await self.client.get("/api/health")).status, 502)
+        with mock.patch("plugin.relay.secure_proxy._proxy_http", new=mock.AsyncMock(side_effect=ClientConnectionError)):
+            self.assertEqual((await self.client.get("/api/health")).status, 502)
         self.assertEqual((await self.client.get("/dashboard/api/auth/me")).status, 503)
 
     async def test_health_is_read_only_and_bounded(self) -> None:

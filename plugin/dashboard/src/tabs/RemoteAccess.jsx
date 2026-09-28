@@ -15,6 +15,7 @@ import {
 import { relativeTime } from "../lib/formatters.js";
 import { canonicalDashboardOrigin } from "../lib/mobile-setup.mjs";
 import { pairingQrRenderOptions } from "../lib/pairing-qr.mjs";
+import SecureLinkSetup from "../components/SecureLinkSetup.jsx";
 import {
   classifyPublicRouteInput,
   dashboardServeState,
@@ -262,7 +263,7 @@ function TailscaleCard({ status, onEnable, onDisable, busy, resultMessage }) {
   );
 }
 
-function SecureLinkCard({ status }) {
+function SecureLinkCard({ status, onPair, onInvalidateInvite, pairingBusy }) {
   const enabled = !!(status && status.enabled);
   const url = status && status.url;
   const surfaces = Array.isArray(status && status.surfaces) ? status.surfaces : [];
@@ -284,7 +285,7 @@ function SecureLinkCard({ status }) {
       <CardContent className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <Dot tone={enabled ? "ok" : "muted"} />
-          <span>{enabled ? "Enabled" : "Not enabled"}</span>
+          <span>{enabled ? "Enabled" : status?.state === "unavailable" ? "Needs attention" : status?.state === "unknown" ? "Not checked" : "Not enabled"}</span>
           {enabled ? <Badge variant="outline">Pinned TLS</Badge> : null}
         </div>
         {url ? (
@@ -311,6 +312,7 @@ function SecureLinkCard({ status }) {
           When enabled, new pairing invites include Secure Link alongside other
           reachable candidates. Existing devices must re-pair to trust its certificate pin.
         </p>
+        <SecureLinkSetup status={status || {}} onPair={onPair} onInvalidateInvite={onInvalidateInvite} pairingBusy={pairingBusy} />
       </CardContent>
     </Card>
   );
@@ -663,6 +665,19 @@ export default function RemoteAccess({ autoRefresh }) {
   const [reachability, setReachability] = useState([]);
   const [publicUrl, setPublicUrl] = useState(null);
   const [preferRole, setPreferRole] = useState(null);
+  const mintSequence = useRef(0);
+  const inviteRef = useRef(null);
+  useEffect(() => {
+    if (mintResult?.qr_payload) {
+      inviteRef.current?.scrollIntoView({ block: "start" });
+      inviteRef.current?.focus({ preventScroll: true });
+    }
+  }, [mintResult]);
+  const invalidateInvite = useCallback(() => {
+    mintSequence.current += 1;
+    setMintResult(null);
+    setBusy((current) => current === "mint" ? null : current);
+  }, []);
 
   const load = useCallback(async () => {
     setError(null);
@@ -724,26 +739,32 @@ export default function RemoteAccess({ autoRefresh }) {
   // surface the preview by inspecting the endpoints echoed in the
   // response shape (``qr_payload`` is the string to scan; we parse it
   // to render the preview table).
-  const onRegenerate = useCallback(async () => {
+  const onRegenerate = useCallback(async (secureLinkUrl = null) => {
+    const generation = ++mintSequence.current;
     setBusy("mint");
     setMintResult(null);
     try {
-      const dashboardUrl = canonicalDashboardOrigin(window.location);
+      const secureLink = typeof secureLinkUrl === "string";
+      const dashboardUrl = secureLink ? `${secureLinkUrl}/dashboard` : canonicalDashboardOrigin(window.location);
       if (!dashboardUrl) {
         throw new Error("This Dashboard does not have a valid HTTP(S) origin for pairing.");
       }
       const data = await mintPairingWithMode({
         mode: "auto",
-        prefer: preferRole || undefined,
+        prefer: secureLink ? "plugin_proxy" : preferRole || undefined,
         dashboard_url: dashboardUrl,
         legacy_direct_relay:
           classifyPublicRouteInput(publicUrl || "").kind === "legacy-relay-path",
       });
+      if (generation !== mintSequence.current) return;
+      if (secureLink && !JSON.parse(data.qr_payload).endpoints?.some((endpoint) => endpoint.proxy?.url === secureLinkUrl)) {
+        throw new Error("Secure Link changed. Check it again before pairing.");
+      }
       setMintResult(data || null);
     } catch (err) {
-      setMintResult({ error: err && err.message ? err.message : String(err) });
+      if (generation === mintSequence.current) setMintResult({ error: err && err.message ? err.message : String(err) });
     } finally {
-      setBusy(null);
+      if (generation === mintSequence.current) setBusy(null);
     }
   }, [preferRole, publicUrl]);
 
@@ -830,7 +851,7 @@ export default function RemoteAccess({ autoRefresh }) {
         resultMessage={helperMessage}
       />
 
-      <SecureLinkCard status={secureLink} />
+      <SecureLinkCard status={secureLink} onPair={onRegenerate} onInvalidateInvite={invalidateInvite} pairingBusy={busy === "mint"} />
 
       <ExperimentalReachCard status={secureLink} />
 
@@ -842,6 +863,7 @@ export default function RemoteAccess({ autoRefresh }) {
         }}
       />
 
+      <div ref={inviteRef} role="region" aria-label="Pairing invite" tabIndex={-1}>
       <EndpointPreviewCard
         endpoints={previewEndpoints}
         reachability={reachability}
@@ -854,6 +876,7 @@ export default function RemoteAccess({ autoRefresh }) {
         onPreferChange={setPreferRole}
         blockingIssues={previewReceipt && previewReceipt.blockingIssues ? previewReceipt.blockingIssues : []}
       />
+      </div>
 
       {mintResult && mintResult.error ? (
         <Alert variant="destructive">

@@ -34,6 +34,10 @@ canonical_source: /guide/getting-started
 
 ## 2. Hermes を到達可能にする
 
+Dashboard は端末から到達可能で、認証プロバイダーが設定されている必要があります。`hermes dashboard` は既定でループバックだけを使います。まず認証を設定し、直接 LAN/VPN 接続する場合は `hermes dashboard --host 0.0.0.0 --port 9119 --no-open` で起動します。ループバックへ転送するリバースプロキシには外部の `dashboard.public_url` と認証プロバイダーが必要です。内部セッショントークンを端末へコピーしないでください。
+
+**Hermes nearby** または **Remote gateway** を選びます。HTTPS を推奨します。それ以外の HTTP アドレスでは、この接続の正確なホストとポートについてリスクへの同意が必要です。アプリは VPN の保護を検出も強制もしません。VPN 切断時の認証情報や会話の露出リスクは利用者が負います。接続元を変更すると新たな同意とサインインが必要です。キャンセルすると元のアドレスが保持され、履歴と下書きは維持されます。Direct API は明示的な選択であり、Gateway チャットを自動で置き換えません。401 だけでは `dashboard.public_url` の誤設定を断定できません。
+
 Android の標準接続先は `:9119` の Hermes Dashboard/Gateway です。Chat、
 セッション、ログイン、Manage、標準 Voice、認証済み受信ファイルを提供します。`hermes dashboard`
 で起動し、スマートフォンから到達できるようにします。

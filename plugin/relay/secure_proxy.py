@@ -12,6 +12,7 @@ import asyncio
 import base64
 import hashlib
 import ipaddress
+import json
 import os
 import ssl
 import subprocess
@@ -23,6 +24,8 @@ from urllib.parse import urlsplit
 
 import aiohttp
 from aiohttp import web
+
+from . import __version__
 
 if TYPE_CHECKING:
     from .server import RelayServer
@@ -234,9 +237,21 @@ def _scope_dashboard_cookie(value: str) -> str:
 
 
 def _rewrite_dashboard_location(value: str, upstream_base: str) -> str | None:
-    """Map same-Dashboard redirects under /dashboard; reject unsafe HTTP hops."""
+    """Map same-Dashboard redirects under /dashboard; reject unsafe HTTP hops.
+
+    Upstream may already emit `/dashboard/...` when it honors
+    `X-Forwarded-Prefix: /dashboard`. Prefix only bare same-origin paths so we
+    never produce `/dashboard/dashboard/...`.
+    """
+    def _under_dashboard(path_and_query: str) -> str:
+        if path_and_query == "/dashboard" or path_and_query.startswith("/dashboard/"):
+            return path_and_query
+        if not path_and_query.startswith("/"):
+            path_and_query = "/" + path_and_query
+        return "/dashboard" + path_and_query
+
     if value.startswith("/") and not value.startswith("//"):
-        return "/dashboard" + value
+        return _under_dashboard(value)
     target = urlsplit(value)
     upstream = urlsplit(upstream_base)
     if (
@@ -247,11 +262,79 @@ def _rewrite_dashboard_location(value: str, upstream_base: str) -> str | None:
         suffix = target.path or "/"
         if target.query:
             suffix += "?" + target.query
-        return "/dashboard" + suffix
+        return _under_dashboard(suffix)
     if target.scheme == "https" and target.hostname:
         # OAuth providers intentionally leave the Hermes origin.
         return value
     return None
+
+
+# Login HTML hard-codes root-absolute paths (fetch('/auth/password-login'),
+# href="/auth/login", assign('/')). Behind Secure Link the public origin is
+# /dashboard/*, so those hit bare /auth/* → 404 and the form shows
+# "Sign-in failed. Please try again." Rewrite only known auth roots.
+_DASHBOARD_HTML_ROOT_REWRITES: tuple[tuple[bytes, bytes], ...] = (
+    (b"fetch('/auth/", b"fetch('/dashboard/auth/"),
+    (b'fetch("/auth/', b'fetch("/dashboard/auth/'),
+    (b'href="/auth/', b'href="/dashboard/auth/'),
+    (b"href='/auth/", b"href='/dashboard/auth/"),
+    (b'href="/login', b'href="/dashboard/login'),
+    (b"href='/login", b"href='/dashboard/login"),
+    (b"url('/fonts/", b"url('/dashboard/fonts/"),
+    (b'url("/fonts/', b'url("/dashboard/fonts/'),
+    # password-login success fallback when JSON next is missing
+    (
+        b"window.location.assign((data && data.next) || '/');",
+        b"window.location.assign((data && data.next) || '/dashboard/');",
+    ),
+    (
+        b'window.location.assign((data && data.next) || "/");',
+        b'window.location.assign((data && data.next) || "/dashboard/");',
+    ),
+)
+
+
+def _under_dashboard_path(path: str) -> str:
+    if path == "/dashboard" or path == "/dashboard/" or path.startswith("/dashboard/"):
+        return path if path != "/dashboard" else "/dashboard/"
+    if not path.startswith("/"):
+        return path
+    if path == "/":
+        return "/dashboard/"
+    return "/dashboard" + path
+
+
+def _rewrite_dashboard_json_next(body: bytes) -> bytes:
+    """Prefix JSON ``next`` landing paths for password-login responses."""
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return body
+    if not isinstance(payload, dict) or "next" not in payload:
+        return body
+    nxt = payload.get("next")
+    if not isinstance(nxt, str) or not nxt.startswith("/") or nxt.startswith("//"):
+        return body
+    # Native loopback redirects stay absolute http://127.0.0.1 — untouched above.
+    rewritten = _under_dashboard_path(nxt)
+    if rewritten == nxt:
+        return body
+    payload["next"] = rewritten
+    return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+
+def _rewrite_dashboard_body(content_type: str, body: bytes) -> bytes:
+    """Fix root-absolute dashboard auth URLs for the /dashboard Secure Link mount."""
+    lowered = content_type.lower()
+    if "application/json" in lowered:
+        return _rewrite_dashboard_json_next(body)
+    if "text/html" not in lowered:
+        return body
+    out = body
+    for old, new in _DASHBOARD_HTML_ROOT_REWRITES:
+        if old in out:
+            out = out.replace(old, new)
+    return out
 
 
 async def _dashboard_gate_enabled(base: str) -> bool:
@@ -305,6 +388,14 @@ async def _proxy_http(
         dashboard=dashboard,
         forwarded_host=forwarded_host,
     )
+    # Plain bodies so we can rewrite login HTML/JSON under /dashboard.
+    if dashboard:
+        headers = {
+            name: value
+            for name, value in headers.items()
+            if name.lower() != "accept-encoding"
+        }
+        headers["Accept-Encoding"] = "identity"
     timeout = aiohttp.ClientTimeout(
         total=PROXY_HTTP_TOTAL_TIMEOUT_SECONDS,
         connect=5,
@@ -323,12 +414,40 @@ async def _proxy_http(
                 and response.content_length > MAX_PROXY_RESPONSE_BYTES
             ):
                 raise web.HTTPBadGateway(text="upstream response exceeds secure limit")
+            content_type = response.headers.get("Content-Type", "")
+            needs_body_rewrite = dashboard and (
+                "text/html" in content_type.lower()
+                or "application/json" in content_type.lower()
+            )
+            upstream_body = b""
+            if needs_body_rewrite:
+                # The rewrite requires identity bytes. Never remove an encoding
+                # header from a body the upstream compressed despite our request.
+                if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                    raise web.HTTPBadGateway(text="unexpected encoded Dashboard response")
+                buffered = bytearray()
+                async for chunk in response.content.iter_chunked(64 * 1024):
+                    if len(buffered) + len(chunk) > MAX_PROXY_RESPONSE_BYTES:
+                        raise web.HTTPBadGateway(text="upstream response exceeds secure limit")
+                    buffered.extend(chunk)
+                upstream_body = _rewrite_dashboard_body(content_type, bytes(buffered))
+                if len(upstream_body) > MAX_PROXY_RESPONSE_BYTES:
+                    raise web.HTTPBadGateway(text="upstream response exceeds secure limit")
             forwarded: list[tuple[str, str]] = []
             for raw_name, raw_value in response.raw_headers:
                 name = raw_name.decode("latin1")
                 value = raw_value.decode("latin1")
                 lowered = name.lower()
                 if lowered in _HOP_HEADERS or (not dashboard and lowered == "set-cookie"):
+                    continue
+                if needs_body_rewrite and lowered in {
+                    "content-length",
+                    "content-encoding",
+                    "transfer-encoding",
+                    "etag",
+                    "content-md5",
+                    "digest",
+                }:
                     continue
                 if dashboard and lowered == "set-cookie":
                     value = _scope_dashboard_cookie(value)
@@ -338,6 +457,14 @@ async def _proxy_http(
                         continue
                     value = rewritten
                 forwarded.append((name, value))
+            if needs_body_rewrite:
+                forwarded.append(("Content-Length", str(len(upstream_body))))
+                downstream = web.Response(
+                    status=response.status,
+                    headers=forwarded,
+                    body=upstream_body,
+                )
+                return downstream
             downstream = web.StreamResponse(status=response.status, headers=forwarded)
             await downstream.prepare(request)
             response_size = 0
@@ -352,32 +479,79 @@ async def _proxy_http(
 
 
 async def _proxy_websocket(
-    request: web.Request, upstream_url: str, headers: dict[str, str]
+    request: web.Request, upstream_url: str, headers: dict[str, str],
 ) -> web.StreamResponse:
-    downstream = web.WebSocketResponse(heartbeat=30, max_msg_size=4 * 1024 * 1024)
-    await downstream.prepare(request)
+    # aiohttp's client handshake must own Sec-WebSocket-*; forwarding the
+    # caller's key/extensions confuses the upstream upgrade.
+    safe_headers = {
+        name: value
+        for name, value in headers.items()
+        if not name.lower().startswith("sec-websocket-")
+        and name.lower() not in {
+            "content-length",
+            "content-type",
+            "content-encoding",
+        }
+    }
+    protocols = [
+        protocol.strip()
+        for value in request.headers.getall("Sec-WebSocket-Protocol", [])
+        for protocol in value.split(",")
+        if protocol.strip()
+    ]
+    downstream = web.WebSocketResponse(heartbeat=30, max_msg_size=4 * 1024 * 1024, protocols=protocols)
+    if not downstream.can_prepare(request).ok:
+        raise web.HTTPBadRequest(text="WebSocket upgrade required")
     try:
         async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=None, connect=5)
+            timeout=aiohttp.ClientTimeout(total=None, connect=5),
         ) as client:
             async with client.ws_connect(
-                upstream_url, heartbeat=30, max_msg_size=4 * 1024 * 1024,
-                headers=headers,
+                upstream_url,
+                heartbeat=30,
+                max_msg_size=4 * 1024 * 1024,
+                headers=safe_headers,
+                protocols=protocols,
+                # Disable permessage-deflate on the upstream leg. Negotiating
+                # compression independently on phone↔proxy and proxy↔dashboard
+                # produced WS close 1002 (protocol error) right after
+                # gateway.ready, so chat stayed on "checking gateway".
+                compress=0,
             ) as upstream:
+                # Finish authentication/negotiation upstream first. Echo only
+                # its selected public protocol, never a ticket credential.
+                selected = upstream.protocol
+                if selected and selected.startswith("hermes-gateway-ticket."):
+                    raise web.HTTPBadGateway(text="upstream selected a credential protocol")
+                downstream = web.WebSocketResponse(
+                    heartbeat=30,
+                    max_msg_size=4 * 1024 * 1024,
+                    protocols=[selected] if selected else [],
+                )
+                await downstream.prepare(request)
                 async def forward(source, target) -> None:
                     async for message in source:
                         if message.type == aiohttp.WSMsgType.TEXT:
                             await target.send_str(message.data)
                         elif message.type == aiohttp.WSMsgType.BINARY:
                             await target.send_bytes(message.data)
-                tasks = [asyncio.create_task(forward(downstream, upstream)),
-                         asyncio.create_task(forward(upstream, downstream))]
-                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+                tasks = [
+                    asyncio.create_task(forward(downstream, upstream)),
+                    asyncio.create_task(forward(upstream, downstream)),
+                ]
+                done, pending = await asyncio.wait(
+                    tasks, return_when=asyncio.FIRST_COMPLETED,
+                )
                 for task in pending:
                     task.cancel()
                 await asyncio.gather(*done, *pending, return_exceptions=True)
+                await downstream.close()
     except (aiohttp.ClientError, asyncio.TimeoutError):
-        await downstream.close(code=1011, message=b"upstream unavailable")
+        if not downstream.prepared:
+            raise web.HTTPBadGateway(text="upstream unavailable")
+        if not downstream.closed:
+            await downstream.close(code=1011, message=b"upstream unavailable")
     return downstream
 
 
@@ -447,7 +621,11 @@ def create_secure_proxy_app(server: "RelayServer") -> web.Application:
         services["api"]["available"] = api_available
         services["dashboard"]["available"] = dashboard_available
         return web.json_response({
-            "status": "ok", "surface": "hermes_secure_proxy",
+            "status": "ok",
+            "version": __version__,
+            "clients": server.client_count,
+            "sessions": server.sessions.active_count(),
+            "surface": "hermes_secure_proxy",
             "display_name": SECURE_LINK_NAME,
             "description": SECURE_LINK_DESCRIPTION,
             "security": "pinned_tls",
@@ -470,8 +648,9 @@ def create_secure_proxy_app(server: "RelayServer") -> web.Application:
         tail = _safe_tail(request, "/api")
         if tail is None:
             raise web.HTTPBadRequest(text="unsafe proxy path")
+        # Empty tail is bare /api — same as dashboard, land on upstream "/".
         try:
-            return await _proxy_http(request, f"{api_base}{tail}")
+            return await _proxy_http(request, f"{api_base}{tail or '/'}")
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise web.HTTPBadGateway(text="API upstream unavailable") from exc
 
@@ -491,9 +670,15 @@ def create_secure_proxy_app(server: "RelayServer") -> web.Application:
             forwarded_host=secure_link_authority,
         )
         if request.headers.get("Upgrade", "").lower() == "websocket":
-            return await _proxy_websocket(
-                request, upstream.replace("http://", "ws://", 1), headers
-            )
+            # Gateway chat WS carries auth as ?ticket=… (and optional profile).
+            # Dropping the query string makes upstream reject the upgrade and the
+            # proxy surfaces that as close 1011 "upstream unavailable".
+            qs = request.query_string
+            ws_url = upstream.replace("http://", "ws://", 1)
+            if qs:
+                sep = "&" if "?" in ws_url else "?"
+                ws_url = f"{ws_url}{sep}{qs}"
+            return await _proxy_websocket(request, ws_url, headers)
         try:
             return await _proxy_http(
                 request,
@@ -506,7 +691,12 @@ def create_secure_proxy_app(server: "RelayServer") -> web.Application:
 
     app.router.add_get("/relay/health", health, allow_head=True)
     app.router.add_get("/relay/ws", relay_ws)
+    # Bare /api and /dashboard (no trailing slash) must resolve — browsers and
+    # clients often omit the slash; aiohttp's /{tail:.*} pattern does not match
+    # the prefix alone and previously returned a plain 404.
+    app.router.add_route("*", "/api", api_proxy)
     app.router.add_route("*", "/api/{tail:.*}", api_proxy)
+    app.router.add_route("*", "/dashboard", dashboard_proxy)
     app.router.add_route("*", "/dashboard/{tail:.*}", dashboard_proxy)
     return app
 

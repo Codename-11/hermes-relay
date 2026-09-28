@@ -9,6 +9,7 @@ stdlib.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import shutil
 import tempfile
@@ -16,6 +17,20 @@ import time
 import unittest
 
 from plugin.relay.media import MediaRegistrationError, MediaRegistry, _MediaEntry
+
+
+def test_registry_logs_omit_tokens_and_media_paths(caplog) -> None:
+    async def run() -> tuple[str, str]:
+        with tempfile.TemporaryDirectory() as root:
+            path = _write_file(root, "private-image.png")
+            registry = MediaRegistry(allowed_roots=[root])
+            entry = await registry.register(path, "image/png")
+            return path, entry.token
+
+    caplog.set_level(logging.INFO, logger="hermes_relay.media")
+    path, token = asyncio.run(run())
+    assert path not in caplog.text
+    assert token[:8] not in caplog.text
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -96,6 +111,78 @@ class MediaRegistryTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await registry.get(entry.token))
         # And the expired entry has been pruned.
         self.assertEqual(await registry.size(), 0)
+
+    async def test_owned_upload_is_deleted_on_expiry_but_caller_file_is_preserved(self) -> None:
+        registry = MediaRegistry()
+        with tempfile.NamedTemporaryFile(prefix="hermes-relay-upload-", delete=False) as upload:
+            upload.write(b"private-image")
+            owned_path = upload.name
+        caller_path = _write_file(self._sandbox, "caller.png")
+        try:
+            owned = await registry.register(owned_path, "image/png", owned_file=True)
+            caller = await registry.register(caller_path, "image/png")
+            async with registry._lock:
+                registry._entries[owned.token].expires_at = time.time() - 1
+                registry._entries[caller.token].expires_at = time.time() - 1
+            self.assertEqual(await registry.cleanup(), 2)
+            self.assertFalse(os.path.exists(owned_path))
+            self.assertTrue(os.path.exists(caller_path))
+        finally:
+            if os.path.exists(owned_path):
+                os.unlink(owned_path)
+
+    async def test_owned_upload_is_deleted_on_close(self) -> None:
+        registry = MediaRegistry()
+        with tempfile.NamedTemporaryFile(prefix="hermes-relay-upload-", delete=False) as upload:
+            upload.write(b"private-image")
+            owned_path = upload.name
+        try:
+            await registry.register(owned_path, "image/png", owned_file=True)
+            await registry.close()
+            self.assertFalse(os.path.exists(owned_path))
+        finally:
+            if os.path.exists(owned_path):
+                os.unlink(owned_path)
+
+    async def test_owned_upload_is_deleted_on_lru_eviction(self) -> None:
+        registry = MediaRegistry(max_entries=1)
+        with tempfile.NamedTemporaryFile(prefix="hermes-relay-upload-", delete=False) as upload:
+            upload.write(b"private-image")
+            owned_path = upload.name
+        try:
+            await registry.register(owned_path, "image/png", owned_file=True)
+            await registry.register(_write_file(self._sandbox, "keep.png"), "image/png")
+            self.assertFalse(os.path.exists(owned_path))
+        finally:
+            if os.path.exists(owned_path):
+                os.unlink(owned_path)
+
+    async def test_owned_file_survives_while_another_token_references_it(self) -> None:
+        registry = MediaRegistry()
+        with tempfile.NamedTemporaryFile(prefix="hermes-relay-upload-", delete=False) as upload:
+            upload.write(b"shared-image")
+            owned_path = upload.name
+        try:
+            owned = await registry.register(owned_path, "image/png", owned_file=True)
+            other = await registry.register(owned_path, "image/png")
+            async with registry._lock:
+                registry._entries[owned.token].expires_at = time.time() - 1
+            await registry.cleanup()
+            self.assertTrue(os.path.exists(owned_path))
+            async with registry._lock:
+                registry._entries[other.token].expires_at = time.time() - 1
+            await registry.cleanup()
+            self.assertFalse(os.path.exists(owned_path))
+        finally:
+            if os.path.exists(owned_path):
+                os.unlink(owned_path)
+
+    async def test_owned_file_cannot_delete_arbitrary_registered_path(self) -> None:
+        registry = _make_registry(self._sandbox)
+        path = _write_file(self._sandbox, "keep.png")
+        with self.assertRaisesRegex(MediaRegistrationError, "managed upload path"):
+            await registry.register(path, "image/png", owned_file=True)
+        self.assertTrue(os.path.exists(path))
 
     # ── LRU eviction ────────────────────────────────────────────────────
 

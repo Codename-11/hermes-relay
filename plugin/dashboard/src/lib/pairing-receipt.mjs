@@ -41,21 +41,34 @@ function normalizeRoute(endpoint, index, globalPayload, endpointCount) {
     ? endpoint.priority
     : index;
   const fallbackGlobal = endpointCount <= 1;
+  const issues = [];
+  const proxy = endpoint?.proxy;
+  const proxyBase = proxy ? cleanUrl(proxy.url, new Set(["https:"])) : null;
+  const validPin = typeof proxy?.pin_sha256 === "string" && /^sha256\/[A-Za-z0-9+/]{43}=$/.test(proxy.pin_sha256);
+  const validProxy = proxyBase && /^https:\/\/[^/?#]+\/?$/i.test(proxy.url.trim()) && validPin &&
+    typeof proxy.cert_der === "string" && proxy.cert_der.length > 0;
+  if (proxy && !validProxy) issues.push(`${role}: Secure Link needs a safe HTTPS origin, paired pin, and certificate`);
+  const protectedServices = new Set(validProxy && Array.isArray(proxy.surfaces) ? proxy.surfaces : []);
+  const proxyDashboard = protectedServices.has("dashboard") ? `${proxyBase}/dashboard` : null;
+  const proxyRelay = protectedServices.has("relay") ? `${proxyBase.replace(/^https:/, "wss:")}/relay/ws` : null;
+  const proxyApi = protectedServices.has("api") ? `${proxyBase}/api` : null;
   const dashboardRaw = endpoint && endpoint.dashboard && endpoint.dashboard.url
     ? endpoint.dashboard.url
-    : fallbackGlobal ? globalPayload.dashboard_url : null;
+    : proxyDashboard || (fallbackGlobal ? globalPayload.dashboard_url : null);
   const relayRaw = endpoint && endpoint.relay && endpoint.relay.url
     ? endpoint.relay.url
-    : fallbackGlobal && globalPayload.relay ? globalPayload.relay.url : null;
+    : proxyRelay || (fallbackGlobal && globalPayload.relay ? globalPayload.relay.url : null);
   const dashboard = cleanUrl(dashboardRaw, HTTP_SCHEMES);
   const relay = cleanUrl(relayRaw, RELAY_SCHEMES);
-  const api = apiUrl(endpoint && endpoint.api ? endpoint.api : fallbackGlobal ? globalPayload : null);
+  const api = endpoint?.api ? apiUrl(endpoint.api) : proxyApi || apiUrl(fallbackGlobal ? globalPayload : null);
   const surfaces = [
     dashboard ? { surface: "dashboard", label: "Dashboard", url: dashboard } : null,
     relay ? { surface: "relay", label: "Relay", url: relay } : null,
     api ? { surface: "api", label: "Direct API", url: api } : null,
-  ].filter(Boolean);
-  const issues = [];
+  ].filter(Boolean).map((surface) => ({
+    ...surface,
+    ...(validProxy && [proxyDashboard, proxyRelay, proxyApi].includes(surface.url) ? { requiresPairedClient: true } : {}),
+  }));
 
   if (dashboardRaw && !dashboard) issues.push(`${role}: invalid Dashboard URL`);
   if (relayRaw && !relay) issues.push(`${role}: invalid Relay URL`);
@@ -85,7 +98,8 @@ function normalizeRoute(endpoint, index, globalPayload, endpointCount) {
     role,
     priority,
     surfaces,
-    protection: routeProtection(role, surfaces),
+    protection: surfaces.length && surfaces.every((s) => s.requiresPairedClient)
+      ? "Secure Link · paired TLS" : routeProtection(role, surfaces),
     issues,
   };
 }
@@ -129,6 +143,7 @@ export function pairingSurfaceProbes(receipt) {
       priority: route.priority,
       surface: surface.surface,
       url: surface.url,
+      ...(surface.requiresPairedClient ? { requires_paired_client: true } : {}),
     })),
   );
 }
@@ -140,6 +155,7 @@ export function pairingProbeKey(entry) {
 /** Convert a surface probe into honest, product-facing reachability. */
 export function pairingProbeStatus(result) {
   if (!result) return { healthy: null, label: "Not checked" };
+  if (result.requires_paired_client) return { healthy: null, label: "Import QR to verify" };
   if (
     result.surface === "relay" &&
     (result.status === 401 || result.status === 403) &&

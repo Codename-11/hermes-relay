@@ -4444,3 +4444,79 @@ Source and merged-manifest validation enforce this boundary. Foreground-service
 lifecycle tests and rendered permission/Stop controls supplement, but do not
 replace, device tests or a reviewed Play test-track submission. See
 [Play declarations](play-store-listing.md#voice-overlay-review-before-production).
+
+
+## ADR 75 — Dashboard HTTP exceptions require exact-origin user consent
+
+**Status:** Accepted (2026-09-18).
+
+**Context.** Address-range classification does not establish whether traffic
+travels through a custom VPN. It blocked adding or migrating a Dashboard using
+HTTP on a non-private-range address, even when the operator intentionally routed
+that address through a private tunnel.
+
+**Decision.** Keep HTTPS as the default. Offer an unchecked, explicit warning
+and acknowledgement when a user configures an otherwise-restricted HTTP
+Dashboard address. Persist consent only on that connection for the exact HTTP
+scheme, host and port. A different origin requires new consent; editing retires
+the old origin's exception and Dashboard authentication without replacing the
+connection identity or deleting drafts/history. Setup, route editing and native
+authentication share this authority. No Relay grant or global insecure-mode flag
+is reused. Consent is not a VPN or encryption verdict.
+
+The app does not detect or enforce VPN protection. The user accepts cleartext
+exposure if the tunnel drops or traffic uses another route. Authentication still
+uses the upstream Dashboard contract; a public status response cannot prove
+protected access or Gateway readiness. Generic 401s retain sign-in/retry recovery;
+loopback/public_url guidance is conditional on additional setup evidence.
+
+**Consequences.** Advanced network setups are usable with explicit assumed risk.
+The exception must not cross connection or credential-origin boundaries. VPN
+monitoring or route enforcement would be separate work, not an implied guarantee.
+
+## ADR 76 — Native Dashboard callbacks use bounded concurrent readers
+
+**Status:** Accepted (2026-09-27).
+
+The native password and OIDC paths share one Android loopback coordinator.
+Serial blocking reads allowed an incomplete request to hold later callbacks
+behind it. A per-read socket timeout reset by incoming bytes did not enforce the
+attempt deadline or coroutine cancellation.
+
+Use at most four concurrent readers with a five-second absolute request deadline
+and one serial authorization consumer. Cancellation closes descriptors to unblock
+Java socket IO; interrupting a coroutine alone is insufficient. Keep request-line
+and header byte limits, exact literal IPv4 Host/port and callback-path validation,
+unique state/code parameters, single-use authorization and connection-generation
+checks. Token calls are cancelled with their attempt. Response writes have their
+own two-second deadline. Fixed diagnostic stages never include request contents.
+
+This addresses the reproduced listener defect in #632. The reported Samsung
+Android 16 password-browser stall is not established as the same failure. Provider
+selection, upstream PKCE, embedded cookie fallback, `/api/auth/me` verification,
+encrypted connection credentials and saved conversations retain their ownership.
+See [callback investigation and verification](native-dashboard-callback-testing.md).
+
+## ADR 77 — Gateway asks use upstream JSON-RPC server requests
+
+**Status:** Accepted (2026-09-27).
+
+Upstream replaced most paired ask notifications and response methods with
+server-to-client JSON-RPC requests. Android advertises its ability to answer
+requests or return a method error after readiness on every connection. A method
+with an id is dispatched before ordinary client response correlation, preserving
+string and numeric ids without treating inbound requests as RPC acknowledgements.
+
+The existing native cards render supported requests. Their persisted checkpoint
+records whether the ask came from the native protocol; restored native cards
+cannot fall back to legacy response methods. Only a replayed open request on the
+current socket and exact session authorizes a reply. Batch Clarify uses upstream
+question locks and preserves accepted progress. Server cancellation, expiry and
+closed-request snapshots retire only matching cards. Native requests have no
+invented client deadline. Secret and sudo values remain transient and masked.
+
+Android does not impersonate Desktop preview, terminal, native window, tour,
+vault or display-installation interfaces. Those requests receive `-32601`.
+Legacy notification fixtures remain separate from current upstream scenarios.
+The current contract has both source checks and provider-free execution against
+an unmodified pinned upstream request registry.

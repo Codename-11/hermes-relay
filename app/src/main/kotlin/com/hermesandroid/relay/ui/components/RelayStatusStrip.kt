@@ -46,9 +46,8 @@ fun RelayStatusStrip(
     /** Optional security marker rendered just before the route label. */
     securityGlyph: (@Composable () -> Unit)? = null,
     /**
-     * When true, the strip shows an amber "Relay reconnecting" cue in place of the
-     * route label. This is where a **routine** in-progress relay reconnect
-     * surfaces — the top chrome stays empty so chat content never shifts.
+     * When true, the strip shows the active chat connection's pending state
+     * instead of its route label. Optional Relay availability is independent.
      */
     reconnecting: Boolean = false,
     maxContentWidth: Dp? = null,
@@ -120,7 +119,7 @@ fun RelayStatusStrip(
 }
 
 /**
- * Amber "Relay reconnecting" cue with a softly pulsing dot. This is the *only*
+ * Amber connection-progress cue with a softly pulsing dot. This is the *only*
  * surface for a routine in-progress relay reconnect — the top of the app stays
  * empty (chat/agent status rides the chat header subtitle) so nothing shifts.
  * Pulse is frame-throttled via [rememberAmbientPhase] to avoid pinning the
@@ -144,7 +143,7 @@ private fun ReconnectingCue(modifier: Modifier = Modifier) {
                 .background(RelayRefresh.Amber),
         )
         Text(
-            text = stringResource(R.string.settings_relay_reconnecting),
+            text = stringResource(R.string.session_path_connecting),
             style = relayMetadataStyle(),
             color = RelayRefresh.Amber,
             maxLines = 1,

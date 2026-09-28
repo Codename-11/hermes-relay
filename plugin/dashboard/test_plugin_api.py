@@ -1071,6 +1071,26 @@ class RemoteAccessProbeTests(PluginApiTestCase):
 
 
 class RemoteAccessStatusTests(PluginApiTestCase):
+    def test_configured_but_failed_secure_link_is_not_reported_as_disabled(self) -> None:
+        with patch.object(plugin_api, "_proxy_get", new=AsyncMock(return_value={
+            "secure_link": {"enabled": True, "status": "unavailable"},
+        })), patch.object(plugin_api, "_tailscale_status_dict", return_value={}), patch.object(plugin_api, "_canonical_upstream_present", return_value=False):
+            response = self.client.get("/remote-access/status")
+        self.assertEqual(response.json()["secure_link"]["state"], "unavailable")
+        self.assertFalse(response.json()["secure_link"]["enabled"])
+
+    def test_secure_link_preflight_uses_running_relay_and_preserves_report(self) -> None:
+        report = {"schema_version": 1, "read_only": True, "state": "needs_attention", "checks": []}
+        captured = _install_mock_transport(self, lambda request: httpx.Response(200, json=report))
+        response = self.client.get("/remote-access/secure-link/preflight", params={"host": "relay.example", "port": "9443"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), report)
+        self.assertEqual(captured[0].url.host, "127.0.0.1")
+        self.assertEqual(captured[0].url.path, "/secure-link/preflight")
+        self.assertEqual(captured[0].url.params["host"], "relay.example")
+        self.assertEqual(captured[0].url.params["port"], "9443")
+        self.assertEqual(captured[0].extensions["timeout"]["read"], 15.0)
+
     def test_status_surfaces_tailscale_dict_and_public_pin(self) -> None:
         # Monkey-patch the tailscale helper so the test doesn't shell out.
         from plugin.relay import tailscale as ts_mod

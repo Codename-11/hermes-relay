@@ -34,6 +34,10 @@ baixe o arquivo `.aab`; ele é destinado ao Google Play.
 
 ## 2. Deixe o Hermes acessível
 
+O Dashboard precisa estar acessível no telefone e ter um provedor de autenticação. `hermes dashboard` usa apenas loopback por padrão. Configure primeiro o login e, para LAN/VPN direto, execute `hermes dashboard --host 0.0.0.0 --port 9119 --no-open`. Um proxy reverso para loopback precisa da `dashboard.public_url` externa e de um provedor. Nunca copie o token interno para o telefone.
+
+Escolha **Hermes nearby** ou **Remote gateway**. HTTPS é recomendado. Outros endereços HTTP exigem aceitação do risco para esta conexão, host e porta exatos. O aplicativo não detecta nem impõe proteção VPN; você assume a exposição de credenciais e conversas se a VPN cair. Mudar a origem exige novo consentimento e login. Cancelar mantém o endereço anterior; histórico e rascunhos são preservados. Direct API é uma alternativa explícita, nunca substitui automaticamente o chat Gateway. Um 401 sozinho não comprova erro em `dashboard.public_url`.
+
 O Android usa normalmente o Dashboard/Gateway do Hermes em `:9119`. Ele fornece
 Chat, sessões, login, Manage, voz padrão e arquivos recebidos autenticados.
 Inicie-o com `hermes dashboard` e

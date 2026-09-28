@@ -12,6 +12,13 @@ independent of the Hermes-Relay service. It renders a tokenless setup QR contain
 standard Dashboard/Gateway connection. Hermes-Relay pairing remains a separate,
 explicit **Pair new device** flow.
 
+**Remote Access → Hermes Secure Link → Set up Secure Link** runs the host's
+read-only preflight, displays blockers and restart impact, and supplies settings
+for the existing Relay owner. **Check again** must confirm the active selected
+origin before **Create pairing QR** is offered. This flow does not persist settings
+or restart services. The Desktop Relay pane and `hermes relay secure-link` use the
+same backend report; Android imports the resulting QR and signs in separately.
+
 ## Requirements
 
 - Node.js 18+

@@ -60,7 +60,9 @@ import com.hermesandroid.relay.ui.theme.appearanceTopRoundedCornerShape
 @Composable
 fun ModelPickerSheet(
     options: List<ChatInputPickerOption>,
+    loading: Boolean = false,
     refreshing: Boolean = false,
+    error: String? = null,
     onRefresh: (() -> Unit)? = null,
     onSelect: (ChatInputPickerOption) -> Unit,
     onDismiss: () -> Unit,
@@ -210,11 +212,28 @@ fun ModelPickerSheet(
                                 .padding(32.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text(
-                                text = stringResource(R.string.model_picker_empty),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            when {
+                                modelOptions.isEmpty() && loading -> Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                ) {
+                                    CircularProgressIndicator()
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(stringResource(R.string.dashboard_loading_provider_catalog))
+                                }
+                                modelOptions.isEmpty() && error != null -> Text(
+                                    text = stringResource(R.string.dashboard_model_options_load_failed),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                                else -> Text(
+                                    text = stringResource(
+                                        if (modelOptions.isEmpty()) R.string.model_picker_no_models
+                                        else R.string.model_picker_empty,
+                                    ),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                     }
                 }

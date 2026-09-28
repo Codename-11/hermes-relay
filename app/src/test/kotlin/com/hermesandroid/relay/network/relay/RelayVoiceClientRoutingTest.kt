@@ -74,6 +74,29 @@ class RelayVoiceClientRoutingTest {
     }
 
     @Test
+    fun proxyProviderOwnsBothVoiceSessionAndWebSocketRequests() = runTest {
+        val selected = Collections.synchronizedList(mutableListOf<String>())
+        val requests = Collections.synchronizedList(mutableListOf<String>())
+        val proxyClient = httpClient.newBuilder().addInterceptor { chain ->
+            requests.add(chain.request().url.encodedPath)
+            chain.proceed(chain.request())
+        }.build()
+        val client = RelayVoiceClient(
+            context = context,
+            okHttpClient = httpClient.newBuilder().addInterceptor {
+                throw IOException("generic client must not handle this route")
+            }.build(),
+            relayUrlProvider = { relayUrl(lanServer) },
+            sessionTokenProvider = { "session-token" },
+            pluginProxyHttpClientProvider = { url -> selected.add(url); proxyClient },
+        )
+        val result = client.runVoiceOutput("Pinned route") {}
+        assertTrue(result.exceptionOrNull()?.message, result.isSuccess)
+        assertEquals(listOf("/voice/output/session", "/voice/output/session-test"), requests)
+        assertTrue(selected.any { it.endsWith("/voice/output/session-test") })
+    }
+
+    @Test
     fun realtimeAgentAndVoiceOutputFollowSameEffectiveRelayUrlProvider() = runTest {
         var activeRelayUrl = relayUrl(lanServer)
         val client = RelayVoiceClient(

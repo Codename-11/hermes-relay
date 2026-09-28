@@ -34,6 +34,7 @@ import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(sdk = [35])
 class ClarifyBatchScreenshotTest {
     @get:Rule val compose = createComposeRule()
 
@@ -80,7 +81,7 @@ class ClarifyBatchScreenshotTest {
                 answer = "[\"Staging\",\"Production\"]".takeIf { answered > 1 }, submitting = submitting),
         )
         val card = HermesCard(type = HermesCard.BuiltInTypes.ASK_CLARIFY, title = "Hermes needs clarification",
-            id = "batch", clarifyBatch = HermesCardClarifyBatch(questions, expiresAtMillis = if (expired) 1L else null))
+            id = "batch", clarifyBatch = HermesCardClarifyBatch(questions, allowSkip = true, expiresAtMillis = if (expired) 1L else null))
         compose.setContent {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, scale)) {

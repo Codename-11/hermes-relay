@@ -315,7 +315,7 @@
     <string name="cw_cloud_subtitle">Mit deinem gehosteten Agenten verbinden</string>
     <string name="cw_server_vps_title">Remote-Gateway</string>
     <string name="cw_server_vps_subtitle">Dashboard-Adresse eingeben</string>
-    <string name="cw_relay_optional_note">Private LAN- und Tailscale-Adressen dürfen HTTP oder HTTPS verwenden. Öffentliche Adressen erfordern HTTPS. Relay und Direct API sind optional.</string>
+    <string name="cw_relay_optional_note">HTTPS wird empfohlen. Andere HTTP-Adressen erfordern eine ausdrückliche Risikoannahme. Die App erzwingt keinen VPN-Schutz. Relay und Direct API sind optional.</string>
     <string name="cw_cloud_entry_title">Mit von Nous gehostetem Hermes verbinden</string>
     <string name="cw_cloud_entry_description">Gib die im Nous Portal angezeigte Agentenadresse ein. Nach dem Auffinden von Hermes meldest du dich sicher an.</string>
     <string name="cw_cloud_agent_name">Agentenadresse</string>
@@ -323,7 +323,7 @@
     <string name="cw_cloud_slug_hint">Wir verbinden dich mit dein-agent.agents.nousresearch.com.</string>
     <string name="cw_cloud_slug_error">Gib exakt die Buchstaben, Zahlen und Bindestriche vor .agents.nousresearch.com ein.</string>
     <string name="cw_cloud_address_placeholder">https://dein-agent.example.com</string>
-    <string name="cw_cloud_address_hint">Verwende die vollständige HTTPS-Adresse, die für deinen gehosteten Agenten angezeigt wird.</string>
+    <string name="cw_cloud_address_hint">Verwende die vollständige HTTPS-Adresse, die für deinen gehosteten Agenten angezeigt wird, einschließlich :Port, falls angegeben.</string>
     <string name="cw_cloud_use_custom_address">Benutzerdefinierte URL verwenden</string>
     <string name="cw_cloud_use_nous_address">Von Nous gehostete Adresse verwenden</string>
     <string name="cw_before_connecting">Vor dem Verbinden</string>
@@ -343,10 +343,10 @@
     <string name="cw_nearby_enter_address">Stattdessen Adresse eingeben</string>
     <string name="cw_other_connection_methods">Andere Verbindungsmethoden</string>
     <string name="cw_manual_hermes_title">Gateway-Adresse eingeben</string>
-    <string name="cw_manual_hermes_description">Gib die Dashboard-Adresse ein, die du im Browser öffnest. Wenn sie auf diesem Smartphone nicht geöffnet wird, starte hermes dashboard und prüfe WLAN oder Tailscale.</string>
+    <string name="cw_manual_hermes_description">Gib die Dashboard-Adresse ein, die sich auf diesem Telefon öffnen lässt. Für LAN oder VPN benötigt der Host ein erreichbares Dashboard mit Authentifizierung. Wenn der Browser keine Verbindung herstellt, lies die Einrichtungsanleitung.</string>
     <string name="cw_hermes_address">Hermes-Adresse</string>
-    <string name="cw_hermes_address_placeholder">192.168.1.10 oder hermes.example.com</string>
-    <string name="cw_hermes_address_hint">Kein API-Schlüssel erforderlich. Ohne Port wird Dashboard-Port 9119 verwendet.</string>
+    <string name="cw_hermes_address_placeholder">192.168.1.10:9119</string>
+    <string name="cw_hermes_address_hint">Beispiele: 192.168.1.10:9119 oder https://hermes.example.com:10443. Ohne Angabe verwenden private Hosts Port 9119 und HTTPS Port 443. Kein API-Schlüssel nötig.</string>
     <string name="cw_find_hermes">Hermes suchen</string>
     <string name="cw_hermes_found">Hermes gefunden</string>
     <string name="cw_ready_to_connect">Verbindungsbereit</string>
@@ -369,12 +369,12 @@
     <string name="cw_skip_for_now">Vorerst überspringen — später in den Einstellungen einrichten</string>
     <string name="cw_back">Zurück</string>
     <string name="cw_connect_button">Verbinden</string>
-    <string name="cw_hermes_label">Hermes</string>
-    <string name="cw_hermes_label_desc">Verwende dies für Chat und Verwaltung. Kopple Relay später nur, wenn du Terminal, Bridge, Relay-Sitzungen oder Berechtigungen aktivierst. Die Dashboard-Anmeldung ist der bevorzugte vorgelagerte Authentifizierungsweg; der API-Schlüssel bleibt die Ausweichlösung für Android-Chat.</string>
+    <string name="cw_hermes_label">Direct API</string>
+    <string name="cw_hermes_label_desc">Direct API ist eine ausdrücklich gewählte Kompatibilitätsverbindung für API-Server-Chats. Manage, Dashboard-Sitzungen und Standard-Sprachfunktionen erfordern eine separate Dashboard-Anmeldung. Bestehende Gateway-Unterhaltungen wechseln nicht zu Direct API.</string>
     <string name="cw_api_url_label">API-Server-URL oder Host</string>
     <string name="cw_api_key_label">API-Schlüssel</string>
     <string name="cw_api_key_placeholder">Wert aus API_SERVER_KEY</string>
-    <string name="cw_api_key_hint">Für Android-Chat erforderlich, bis der Dashboard-Gateway-Transport aktiviert ist.</string>
+    <string name="cw_api_key_hint">Bearer-Schlüssel nur für diesen API-Server. Er meldet dich nicht am Dashboard an.</string>
     <string name="cw_tailscale_label">Fernzugriff — Tailscale-URL (optional)</string>
     <string name="cw_dashboard">Dashboard</string>
     <string name="cw_dashboard_routes_hint">Routen: zuerst Standard, bei Erreichbarkeit Tailscale als Ausweichroute.</string>
@@ -390,7 +390,7 @@
 
     <!-- Method tiles -->
     <string name="cw_method_hermes_title">Hermes</string>
-    <string name="cw_method_hermes_subtitle">API-/Dashboard-Einrichtung für Chat, Verwaltung, Skills, Cron, MCP, Profile, Modelle und Einstellungen</string>
+    <string name="cw_method_hermes_subtitle">Ausdrücklich gewählter API-Server-Chat für Headless- oder Kompatibilitätskonfigurationen</string>
     <string name="cw_method_scan_title">Einrichtungs-QR-Code scannen</string>
     <string name="cw_method_scan_subtitle">Scanne einen QR-Code mit API-URL/-Schlüssel für Hermes; Relay-QR-Daten erfordern das Relay-Plugin</string>
     <string name="cw_method_pair_code_title">Relay per Code koppeln</string>
@@ -400,7 +400,7 @@
 
     <!-- Standard connect form -->
     <string name="cw_api_url_placeholder">192.168.1.10 oder http://dein-server:8642</string>
-    <string name="cw_api_url_supporting">Von Chat und Sitzungen verwendete Hermes-API — bei reinen Hosts werden API-Port 8642 und http:// angenommen (Dashboard-Port 9119 wird separat abgeleitet)</string>
+    <string name="cw_api_url_supporting">API-Server-Adresse für Direct-API-Chat. Reine Hostnamen verwenden HTTP und Port 8642.</string>
     <string name="cw_scan_message">Dieses LAN wird nach Hermes-Dashboard/API durchsucht…</string>
     <string name="cw_dashboard_signin_hint">Melde dich über das Dashboard an, um Verwaltung und Sprache freizuschalten — der API-Schlüssel gilt nur für eine explizite Direct-API-Verbindung.</string>
     <string name="cw_pair_relay_section">Relay koppeln (optional)</string>
@@ -495,7 +495,7 @@
     <string name="cw_timeout_entercode_showcode">Der Host hat diesen Kopplungscode noch nicht angenommen. Führe den Kopplungsbefehl auf deinem Hermes-Host aus (oder prüfe den Code erneut) und tippe dann auf Erneut versuchen.</string>
     <string name="cw_timeout_scan">Zeitüberschreitung, bevor das Relay die Kopplung bestätigt hat. Prüfe, ob das Relay läuft und in diesem Netzwerk erreichbar ist, und versuche es erneut. Falls die Kopplung erfolgreich scheint, Hermes aber weiterhin nicht erreichbar ist, befindet sich der API-Server möglicherweise hinter einem Anmelde-Gateway.</string>
     <string name="cw_timeout_other">Zeitüberschreitung beim Warten auf das Relay. Prüfe, ob das Relay läuft und die URL stimmt.</string>
-    <string name="cw_camera_denied">Kameraberechtigung abgelehnt. Kopple stattdessen manuell — wähle \"Relay per Code koppeln\" oder gib deine Server-URL ein.</string>
+    <string name="cw_camera_denied">Kamerazugriff verweigert. Wähle Remote-Gateway und gib die Dashboard-Adresse ein. Relay-Kopplungscodes findest du unter Erweitert.</string>
 
     <!-- EndpointsCard -->
     <string name="endpoints_no_routes_stored">Für diese Verbindung sind keine Routen gespeichert.</string>
@@ -993,6 +993,8 @@
     <string name="drawer_new_chat">Neuer Chat</string>
     <string name="drawer_search_placeholder">Sitzungen oder ID suchen...</string>
     <string name="drawer_search_sessions">Sitzungen durchsuchen</string>
+    <string name="drawer_pin_sidebar">Sitzungsleiste anheften</string>
+    <string name="drawer_unpin_sidebar">Sitzungsleiste lösen</string>
     <string name="drawer_activity_working">Wird bearbeitet</string>
     <string name="drawer_activity_needs_input">Eingabe erforderlich</string>
     <string name="drawer_activity_starting">Wird gestartet</string>
@@ -2142,7 +2144,7 @@
     <string name="stats_last_sentence">Letzter Satz</string>
     <string name="stats_avg_latency_last_format">Durchschn. Latenz (letzte %1$d)</string>
     <string name="stats_response_chunks">Antwortblöcke</string>
-    <string name="stats_last_chunk_gap">Letzter Blockabstand</string>
+    <string name="stats_last_chunk_gap">Abstand der Syntheseanfragen</string>
     <string name="stats_received">Empfangen</string>
     <string name="stats_barge_in_playback">Unterbrechung / Wiedergabe</string>
     <string name="stats_barge_in_events">Unterbrechungsereignisse</string>
@@ -2788,6 +2790,7 @@
     <string name="model_picker_title">Modell</string>
     <string name="model_picker_search">Modelle oder Anbieter suchen&#8230;</string>
     <string name="model_picker_empty">Keine Modelle entsprechen deiner Suche</string>
+    <string name="model_picker_no_models">Keine Modelle verfügbar. Versuche es mit Aktualisieren.</string>
 
     <!-- InjectedContextSheet -->
     <string name="context_sheet_agent_sees">Was der Agent sieht</string>
@@ -3347,7 +3350,7 @@
     <string name="endpoints_pin_title">Angeheftete Endpunkte</string>
     <string name="endpoints_route_editor_desc">Füge die Dashboard-/Gateway-Adresse hinzu, die dieses Telefon in diesem Netzwerk verwenden soll.</string>
     <string name="endpoints_route_name_placeholder">Routenname</string>
-    <string name="endpoints_url_host_placeholder">100.x.y.z oder host.ts.net</string>
+    <string name="endpoints_url_host_placeholder">100.x.y.z:9119 oder https://host.ts.net:10443</string>
     <string name="endpoints_url_supporting_blank">Dashboard-Adresse des Servers eingeben</string>
     <string name="endpoints_url_supporting_enter">Eine http://- oder https://-Dashboard-Adresse verwenden</string>
     <string name="endpoints_url_supporting_preview">Wird getestet: %1$s</string>
@@ -3585,16 +3588,16 @@
     <string name="cw_relay_pair_qr">Hermes Relay koppeln</string>
     <string name="cw_relay_pair_qr_desc">Einen Relay-Einrichtungs-QR-Code scannen</string>
     <string name="cw_relay_enter_code">Pairing-Code eingeben</string>
-    <string name="cw_dashboard_connected_title">Hermes ist verbunden</string>
-    <string name="cw_dashboard_connected_body">Dashboard und Gateway sind bereit. Du kannst chatten oder Manage öffnen.</string>
+    <string name="cw_dashboard_connected_title">Dashboard-Zugriff bestätigt</string>
+    <string name="cw_dashboard_connected_body">Weiter zu Chat. Gateway-Verbindung und Sprachverfügbarkeit werden getrennt geprüft.</string>
     <string name="cw_continue">Weiter</string>
     <string name="cw_timeline_discovered">Hermes gefunden</string>
-    <string name="cw_timeline_discovered_detail">Dashboard-Identität und Status-Endpunkt bestätigt</string>
+    <string name="cw_timeline_discovered_detail">Dashboard-Status abgerufen</string>
     <string name="cw_timeline_access">Dashboard-Zugriff</string>
     <string name="cw_timeline_access_ready">Keine weitere Anmeldung erforderlich</string>
     <string name="cw_timeline_authenticated">Authentifizierung bestätigt</string>
-    <string name="cw_timeline_ready">Verbindung bereit</string>
-    <string name="cw_timeline_ready_detail">Chat, Manage und Voice können dieses Dashboard verwenden</string>
+    <string name="cw_timeline_ready">Bereit zum Fortfahren</string>
+    <string name="cw_timeline_ready_detail">Chat verbindet sich beim Öffnen; Sprachverfügbarkeit wird getrennt geprüft</string>
     <string name="active_section_optional_api_fallback">Optionale Direct API</string>
     <string name="active_section_api_not_required">Nicht erforderlich, wenn diese Verbindung das Hermes Dashboard verwendet.</string>
     <string name="active_section_where_api_key">Wo erhalte ich diesen Schlüssel?</string>
@@ -4548,11 +4551,11 @@
     <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
     <string name="api_fallback_title">Direct API</string>
     <string name="current_surface_paths_title">Current paths</string>
-    <string name="dashboard_address_editor_body">Lege die Dashboard- und Gateway-Adresse für dieses Telefon fest. Private LAN- und Tailscale-Routen dürfen HTTP oder HTTPS verwenden; öffentliche Routen erfordern HTTPS.</string>
+    <string name="dashboard_address_editor_body">Lege die Dashboard- und Gateway-Adresse dieser Verbindung fest. Gib bei Bedarf :port an, zum Beispiel 192.168.1.10:9119 oder https://hermes.example.com:10443. HTTPS wird empfohlen. Andere HTTP-Adressen erfordern deine ausdrückliche Risikoannahme.</string>
     <string name="dashboard_address_editor_title">Gateway-Adresse</string>
     <string name="dashboard_address_label">Dashboard &amp; Gateway address</string>
-<string name="dashboard_address_oidc_hint">Use any Dashboard address this phone can reach. OIDC callback settings are configured on Hermes; no second sign-in address is required here.</string>
-    <string name="dashboard_address_placeholder">https://hermes.example.com</string>
+<string name="dashboard_address_oidc_hint">Eine neue Adresse erhält dieses Gateway und seine Verlaufsverweise. Bei einem anderen Ursprung musst du dich erneut anmelden. OIDC-Rückrufe werden auf Hermes konfiguriert.</string>
+    <string name="dashboard_address_placeholder">192.168.1.10:9119</string>
     <string name="dashboard_address_preview">Will use: %1$s</string>
     <string name="dashboard_address_required">Gib die Hermes-Gateway-Adresse ein</string>
     <string name="dashboard_gateway_configured">Configured address</string>
@@ -4610,4 +4613,13 @@
     <string name="voice_overlay_settings_hint">In beiden Versionen optional. Öffne den Sprachfokus im Chat und wähle Overlay. Berechtigungen allein starten kein Zuhören.</string>
     <string name="voice_overlay_reset_position">Position zurücksetzen</string>
     <string name="injected_context_gateway_unsupported">Wird im Gateway-Chat nicht gesendet. Diese Verbindung unterstützt keinen zusätzlichen Kontext pro Nachricht.</string>
+    <string name="dashboard_http_risk">HTTP verschlüsselt Anfragen an %1$s nicht. Passwörter, Sitzungstoken und Unterhaltungen können offengelegt werden. Wenn du ein VPN nutzt, bist du dafür verantwortlich, dass der Verkehr darin bleibt, auch bei VPN-Ausfall. Die App erkennt oder erzwingt keinen VPN-Schutz.</string>
+    <string name="dashboard_http_allow">Ich akzeptiere das Risiko und erlaube HTTP für diese Adresse</string>
+    <string name="cw_auth_verified">Anmeldung bestätigt</string>
+    <string name="cw_chat_checked_on_open">Wird beim Öffnen von Chat geprüft</string>
+    <string name="dashboard_local_auth_help">Hermes ist erreichbar, aber geschützte Anfragen sind nicht autorisiert. Wird das Dashboard von Loopback weitergeleitet, prüfe Bind-Adresse, Authentifizierungsanbieter und dashboard.public_url auf dem Host. Ein 401 allein bestimmt die Ursache nicht.</string>
+    <string name="voice_streaming_failed_basic">Die Streaming-Sprachausgabe ist fehlgeschlagen. Einfache Sprachausgabe wird verwendet; zwischen Sätzen können Pausen entstehen. Prüfe die Einstellungen des Sprachanbieters.</string>
+    <string name="voice_streaming_stopped_basic_next">Die Streaming-Sprachausgabe wurde unterbrochen. Der restliche Text nutzt die einfache Sprachausgabe. Prüfe die Einstellungen des Sprachanbieters.</string>
+    <string name="stats_tts_queue_wait">Wartezeit auf Audio</string>
+    <string name="stats_tts_player_start">Startverzögerung des Players</string>
 </resources>

@@ -479,12 +479,15 @@ class ChatHandler {
         arrivedWhileAway: Boolean = false,
     ) {
         val id = messageId?.let { "proactive-$it" } ?: "proactive-${java.util.UUID.randomUUID()}"
+        val mediaHits = mutableListOf<Pair<String, MediaMarkerHit>>()
+        val cleanedText = extractMediaMarkersFromContent(id, text, mediaHits)
+        val visibleText = if (mediaHits.isEmpty()) text else cleanedText
         _messages.update { list ->
             if (messageId != null && list.any { it.id == id }) return@update list
             val msg = ChatMessage(
                 id = id,
                 role = MessageRole.ASSISTANT,
-                content = text,
+                content = visibleText,
                 timestamp = System.currentTimeMillis(),
                 agentName = agentName,
                 badges = if (arrivedWhileAway) listOf("While away") else emptyList(),
@@ -492,6 +495,8 @@ class ChatHandler {
             )
             (list + msg).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
         }
+        // The row must exist before the ViewModel attaches a loading card.
+        mediaHits.forEach { (_, hit) -> dispatchMediaHit(id, hit) }
     }
 
     /**
@@ -1735,34 +1740,7 @@ class ChatHandler {
         // Now that the reloaded messages are in state, fire callbacks so the
         // ViewModel can insert LOADING/FAILED attachments via mutateMessage.
         for ((messageId, hit) in pendingMediaHits) {
-            when (hit) {
-                is MediaMarkerHit.RelayToken -> {
-                    val dedupeKey = "$messageId:relay:${hit.token}"
-                    if (dispatchedMediaMarkers.add(dedupeKey)) {
-                        val alreadyHydrated = _messages.value
-                            .firstOrNull { it.matchesIdentity(messageId) }
-                            ?.attachments
-                            ?.any { it.relayToken == hit.token } == true
-                        if (!alreadyHydrated) {
-                            Log.d(TAG, "Media marker accepted from reloaded Relay history")
-                            onMediaAttachmentRequested(messageId, hit.token)
-                        }
-                    }
-                }
-                is MediaMarkerHit.BarePath -> {
-                    val dedupeKey = "$messageId:bare:${hit.path}"
-                    if (dispatchedMediaMarkers.add(dedupeKey)) {
-                        val alreadyHydrated = _messages.value
-                            .firstOrNull { it.matchesIdentity(messageId) }
-                            ?.attachments
-                            ?.any { it.relayToken == hit.path } == true
-                        if (!alreadyHydrated) {
-                            Log.d(TAG, "Media marker (bare-path, reload): ${hit.path}")
-                            onMediaBarePathRequested(messageId, hit.path)
-                        }
-                    }
-                }
-            }
+            dispatchMediaHit(messageId, hit)
         }
         for ((messageId, path) in pendingPersistedUserImages) {
             onPersistedUserImageRequested(messageId, path)
@@ -1996,29 +1974,33 @@ class ChatHandler {
         content: String,
         out: MutableList<Pair<String, MediaMarkerHit>>,
     ): String {
-        var cleaned = content
+        val visibleLines = mutableListOf<String>()
         var openFence: String? = null
         for (rawLine in content.lines()) {
             val trimmed = rawLine.trim()
-            if (trimmed.isEmpty()) continue
+            if (trimmed.isEmpty()) {
+                visibleLines += rawLine
+                continue
+            }
             val delimiter = fenceDelimiter(rawLine)
             if (delimiter != null) {
                 openFence = if (openFence == delimiter) null else if (openFence == null) delimiter else openFence
+                visibleLines += rawLine
                 continue
             }
-            if (openFence != null) continue
+            if (openFence != null) {
+                visibleLines += rawLine
+                continue
+            }
 
             val hits = parseMediaMarkerLine(trimmed)
             if (hits.isNotEmpty()) {
                 hits.forEach { out.add(messageId to it) }
-                cleaned = cleaned
-                    .replace("\n$rawLine\n", "\n")
-                    .replace("\n$rawLine", "")
-                    .replace("$rawLine\n", "")
-                    .replace(rawLine, "")
+            } else {
+                visibleLines += rawLine
             }
         }
-        return cleaned.trim()
+        return visibleLines.joinToString("\n").trim()
     }
 
     /**
@@ -2625,25 +2607,26 @@ class ChatHandler {
      */
     private fun tryDispatchMediaMarker(messageId: String, line: String): Boolean {
         val hits = parseMediaMarkerLine(line)
-        for (hit in hits) {
-            when (hit) {
-                is MediaMarkerHit.RelayToken -> {
-                    val dedupeKey = "$messageId:relay:${hit.token}"
-                    if (dispatchedMediaMarkers.add(dedupeKey)) {
-                        Log.d(TAG, "Media marker accepted from Relay stream")
-                        onMediaAttachmentRequested(messageId, hit.token)
-                    }
-                }
-                is MediaMarkerHit.BarePath -> {
-                    val dedupeKey = "$messageId:bare:${hit.path}"
-                    if (dispatchedMediaMarkers.add(dedupeKey)) {
-                        Log.d(TAG, "Media marker (bare-path): ${hit.path}")
-                        onMediaBarePathRequested(messageId, hit.path)
-                    }
-                }
-            }
-        }
+        hits.forEach { dispatchMediaHit(messageId, it) }
         return hits.isNotEmpty()
+    }
+
+    private fun dispatchMediaHit(messageId: String, hit: MediaMarkerHit) {
+        val (key, reference) = when (hit) {
+            is MediaMarkerHit.RelayToken -> "$messageId:relay:${hit.token}" to hit.token
+            is MediaMarkerHit.BarePath -> "$messageId:bare:${hit.path}" to hit.path
+        }
+        if (!dispatchedMediaMarkers.add(key)) return
+        val alreadyHydrated = _messages.value
+            .firstOrNull { it.matchesIdentity(messageId) }
+            ?.attachments
+            ?.any { it.relayToken == reference } == true
+        if (alreadyHydrated) return
+        Log.d(TAG, "Media marker accepted")
+        when (hit) {
+            is MediaMarkerHit.RelayToken -> onMediaAttachmentRequested(messageId, hit.token)
+            is MediaMarkerHit.BarePath -> onMediaBarePathRequested(messageId, hit.path)
+        }
     }
 
     /**

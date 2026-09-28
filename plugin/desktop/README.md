@@ -14,6 +14,13 @@ All backend calls use the official profile-aware `ctx.rest()` namespace and the
 existing `dashboard/plugin_api.py` routes. The pane keeps no server state, does
 not poll, does not notify, and does not perform network work while closed.
 
+**Remote access → Secure Link setup** uses the running Relay's shared read-only
+preflight. It shows address, listener, certificate, upstream-authentication, and
+restart checks; provides copyable settings; and creates a signed pairing invite
+only after the selected listener is active. It does not manage services or rotate
+keys. The Dashboard flow and host-side `hermes relay secure-link` expose the same
+report. Use Dashboard or `hermes pair --png` when a phone needs a scannable QR.
+
 ## SDK baseline
 
 Implemented against upstream Hermes Desktop source

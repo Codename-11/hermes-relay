@@ -19,7 +19,7 @@ export const useQueryClient = () => ({ invalidateQueries: () => {} })
 export const useValue = atom => atom.get()
 `
 
-const react = `export const useState = initial => [initial, () => {}]`
+const react = `export const useState = initial => [initial, () => {}]; export const useRef = initial => ({ current: initial }); export const useEffect = () => {}`
 const jsx = `
 export const Fragment = Symbol.for('fixture.fragment')
 export const jsx = (type, props) => ({ type, props: props || {} })

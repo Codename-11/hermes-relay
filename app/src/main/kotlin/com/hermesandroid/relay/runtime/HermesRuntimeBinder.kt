@@ -106,6 +106,9 @@ internal class HermesRuntimeBinder(
             },
             apiBearerTokenProvider = connection::getApiKey,
             dashboardHttpClientProvider = connection::dashboardHttpClientForRelayIngress,
+            pluginProxyHttpClientProvider = { url ->
+                connection.pluginProxyClientForUrl(url, includeRelaySessionHeader = false)
+            },
             dashboardIngressWebSocketRequestProvider = connection::dashboardRelayRequestForIngress,
         )
         val standardVoiceClient = StandardHermesVoiceClient(
@@ -327,7 +330,8 @@ internal class HermesRuntimeBinder(
                 connection.serverCapabilities,
                 connection.gatewayAvailability,
                 connection.effectiveDashboardUrl,
-            ) { preference, _, gateway, dashboardUrl ->
+                connection.activeConnection,
+            ) { preference, _, gateway, dashboardUrl, _ ->
                 Triple(preference, gateway, dashboardUrl)
             }.collectLatest { (preference, _, dashboardUrl) ->
                 if (

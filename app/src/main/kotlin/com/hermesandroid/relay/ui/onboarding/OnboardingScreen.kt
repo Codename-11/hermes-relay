@@ -15,9 +15,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -207,7 +209,7 @@ fun OnboardingScreen(
             )
         }
 
-        Column(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
             val currentPage = pagerState.currentPage
             val currentPageType = pages[currentPage]
 
@@ -221,7 +223,6 @@ fun OnboardingScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .statusBarsPadding()
                         .padding(horizontal = 16.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
@@ -363,7 +364,6 @@ private fun GradientOnboardingButton(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(52.dp)
             .clip(RoundedCornerShape(14.dp))
             .clickable(onClick = onClick),
         color = Color.Transparent,
@@ -371,13 +371,14 @@ private fun GradientOnboardingButton(
     ) {
         Row(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxWidth()
+                .heightIn(min = 52.dp)
                 .background(
                     Brush.horizontalGradient(
                         listOf(Color(0xFF7047F5), Color(0xFF6446F0)),
                     ),
                 )
-                .padding(horizontal = 22.dp),
+                .padding(horizontal = 22.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
         ) {
@@ -431,6 +432,9 @@ private fun SegmentedOnboardingProgress(
 
 @Composable
 private fun WelcomePage() {
+    val configuration = LocalConfiguration.current
+    val heroHeight = (configuration.screenHeightDp * if (configuration.fontScale > 1.2f) 0.18f else 0.27f)
+        .coerceIn(80f, 240f).dp
     val titleParts = stringResource(R.string.onboarding_welcome_title).split("\n", limit = 2)
     Column(
         modifier = Modifier
@@ -442,15 +446,15 @@ private fun WelcomePage() {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(380.dp),
+                .height(heroHeight),
             contentAlignment = Alignment.Center,
         ) {
             Image(
                 painter = painterResource(R.drawable.onboarding_hero_option1),
                 contentDescription = stringResource(R.string.onboarding_hermes_logo),
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-                alignment = BiasAlignment(horizontalBias = 0f, verticalBias = -0.5f),
+                contentScale = ContentScale.Fit,
+                alignment = Alignment.Center,
             )
         }
 

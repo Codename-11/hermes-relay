@@ -18,6 +18,7 @@ SPEC.loader.exec_module(module)
 
 SERVER_SOURCE = '''
 def _clarify_block(sid, q, c, multi_select=False, questions=None):
+    server_requests.send("clarify", sid, {}, timeout=60)
     return {"questions": [{"qid": "q0", "question": q, "choices": c, "multi_select": multi_select}]}
 
 def _respond(rid, params, key):
@@ -127,6 +128,10 @@ def _snapshot_sessions(rid):
     with _sessions_lock:
         return list(_sessions.items()), None
 
+@method("session.events.since")
+def _(rid, params):
+    return {"open_requests": _open_requests(params["session_id"])}
+
 @method("session.active_list")
 def _(rid, params):
     snapshot, error = _snapshot_sessions(rid)
@@ -176,6 +181,25 @@ async def _handle_runs(request):
 '''
 
 
+NATIVE_METHODS = ("clarify", "approval", "sudo", "secret", "vault.unlock_prompt", "vault.save_login",
+                  "vault.code", "terminal.read", "preview.read", "preview.act", "window.read", "tour")
+NATIVE_REQUEST_SOURCE = """
+def frame(self):
+    return {"jsonrpc":"2.0", "id":self.id, "method":self.method, "params":{"session_id":self.sid}}
+def snapshot(self):
+    return {"answers": self.locked}
+def resolve_response(frame):
+    return frame.get("error") or frame.get("result", {}).get("answers")
+def lock_answer(request_id, question_id, answer):
+    req.locked[question_id] = answer
+def send(method, sid, params):
+    _unanswerable(method, sid)
+    return {"answers": {}, "timed_out": True, "reason": "timeout"}
+def _emit_cancel(req, reason):
+    _emit("request.cancel", req.sid, {"id":req.id, "method":req.method, "reason":reason})
+"""
+
+
 class GatewayScenarioConformanceTest(unittest.TestCase):
     def test_clarify_conformance_requires_question_ownership_and_replay(self) -> None:
         results = module.audit_sources(self.root, [module.CLARIFY])
@@ -183,6 +207,16 @@ class GatewayScenarioConformanceTest(unittest.TestCase):
         source = self.root / module.SERVER
         source.write_text(SERVER_SOURCE.replace('"remaining"', '"other"'), encoding="utf-8")
         self.assertFalse(module.audit_sources(self.root, [module.CLARIFY])[0].passed)
+
+    def test_native_contract_rejects_missing_capability_gate_and_methods(self):
+        self.assertTrue(module.audit_sources(self.root, [module.SERVER_REQUESTS])[0].passed)
+        source = self.root / "tui_gateway/server_requests.py"
+        source.write_text(NATIVE_REQUEST_SOURCE.replace("_unanswerable(method, sid)", "pass"), encoding="utf-8")
+        self.assertFalse(module.audit_sources(self.root, [module.SERVER_REQUESTS])[0].passed)
+        source.write_text(NATIVE_REQUEST_SOURCE, encoding="utf-8")
+        contract = self.root / "tui_gateway/contracts/server_requests.py"
+        contract.write_text(contract.read_text().replace("'clarify'", "'clarify.future'"), encoding="utf-8")
+        self.assertFalse(module.audit_sources(self.root, [module.SERVER_REQUESTS])[0].passed)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -193,7 +227,29 @@ class GatewayScenarioConformanceTest(unittest.TestCase):
             module.PROMPT_METHODS: PROMPT_METHODS_SOURCE,
             module.ACTIVE_SESSIONS: ACTIVE_SESSIONS_SOURCE,
             module.API_SERVER: API_SOURCE,
+            "hermes_cli/web_server_chat.py": '''
+_GATEWAY_WS_PROTOCOL = "hermes-gateway-v1"
+_GATEWAY_WS_TICKET_PROTOCOL_PREFIX = "hermes-gateway-ticket."
+def _gateway_ws_ticket_from_subprotocol(ws):
+    return ws.headers.get("sec-websocket-protocol"), "ok", "invalid"
+def _ws_auth_reason(ws):
+    ticket = _gateway_ws_ticket_from_subprotocol(ws) or ws.query_params.get("ticket")
+    consume_ticket(ticket)
+    ws._hermes_ws_subprotocol = _GATEWAY_WS_PROTOCOL
+    return None, "ticket-subprotocol"
+''',
+            "hermes_cli/web_routers/chat_ws.py": '''
+async def gateway_ws(ws):
+    await handle_ws(ws, subprotocol=getattr(ws, "_hermes_ws_subprotocol", None))
+''',
         }
+        sources.update({
+            "tui_gateway/server_requests.py": NATIVE_REQUEST_SOURCE,
+            "tui_gateway/contracts/server_requests.py": "\n".join(
+                f'server_request({name!r}, params=Params, result=Result)' for name in NATIVE_METHODS),
+            "tui_gateway/methods_voice.py": '@method("client.capabilities")\ndef _(rid, params):\n    advertise(transport, params["server_requests"])\n',
+        })
+        sources[module.PROMPT_METHODS] += '\n@method("clarify.lock")\ndef _(rid, params):\n    return {"status": "expired", "remaining": lock_answer(params["request_id"], params["question_id"], params["answer"])}\n'
         for relative, text in sources.items():
             path = self.root / relative
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -207,6 +263,34 @@ class GatewayScenarioConformanceTest(unittest.TestCase):
 
         self.assertEqual(module.ALL_CONTRACTS, tuple(result.contract for result in results))
         self.assertTrue(all(result.passed for result in results), results)
+
+    def test_ticket_protocol_requires_public_selection_and_single_use_admission(self):
+        for relative, before, after in (
+            ("hermes_cli/web_server_chat.py", "consume_ticket(ticket)", "accept(ticket)"),
+            ("hermes_cli/web_server_chat.py", "ws._hermes_ws_subprotocol = _GATEWAY_WS_PROTOCOL",
+             "ws._hermes_ws_subprotocol = ticket"),
+            ("hermes_cli/web_routers/chat_ws.py", "subprotocol=getattr", "ignored=getattr"),
+        ):
+            path = self.root / relative
+            original = path.read_text(encoding="utf-8")
+            with self.subTest(relative=relative, removed=before):
+                path.write_text(original.replace(before, after), encoding="utf-8")
+                self.assertFalse(module.audit_sources(self.root, (module.TICKET_PROTOCOL,))[0].passed)
+                path.write_text(original, encoding="utf-8")
+
+    def test_activate_accepts_verified_upstream_session_decorator(self):
+        path = self.root / module.SESSION_METHODS
+        wrapped = METHODS_SOURCE.replace('@method("session.activate")', '@_session_method("session.activate")')
+        wrapped = wrapped.replace('    session, error = _sess_nowait(params, rid)\n', '')
+        wrapped += '''
+_with_session = _session_arg(lambda params, rid: _sess_nowait(params, rid))
+def _session_method(name: str, *, live: bool = False):
+    return lambda fn: method(name)((_with_live_session if live else _with_session)(fn))
+'''
+        path.write_text(wrapped, encoding="utf-8")
+        self.assertTrue(module.audit_sources(self.root, (module.SESSION_ACTIVATE,))[0].passed)
+        path.write_text(wrapped.replace('_sess_nowait(params, rid)', '_sess(params, rid)'), encoding="utf-8")
+        self.assertFalse(module.audit_sources(self.root, (module.SESSION_ACTIVATE,))[0].passed)
 
     def test_missing_terminal_emit_fails_only_terminal_contract(self):
         path = self.root / module.SERVER

@@ -13,10 +13,15 @@ import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.crossfade
 import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.data.AppAnalytics
+import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.power.WakeLockManager
 import com.hermesandroid.relay.runtime.HermesProcessRuntime
+import com.hermesandroid.relay.ui.theme.AppearanceNightMode
 import com.hermesandroid.relay.util.AppForegroundTracker
 import com.hermesandroid.relay.util.CrashReporter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 
 class HermesRelayApp : Application(), SingletonImageLoader.Factory {
 
@@ -57,6 +62,10 @@ class HermesRelayApp : Application(), SingletonImageLoader.Factory {
         // Install the crash handler FIRST so any failure in the rest of app
         // init (or anywhere later) is captured and surfaced on next launch.
         CrashReporter.install(this)
+        // Apply saved Light/Dark/Auto before the first Activity frame so DayNight
+        // does not briefly follow the system when Appearance is explicitly Light.
+        // Bounded + best-effort: HermesRelayTheme SideEffect is the durable path.
+        applyPersistedAppearanceNightMode()
         AppAnalytics.initialize(this)
         // A8 — wire the bridge-gesture wake-lock wrapper so
         // ActionExecutor.tap/tapText/typeText/swipe/scroll can hold
@@ -74,6 +83,19 @@ class HermesRelayApp : Application(), SingletonImageLoader.Factory {
         // while the user is inside Hermes-Relay (the in-app
         // UnattendedGlobalBanner covers that case). Idempotent.
         AppForegroundTracker.initialize()
+    }
+
+    private fun applyPersistedAppearanceNightMode() {
+        try {
+            runBlocking {
+                val preferences = withTimeoutOrNull(400L) {
+                    relayDataStore.data.first()
+                } ?: return@runBlocking
+                AppearanceNightMode.applyFromPreferences(preferences)
+            }
+        } catch (_: Throwable) {
+            // Non-fatal — theme root reapplies once DataStore is ready.
+        }
     }
 
     private fun isMainApplicationProcess(): Boolean {

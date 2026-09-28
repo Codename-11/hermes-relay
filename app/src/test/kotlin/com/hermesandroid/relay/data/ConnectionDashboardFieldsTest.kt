@@ -330,6 +330,22 @@ class ConnectionDashboardFieldsTest {
     }
 
     @Test
+    fun normalizeDashboardUrlInput_preservesExplicitPorts() {
+        assertEquals(
+            "http://homelab.lan:9443",
+            Connection.normalizeDashboardUrlInput("homelab.lan:9443"),
+        )
+        assertEquals(
+            "https://hermes.example.com:10443",
+            Connection.normalizeDashboardUrlInput("hermes.example.com:10443"),
+        )
+        assertEquals(
+            "https://hermes.example.com:10443",
+            Connection.normalizeDashboardUrlInput("https://hermes.example.com:10443"),
+        )
+    }
+
+    @Test
     fun discoveredLabel_prefersHostnameForAnUncustomizedIpLabel() {
         assertEquals(
             "hermes-box.local",

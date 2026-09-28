@@ -35,6 +35,7 @@ from typing import Any, Callable
 
 from .android_navigate_prompt import ParsedAction, build_prompt, parse_response
 from .android_tool import _bridge_request, _timeout
+from .android_screenshot_media import resolve_screenshot
 
 logger = logging.getLogger("hermes_relay.tools.android_navigate")
 
@@ -172,45 +173,29 @@ def _capture_screenshot() -> _Screenshot:
     an error-JSON envelope. The navigate loop needs structured data.
     """
 
-    import base64
     import tempfile
 
     raw = _get("/screenshot")
-    if "error" in raw:
-        raise RuntimeError(f"bridge /screenshot error: {raw['error']}")
-
-    # The bridge wraps its response in {"data": {...}} in some builds and
-    # returns a flat object in others — match android_tool.py's tolerant
-    # shape-check.
-    result = raw.get("data", raw)
-    img_b64 = result.get("image") or ""
-    if not img_b64:
-        raise RuntimeError("bridge /screenshot returned no image data")
-
-    img_bytes = base64.b64decode(img_b64)
+    img_bytes, mime, marker = resolve_screenshot(raw, _bridge_request, _timeout())
     tmp = tempfile.NamedTemporaryFile(
-        suffix=".jpg", prefix="android_navigate_", delete=False
+        suffix=".png" if mime == "image/png" else ".jpg",
+        prefix="android_navigate_", delete=False
     )
     try:
         tmp.write(img_bytes)
     finally:
         tmp.close()
 
-    # Try to register with the local relay for an opaque token. Fall
-    # back to the bare path marker if the relay isn't reachable (same
-    # graceful degradation as android_screenshot).
-    token_marker = f"file://{tmp.name}"
-    try:
-        from ..relay.client import register_media  # type: ignore
+    token_marker = marker.removeprefix("MEDIA:") if marker else f"file://{tmp.name}"
+    if marker is None:
+        try:
+            from ..relay.client import register_media  # type: ignore
 
-        token = register_media(tmp.name, "image/jpeg", file_name="nav_step.jpg")
-        if token:
-            token_marker = f"hermes-relay://{token}"
-    except Exception:
-        logger.debug(
-            "register_media unavailable — navigate trace will use file:// marker",
-            exc_info=True,
-        )
+            token = register_media(tmp.name, mime, file_name="nav_step.png" if mime == "image/png" else "nav_step.jpg")
+            if token:
+                token_marker = f"hermes-relay://{token}"
+        except Exception:
+            logger.debug("register_media unavailable for legacy screenshot")
 
     return _Screenshot(token=token_marker, local_path=tmp.name)
 

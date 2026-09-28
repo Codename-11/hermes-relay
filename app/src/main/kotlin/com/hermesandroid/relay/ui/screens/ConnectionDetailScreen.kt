@@ -41,7 +41,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -265,7 +265,7 @@ fun ConnectionDetailScreen(
                 .padding(innerPadding),
         ) {
             if (tabs.size > 1) {
-                TabRow(selectedTabIndex = safeIndex) {
+                ScrollableTabRow(selectedTabIndex = safeIndex, edgePadding = 0.dp) {
                     tabs.forEachIndexed { index, tab ->
                         Tab(
                             selected = safeIndex == index,
@@ -276,7 +276,7 @@ fun ConnectionDetailScreen(
                                     DetailTab.Routes -> stringResource(R.string.detail_tab_routes)
                                     DetailTab.Access -> stringResource(R.string.detail_tab_access)
                                     DetailTab.Advanced -> stringResource(R.string.detail_tab_advanced)
-                                })
+                                }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             },
                         )
                     }
@@ -380,8 +380,8 @@ fun ConnectionDetailScreen(
     if (showDashboardEditor) {
         DashboardAddressEditorDialog(
             initialUrl = connection.resolvedDashboardUrl,
-            onSave = { dashboardUrl, onResult ->
-                connectionViewModel.updateDashboardAddress(dashboardUrl, onResult)
+            onSave = { dashboardUrl, httpConsentOrigin, onResult ->
+                connectionViewModel.updateDashboardAddress(dashboardUrl, httpConsentOrigin, onResult)
             },
             onDismiss = { showDashboardEditor = false },
         )

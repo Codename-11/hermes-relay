@@ -29,19 +29,32 @@ operate the phone screen. [Compare the builds and verify the APK →](./getting-
 
 ### 2. Start Hermes
 
-The Dashboard/Gateway must be running and reachable from the phone. This is all
-the server-side setup required for standard Chat, sessions, Manage, voice, and
-inbound files:
+The Dashboard/Gateway must be reachable from the phone and have authentication
+configured. `hermes dashboard` alone defaults to the host's loopback interface;
+it does not expose a fresh installation to another device. Configure a supported
+authentication provider first, following [host setup](./getting-started#_2-point-it-at-hermes).
+For direct LAN or VPN access, start the Dashboard on a reachable interface:
 
 ```bash
-hermes dashboard
+hermes dashboard --host 0.0.0.0 --port 9119 --no-open
 ```
 
 ### 3. Add the standard Hermes connection
 
-In Android **Connect**, choose **Find Hermes on LAN**. If discovery cannot find
-the host, choose **Enter your Hermes address** and enter the Dashboard URL you
+Open the same address in the phone's browser before continuing. For a reverse
+proxy forwarding to a loopback Dashboard, configure the external
+`dashboard.public_url` and its authentication provider; see [remote access](./remote-access).
+Do not use the host's internal session token on the phone.
+
+In Android **Connect**, choose **Hermes nearby**. If discovery cannot find
+the host, choose **Remote gateway** and enter the Dashboard URL you
 open in a browser, normally `http://<host>:9119`. Sign in when prompted.
+
+HTTPS is recommended. An HTTP address outside the recognized private ranges
+requires an explicit risk acknowledgement for that exact address. The app does
+not detect or enforce VPN protection; you accept the exposure risk if your VPN
+disconnects or routes the traffic elsewhere. This exception belongs only to
+this saved gateway and does not pair Relay.
 
 This creates a complete standard connection with no plugin or Relay URL. If the
 Relay Dashboard page is already installed, its **Connect mobile app** action can

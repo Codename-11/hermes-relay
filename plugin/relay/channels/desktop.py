@@ -54,7 +54,10 @@ ADB_RESPONSE_TIMEOUT = 300.0  # seconds — approval plus a bounded 120 s operat
 
 # Keys whose values must never appear in the ring buffer. Matched
 # case-insensitively against the full key name.
-_REDACT_KEYS = frozenset({"password", "token", "secret", "otp", "bearer", "api_key"})
+_REDACT_KEYS = frozenset({
+    "password", "token", "secret", "otp", "bearer", "api_key",
+    "bytes_base64", "screenshot_base64",
+})
 
 # Cap for the recent-commands ring buffer.
 RECENT_COMMANDS_MAX = 100
@@ -648,7 +651,7 @@ class DesktopHandler:
         payload = envelope.get("payload") or {}
         request_id = payload.get("request_id")
         if not isinstance(request_id, str) or not request_id:
-            logger.warning("desktop: response missing request_id: %s", payload)
+            logger.warning("desktop: response missing request_id")
             return
 
         async with self._lock:
@@ -693,9 +696,12 @@ class DesktopHandler:
             record.error = error_msg
         if result is not None and record.result_summary is None:
             try:
-                summary = json.dumps(result, default=str)
+                if record.tool == "desktop_computer_screenshot":
+                    summary = "Desktop screenshot response received"
+                else:
+                    summary = json.dumps(_redact_args(result), default=str)
             except (TypeError, ValueError):
-                summary = str(result)
+                summary = "Desktop result unavailable for activity summary"
             if len(summary) > 500:
                 summary = summary[:497] + "..."
             record.result_summary = summary

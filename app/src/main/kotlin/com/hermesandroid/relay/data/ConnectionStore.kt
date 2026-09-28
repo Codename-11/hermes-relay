@@ -581,7 +581,7 @@ internal fun Connection.withDashboardDefaults(): Connection {
         it.role.equals(LEGACY_AUTHENTICATED_DASHBOARD_ROUTE_ROLE, ignoreCase = true)
     }
     val migratedAuthenticatedOrigin = authenticatedDashboardOrigin
-        ?.let(::normalizeCredentialFreeAuthenticatedDashboardOrigin)
+        ?.let { normalizeCredentialFreeAuthenticatedDashboardOrigin(it, dashboardHttpConsentOrigins) }
         ?: legacyAuthenticatedRoute?.dashboard?.url
             ?.let(::normalizeCredentialFreeAuthenticatedDashboardOrigin)
     val routesWithoutLegacyAuthentication = routeCandidates.filterNot {

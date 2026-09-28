@@ -28,6 +28,7 @@ phone-control or general Relay session routes.
 |---|---|---|---|
 | `GET` upgrade | `/ws`, `/` | Pairing code or paired session | Multiplexed phone connection |
 | `GET` | `/health` | Public probe | Version, readiness and connected-client summary |
+| `GET` | `/secure-link/preflight` | Loopback | Read-only setup report for the proposed `host` and `port`: prerequisites, certificate checks, startup settings, and restart impact. Never writes configuration, rotates keys, or restarts services. |
 | `POST` | `/pairing` | Rate-limited public setup | Create a relay-side pairing code |
 | `POST` | `/pairing/register` | Loopback | Register a host-minted code and policy metadata |
 | `POST` | `/pairing/mint` | Loopback | Mint a signed QR payload for dashboard/CLI pairing |

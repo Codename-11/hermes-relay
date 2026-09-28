@@ -37,8 +37,11 @@ SUBAGENT_CHILD_WATCH = "gateway.subagent_child_watch"
 SESSION_INITIALIZATION = "gateway.session_initialization"
 API_BOUNDARY = "api.fallback_boundary"
 CLARIFY = "gateway.clarify"
+SERVER_REQUESTS = "gateway.server_requests"
+TICKET_PROTOCOL = "gateway.ticket_subprotocol"
 ALL_CONTRACTS = (
-    CLARIFY,
+    TICKET_PROTOCOL,
+    SERVER_REQUESTS,
     GATEWAY_TERMINAL,
     GATEWAY_SETTLED_INFO,
     SESSION_ACTIVATE,
@@ -89,7 +92,7 @@ class SourceFile:
                 if (
                     isinstance(decorator, ast.Call)
                     and isinstance(decorator.func, ast.Name)
-                    and decorator.func.id == "method"
+                    and decorator.func.id in {"method", "_session_method"}
                     and decorator.args
                     and isinstance(decorator.args[0], ast.Constant)
                     and decorator.args[0].value == method_name
@@ -241,8 +244,26 @@ def _check_activate(server: SourceFile, methods: SourceFile) -> CheckResult:
         payload = server.function("_live_session_payload")
         handler_text = methods.segment(handler)
         payload_strings = _string_constants(payload)
-        required_calls = ("_sess_nowait(", "_live_session_payload(")
+        required_calls = ("_live_session_payload(",)
         missing_calls = [marker for marker in required_calls if marker not in handler_text]
+        if "_sess_nowait(" not in handler_text:
+            # Upstream moved live-id lookup into its session decorator. Verify
+            # that wrapper rather than accepting any similarly named alias.
+            wrapped = any(
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Name)
+                and decorator.func.id == "_session_method"
+                and not decorator.keywords
+                for decorator in handler.decorator_list
+            )
+            wrapper = methods.function("_session_method") if wrapped else None
+            bindings = [node for node in methods.tree.body if isinstance(node, ast.Assign)
+                        and any(isinstance(t, ast.Name) and t.id == "_with_session" for t in node.targets)]
+            if not (wrapper and "method(name)" in methods.segment(wrapper)
+                    and "_with_live_session if live else _with_session" in methods.segment(wrapper)
+                    and "live: bool = False" in methods.segment(wrapper)
+                    and any(_call_lines(node, "_sess_nowait") for node in bindings)):
+                missing_calls.append("_sess_nowait(")
         required_fields = {"session_id", "session_key", "messages", "running", "status"}
         missing_fields = sorted(required_fields - payload_strings)
         if missing_calls:
@@ -543,6 +564,55 @@ def load_requirements(manifest: Path | None) -> tuple[str, ...]:
     return tuple(contract for contract in ALL_CONTRACTS if contract in requested)
 
 
+def _check_server_requests(root: Path) -> CheckResult:
+    requests = SourceFile(root, "tui_gateway/server_requests.py")
+    contracts = SourceFile(root, "tui_gateway/contracts/server_requests.py")
+    prompt = SourceFile(root, PROMPT_METHODS)
+    voice = SourceFile(root, "tui_gateway/methods_voice.py")
+    bridge = SourceFile(root, SERVER)
+    frame = requests.function("frame")
+    snapshot = requests.function("snapshot")
+    resolve = requests.function("resolve_response")
+    lock = requests.function("lock_answer")
+    send = requests.function("send")
+    cancel = requests.function("_emit_cancel")
+    lock_rpc = prompt.method_handler("clarify.lock")
+    capabilities = voice.method_handler("client.capabilities")
+    sessions = SourceFile(root, SESSION_METHODS)
+    replay_rpc = sessions.method_handler("session.events.since")
+    expected = {"clarify", "approval", "sudo", "secret", "vault.unlock_prompt", "vault.save_login",
+                "vault.code", "terminal.read", "preview.read", "preview.act", "window.read", "tour"}
+    declared = {node.args[0].value for node in ast.walk(contracts.tree)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "server_request" and node.args and isinstance(node.args[0], ast.Constant)}
+    passed = (
+        expected == declared
+        and {"jsonrpc", "id", "method", "params", "session_id"} <= _string_constants(frame)
+        and "answers" in _string_constants(snapshot)
+        and {"error", "result", "answers"} <= _string_constants(resolve)
+        and {"answers", "timed_out", "timeout"} <= _string_constants(send)
+        and bool(_call_lines(send, "_unanswerable"))
+        and {"request.cancel", "id", "method", "reason"} <= _string_constants(cancel)
+        and {"request_id", "question_id", "answer", "expired", "remaining"} <= _string_constants(lock_rpc)
+        and bool(_call_lines(lock_rpc, "lock_answer"))
+        and bool(_call_lines(capabilities, "advertise"))
+        and "open_requests" in _string_constants(replay_rpc)
+        and bool(_call_lines(replay_rpc, "_open_requests"))
+        and bool(_call_lines(bridge.function("_clarify_block"), "send", "clarify"))
+        and "req.locked[question_id] = answer" in requests.segment(lock)
+    )
+    return CheckResult(SERVER_REQUESTS, passed, (
+        requests.evidence(frame, "typed request envelope"),
+        requests.evidence(snapshot, "open request replay with accepted locks"),
+        requests.evidence(resolve, "result or error settlement"),
+        requests.evidence(send, "capability gate and partial timeout"),
+        requests.evidence(cancel, "scoped cancellation"),
+        prompt.evidence(lock_rpc, "per-question lock RPC"),
+        voice.evidence(capabilities, "per-transport capabilities"),
+        sessions.evidence(replay_rpc, "read-only open-request snapshot"),
+    ), None if passed else "Server request methods, envelope, capability, replay or settlement contract changed")
+
+
 def _check_clarify(server: SourceFile) -> CheckResult:
     bridge = server.function("_clarify_block")
     respond = server.function("_respond")
@@ -581,7 +651,12 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
         raise ValueError("fork marker(s) found in upstream source: " + ", ".join(fork_hits))
 
     checks = {
+        TICKET_PROTOCOL: lambda: _check_ticket_protocol(
+            SourceFile(root, "hermes_cli/web_server_chat.py"),
+            SourceFile(root, "hermes_cli/web_routers/chat_ws.py"),
+        ),
         CLARIFY: lambda: _check_clarify(server),
+        SERVER_REQUESTS: lambda: _check_server_requests(root),
         GATEWAY_TERMINAL: lambda: _check_gateway_terminal(
             SourceFile(root, "tui_gateway/prompt_turn.py")
             if (root / "tui_gateway/prompt_turn.py").is_file() else server
@@ -598,6 +673,34 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
         API_BOUNDARY: lambda: _check_api_boundary(api),
     }
     return [checks[requirement]() for requirement in requirements]
+
+
+def _check_ticket_protocol(auth: SourceFile, router: SourceFile) -> CheckResult:
+    parser = auth.function("_gateway_ws_ticket_from_subprotocol")
+    admission = auth.function("_ws_auth_reason")
+    upgrade = router.function("gateway_ws")
+    passed = (
+        {"hermes-gateway-v1", "hermes-gateway-ticket."} <= _string_constants(auth.tree)
+        and {"sec-websocket-protocol", "invalid", "ok"} <= _string_constants(parser)
+        and bool(_call_lines(admission, "_gateway_ws_ticket_from_subprotocol"))
+        and bool(_call_lines(admission, "consume_ticket"))
+        and {"ticket", "ticket-subprotocol"} <= _string_constants(admission)
+        and "ws._hermes_ws_subprotocol = _GATEWAY_WS_PROTOCOL" in auth.segment(admission)
+        and any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name) and node.func.id == "handle_ws"
+            and any(keyword.arg == "subprotocol" and "_hermes_ws_subprotocol" in
+                    _string_constants(keyword.value) for keyword in node.keywords)
+            for node in ast.walk(upgrade)
+        )
+    )
+    return CheckResult(
+        TICKET_PROTOCOL, passed,
+        (auth.evidence(parser, "ticket protocol parser"),
+         auth.evidence(admission, "single-use query or protocol admission"),
+         router.evidence(upgrade, "public protocol selection")),
+        None if passed else "Gateway ticket admission or public subprotocol selection changed",
+    )
 
 
 def _git(root: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:

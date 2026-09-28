@@ -19,7 +19,7 @@ import time
 import unittest
 from unittest import mock
 
-from aiohttp import web
+from aiohttp import FormData, web
 from aiohttp.test_utils import AioHTTPTestCase
 
 from plugin.relay import media
@@ -185,6 +185,50 @@ class RelayMediaRoutesTests(AioHTTPTestCase):
 
         body = await resp.read()
         self.assertEqual(body, contents)
+
+    async def test_mark_sensitive_requires_loopback_and_preserves_image_bytes(self) -> None:
+        contents = b"\x89PNG\r\n\x1a\nprivate-image"
+        path = _write_file(self._sandbox, "private.png", content=contents)
+        entry = await self._server().media.register(path, "image/png")
+        response = await self.client.post(f"/media/{entry.token}/sensitive")
+        self.assertEqual(response.status, 200)
+        bearer = await self._create_session_token()
+        fetched = await self.client.get(
+            f"/media/{entry.token}", headers={"Authorization": f"Bearer {bearer}"}
+        )
+        self.assertEqual(fetched.headers.get("X-Media-Sensitive"), "1")
+        self.assertEqual(await fetched.read(), contents)
+        missing = await self.client.post("/media/missing-token-123456/sensitive")
+        self.assertEqual(missing.status, 404)
+        from plugin.relay.server import handle_media_mark_sensitive
+
+        forged = mock.Mock()
+        forged.remote = "203.0.113.10"
+        forged.app = self.app
+        forged.match_info = {"token": entry.token}
+        with self.assertRaises(web.HTTPForbidden):
+            await handle_media_mark_sensitive(forged)
+
+    async def test_uploaded_file_is_owned_and_deleted_when_token_expires(self) -> None:
+        bearer = await self._create_session_token()
+        form = FormData()
+        form.add_field("file", b"\x89PNG\r\n\x1a\nprivate-image",
+                       filename="capture.png", content_type="image/png")
+        self._server().media.allowed_roots.append(os.path.realpath(tempfile.gettempdir()))
+        response = await self.client.post(
+            "/media/upload", data=form,
+            headers={"Authorization": f"Bearer {bearer}"},
+        )
+        self.assertEqual(response.status, 200)
+        token = (await response.json())["token"]
+        entry = await self._server().media.get(token)
+        self.assertIsNotNone(entry)
+        path = entry.path
+        self.assertTrue(os.path.isfile(path))
+        async with self._server().media._lock:
+            self._server().media._entries[token].expires_at = time.time() - 1
+        await self._server().media.cleanup()
+        self.assertFalse(os.path.exists(path))
 
     async def test_fetch_expired_token_returns_404(self) -> None:
         path = _write_file(self._sandbox, "gone.bin", content=b"x")

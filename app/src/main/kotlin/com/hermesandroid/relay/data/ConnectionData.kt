@@ -67,6 +67,8 @@ data class Connection(
      * "derive from [apiServerUrl] using the conventional same-host :9119".
      */
     val dashboardUrl: String? = null,
+    /** User-accepted cleartext origins. This does not assert or monitor VPN protection. */
+    val dashboardHttpConsentOrigins: Set<String> = emptySet(),
     /**
      * Credential-free origin that most recently completed Dashboard
      * authentication for this connection. Public origins require HTTPS;
@@ -116,7 +118,7 @@ data class Connection(
      */
     val resolvedDashboardUrl: String
         get() = authenticatedDashboardOrigin
-            ?.let(::normalizeCredentialFreeAuthenticatedDashboardOrigin)
+            ?.let { normalizeCredentialFreeAuthenticatedDashboardOrigin(it, dashboardHttpConsentOrigins) }
             ?: configuredDashboardUrl
 
     /** Stable display/host identity that does not depend on the API surface. */
@@ -628,7 +630,10 @@ internal fun normalizeCredentialFreeHttpsOrigin(raw: String): String? {
  * HTTPS; cleartext is accepted only for literal loopback, RFC1918/link-local,
  * or Tailscale CGNAT addresses.
  */
-internal fun normalizeCredentialFreeAuthenticatedDashboardOrigin(raw: String): String? {
+internal fun normalizeCredentialFreeAuthenticatedDashboardOrigin(
+    raw: String,
+    httpConsentOrigins: Set<String> = emptySet(),
+): String? {
     normalizeCredentialFreeHttpsOrigin(raw)?.let { return it }
     val parsed = runCatching { URI(raw.trim()) }.getOrNull() ?: return null
     if (!parsed.scheme.equals("http", ignoreCase = true)) return null
@@ -651,6 +656,6 @@ internal fun normalizeCredentialFreeAuthenticatedDashboardOrigin(raw: String): S
                 else -> false
             }
         }
-    if (!trustedHost) return null
+    if (!trustedHost && !dashboardHttpConsentMatches(raw, httpConsentOrigins)) return null
     return parsed.normalize().toASCIIString().trimEnd('/').takeIf { it.isNotBlank() }
 }

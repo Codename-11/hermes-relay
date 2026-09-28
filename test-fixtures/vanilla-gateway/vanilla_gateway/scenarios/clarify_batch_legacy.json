@@ -1,0 +1,52 @@
+{
+  "name": "clarify_batch_legacy",
+  "live_session_id": "fixture-live-clarify",
+  "stored_session_id": "fixture-stored-clarify",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.clarify"
+  ],
+  "turns": [
+    {
+      "steps": [
+        {
+          "op": "event",
+          "type": "message.start"
+        },
+        {
+          "op": "clarify",
+          "payload": {
+            "request_id": "clarify-batch",
+            "questions": [
+              {
+                "qid": "route/a",
+                "question": "Which deployment?",
+                "choices": [
+                  "Canary",
+                  "Immediate"
+                ],
+                "multi_select": false
+              },
+              {
+                "qid": "environment:b",
+                "question": "Which environments?",
+                "choices": [
+                  "Stage",
+                  "Production"
+                ],
+                "multi_select": true
+              }
+            ]
+          }
+        },
+        {
+          "op": "event",
+          "type": "message.complete",
+          "payload": {
+            "text": "Clarification complete."
+          }
+        }
+      ]
+    }
+  ]
+}

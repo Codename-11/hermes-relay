@@ -27,14 +27,13 @@ Hermes に画面の読み取り、タップ、文字入力、アプリ操作を�
 
 ## 2. Hermes を起動する
 
-Hermes Dashboard/Gateway が起動し、スマートフォンから到達できる必要があります。
-必要に応じて `hermes dashboard` で起動します。サーバーの準備は
-[インストールと設定](/ja/guide/getting-started)を参照してください。
-これだけで標準の Chat、セッション、Manage、Voice、受信ファイルを利用できます。
+Dashboard は端末から到達可能で、認証プロバイダーが設定されている必要があります。`hermes dashboard` は既定でループバックだけを使います。まず認証を設定し、直接 LAN/VPN 接続する場合は `hermes dashboard --host 0.0.0.0 --port 9119 --no-open` で起動します。ループバックへ転送するリバースプロキシには外部の `dashboard.public_url` と認証プロバイダーが必要です。内部セッショントークンを端末へコピーしないでください。
+
+**Hermes nearby** または **Remote gateway** を選びます。HTTPS を推奨します。それ以外の HTTP アドレスでは、この接続の正確なホストとポートについてリスクへの同意が必要です。アプリは VPN の保護を検出も強制もしません。VPN 切断時の認証情報や会話の露出リスクは利用者が負います。接続元を変更すると新たな同意とサインインが必要です。キャンセルすると元のアドレスが保持され、履歴と下書きは維持されます。Direct API は明示的な選択であり、Gateway チャットを自動で置き換えません。401 だけでは `dashboard.public_url` の誤設定を断定できません。
 
 ## 3. 標準 Hermes 接続を追加する {#other-supported-paths}
 
-Android で **Connect** を開き、**Find Hermes on LAN** を使うか、通常は
+Android で **Connect** を開き、**Hermes nearby** を使うか、通常は
 `http://<host>:9119` となる Dashboard アドレスを手入力します。求められたら
 ログインします。これで plugin や Relay URL のない完全な標準接続が作成されます。
 

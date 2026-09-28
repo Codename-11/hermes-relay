@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui.theme
 
+import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -10,7 +11,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Density
+import androidx.core.view.WindowCompat
 import com.hermesandroid.relay.data.AppearancePreferences
 import com.hermesandroid.relay.data.CustomThemePreset
 import com.hermesandroid.relay.data.PersistedAppearance
@@ -63,9 +66,22 @@ fun HermesRelayTheme(
     // call sites observe the active palette. SideEffect runs post-composition,
     // avoiding a state-write-during-composition; the default theme matches the
     // façade's initial value, so the common path has no first-frame flash.
+    //
+    // Match system-bar icon contrast to the palette in this window. AppCompat
+    // night mode follows persisted Appearance independently of composable
+    // previews and temporary supervised/loading palettes.
+    val view = LocalView.current
     SideEffect {
         RelayRefresh.activePalette = palette
         RelayRefresh.activeShapeScale = shapeScale
+        if (!view.isInEditMode) {
+            val activity = view.context as? Activity
+            if (activity != null) {
+                val controller = WindowCompat.getInsetsController(activity.window, view)
+                controller.isAppearanceLightStatusBars = !useDarkTheme
+                controller.isAppearanceLightNavigationBars = !useDarkTheme
+            }
+        }
     }
 
     CompositionLocalProvider(

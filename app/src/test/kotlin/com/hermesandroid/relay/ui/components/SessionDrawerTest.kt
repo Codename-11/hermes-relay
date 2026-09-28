@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -12,14 +13,19 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.SupervisedSessionActions
 import com.hermesandroid.relay.ui.theme.ProfileAccentSwatches
+import com.hermesandroid.relay.ui.theme.HermesRelayTheme
+import com.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Rule
 import org.junit.Test
 import org.junit.Assert.assertEquals
@@ -36,6 +42,70 @@ class SessionDrawerTest {
 
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    fun `pinned sidebar can be hidden and loads older sessions`() {
+        var pinToggles = 0
+        var loadMoreCalls = 0
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
+                SessionDrawerContent(
+                    sessions = List(30) { index ->
+                        ChatSession("session-$index", "Session $index", null, lastActivityAt = 1_000L - index)
+                    },
+                    currentSessionId = null,
+                    isOpen = true,
+                    hasMore = true,
+                    asSidebar = true,
+                    pinned = true,
+                    onTogglePin = { pinToggles++ },
+                    onLoadMore = { loadMoreCalls++ },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("Unpin sessions sidebar").assertIsDisplayed()
+        assertTrue(
+            compose.onNodeWithText("Unpin sessions sidebar")
+                .fetchSemanticsNode().boundsInRoot.height >= 96f,
+        )
+        compose.onRoot().captureRoboImage("build/ui-regression/session-sidebar-pinned.png")
+        compose.onNodeWithTag(SESSION_DRAWER_LIST_TAG)
+            .performScrollToNode(hasText("Session 29"))
+        compose.waitUntil(5_000) { loadMoreCalls > 0 }
+        compose.onNodeWithText("Unpin sessions sidebar").performClick()
+        assertEquals(1, pinToggles)
+    }
+
+    @Test
+    fun `pinned sidebar keeps its hide control at large text`() {
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
+                val density = LocalDensity.current
+                CompositionLocalProvider(LocalDensity provides Density(density.density, 1.6f)) {
+                    SessionDrawerContent(
+                        sessions = listOf(ChatSession("session", "Recent session", null)),
+                        currentSessionId = null,
+                        isOpen = true,
+                        asSidebar = true,
+                        pinned = true,
+                        onTogglePin = {},
+                        onNewChat = {},
+                        onSelectSession = {},
+                        onDeleteSession = {},
+                        onRenameSession = { _, _ -> },
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithText("Unpin sessions sidebar").assertIsDisplayed()
+        compose.onRoot().captureRoboImage("build/ui-regression/session-sidebar-large-text.png")
+    }
 
     @Test
     fun `failed first load is unavailable and retryable not empty`() {

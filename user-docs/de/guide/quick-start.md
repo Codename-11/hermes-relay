@@ -28,15 +28,13 @@ gleichzeitig auf demselben Gerät installiert sein.
 
 ## 2. Hermes starten
 
-Auf dem Host muss das Hermes Dashboard/Gateway laufen und vom Telefon erreichbar
-sein. Starte es bei Bedarf mit `hermes dashboard`. Das ist die gesamte
-serverseitige Einrichtung für Standard-Chat, Sitzungen, Manage, Voice und
-eingehende Dateien. Die ausführliche Einrichtung steht unter
-[Installation & Einrichtung](/de/guide/getting-started).
+Das Dashboard muss vom Telefon erreichbar sein und einen Authentifizierungsanbieter verwenden. `hermes dashboard` bindet standardmäßig nur an Loopback. Konfiguriere zuerst die Anmeldung und starte für direkten LAN-/VPN-Zugriff mit `hermes dashboard --host 0.0.0.0 --port 9119 --no-open`. Bei einem Reverse Proxy auf Loopback müssen die externe `dashboard.public_url` und ein Anbieter eingerichtet sein. Kopiere niemals den internen Sitzungstoken auf das Telefon.
+
+Wähle **Hermes nearby** oder **Remote gateway**. HTTPS wird empfohlen. Andere HTTP-Adressen erfordern eine ausdrückliche Risikoannahme für diese Verbindung und den genauen Host und Port. Die App erkennt oder erzwingt keinen VPN-Schutz; bei VPN-Ausfall trägst du das Risiko unverschlüsselter Zugangsdaten und Gespräche. Eine neue Adresse benötigt neue Zustimmung und gegebenenfalls eine neue Anmeldung. Abbrechen erhält die alte Adresse; Verlauf und Entwürfe bleiben erhalten. Direct API ist eine ausdrücklich gewählte Alternative, kein automatischer Ersatz für Gateway-Chats. Ein 401 allein beweist keinen Fehler in `dashboard.public_url`.
 
 ## 3. Standardverbindung hinzufügen {#other-supported-paths}
 
-Öffne in Android **Connect**. Nutze **Find Hermes on LAN** oder trage die
+Öffne in Android **Connect**. Nutze **Hermes nearby** oder trage die
 Dashboard-Adresse, normalerweise `http://<host>:9119`, manuell ein. Melde dich
 bei Aufforderung an. Damit entsteht eine vollständige Standardverbindung ohne
 Plugin oder Relay-URL.
@@ -56,7 +54,7 @@ Nutze `--no-ssl` nur in einem vertrauenswürdigen LAN oder VPN. Für den Zugriff
 von unterwegs wird [Tailscale empfohlen](/guide/remote-access).
 
 Öffne danach im Web Dashboard **Relay → Pair new device** und scanne den
-einmaligen QR über **Settings → Connections → Pair Hermes Relay**.
+einmaligen QR über **Settings → Gateways → Pair Hermes Relay**.
 
 Der API-Server bleibt ein optionaler Fallback. Relay ist für den Upstream-Weg
 nicht erforderlich, wird aber für Terminal/TUI, Benachrichtigungen,

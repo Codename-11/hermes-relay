@@ -282,6 +282,27 @@ class TestSharedBridgeTransport(unittest.TestCase):
         response.raise_for_status.assert_called_once_with()
 
 
+class TestNavigateScreenshot(unittest.TestCase):
+    def test_token_response_writes_fetched_png_for_vision(self) -> None:
+        png = b"\x89PNG\r\n\x1a\nvision-bytes"
+        with mock.patch.object(nav, "_get", return_value={
+            "media": "MEDIA:hermes-relay://navigate-token-123456"
+        }), mock.patch.object(nav, "_bridge_request") as request:
+            response = request.return_value
+            response.status_code = 200
+            response.headers = {"Content-Type": "image/png"}
+            response.iter_content.return_value = iter([png])
+            shot = nav._capture_screenshot()
+        try:
+            self.assertEqual(Path(shot.local_path).read_bytes(), png)
+            self.assertEqual(shot.token, "hermes-relay://navigate-token-123456")
+            request.assert_called_once_with(
+                "GET", "/media/navigate-token-123456", timeout=nav._timeout(), stream=True
+            )
+        finally:
+            Path(shot.local_path).unlink(missing_ok=True)
+
+
 class TestNavigateLoop(unittest.TestCase):
     def setUp(self) -> None:
         # Belt-and-suspenders: make sure the stub env var never leaks

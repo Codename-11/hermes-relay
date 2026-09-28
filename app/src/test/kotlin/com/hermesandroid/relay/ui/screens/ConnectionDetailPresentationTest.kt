@@ -2,6 +2,7 @@ package com.hermesandroid.relay.ui.screens
 
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.ProxyEndpoint
 import com.hermesandroid.relay.data.RelayEndpoint
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -120,6 +121,25 @@ class ConnectionDetailPresentationTest {
 
         assertEquals("Gateway", route.label)
         assertEquals("", route.address)
+    }
+
+    @Test
+    fun `Secure Link owns current route identity instead of plain LAN fallback`() {
+        val secureLink = EndpointCandidate(
+            role = "plugin_proxy",
+            proxy = ProxyEndpoint(
+                url = "https://192.168.1.20:9443",
+                pinSha256 = "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                surfaces = listOf("relay", "api", "dashboard"),
+            ),
+        )
+        val route = resolveDetailRoutePresentation(
+            activeEndpoint = secureLink,
+            effectiveDashboardUrl = "https://192.168.1.20:9443/dashboard",
+        )
+
+        assertEquals("Hermes Secure Link (HTTPS)", route.label)
+        assertEquals("https://192.168.1.20:9443/dashboard", route.address)
     }
 
     @Test

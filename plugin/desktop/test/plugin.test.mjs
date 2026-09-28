@@ -4,9 +4,18 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
-import plugin, { pairingMintBody, profileQueryKey } from '../plugin.js'
+import plugin, { pairingMintBody, profileQueryKey, secureLinkPreflightPath, secureLinkPairingBody } from '../plugin.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
+
+test('Secure Link checks encode inputs and pairing requires verified listener state', () => {
+  assert.equal(secureLinkPreflightPath('relay.example', 9443), '/remote-access/secure-link/preflight?host=relay.example&port=9443')
+  assert.equal(secureLinkPreflightPath('relay.example&port=22', 9443), '/remote-access/secure-link/preflight?host=relay.example%26port%3D22&port=9443')
+  assert.throws(() => secureLinkPairingBody({ pairing_ready: false }), /Check Secure Link/)
+  assert.deepEqual(secureLinkPairingBody({ pairing_ready: true, current_url: 'https://relay.example:9443' }), {
+    mode: 'auto', prefer: 'plugin_proxy', dashboard_url: 'https://relay.example:9443/dashboard'
+  })
+})
 
 function harness() {
   const contributions = []

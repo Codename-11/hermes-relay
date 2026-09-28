@@ -69,6 +69,8 @@ when ``desktop_terminal`` would time out — useful for debugging.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import time
@@ -752,7 +754,7 @@ def desktop_computer_screenshot(
     window_id: Optional[int] = None,
     query: Optional[str] = None,
     include_screenshot: bool = True,
-) -> str:
+) -> str | dict[str, Any]:
     """[EXPERIMENTAL] Capture a display or a structured CUA window snapshot."""
     payload: dict[str, Any] = {
         "display": display,
@@ -773,7 +775,41 @@ def desktop_computer_screenshot(
     if pid is not None or window_id is not None or not include_screenshot:
         payload["include_screenshot"] = bool(include_screenshot)
     data = _post("/desktop/desktop_computer_screenshot", payload)
-    return json.dumps(data)
+    if "error" in data or data.get("ok") is False:
+        return json.dumps(data)
+    result = data.get("result") if isinstance(data.get("result"), dict) else data
+    encoded = result.get("screenshot_base64") or result.get("bytes_base64")
+    if encoded is None:
+        return json.dumps(data)  # saved-path and text-only snapshots
+    max_image_bytes = 8 * 1024 * 1024
+    if not isinstance(encoded, str) or len(encoded) > ((max_image_bytes + 2) // 3) * 4:
+        return json.dumps({"error": "Desktop screenshot exceeds host image limit (8 MiB)"})
+    try:
+        image = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        return json.dumps({"error": "Invalid desktop screenshot image data"})
+    mime = "image/png" if image.startswith(b"\x89PNG\r\n\x1a\n") else (
+        "image/jpeg" if image.startswith(b"\xff\xd8\xff") else None
+    )
+    if not mime or len(image) > max_image_bytes:
+        return json.dumps({"error": "Unsupported or oversized desktop screenshot image"})
+    declared = result.get("screenshot_mime_type")
+    if declared and declared != mime:
+        return json.dumps({"error": "Desktop screenshot media type mismatch"})
+    sanitized = {key: value for key, value in result.items()
+                 if key not in {"bytes_base64", "screenshot_base64"}}
+    metadata = {**data, "result": sanitized} if result is not data else sanitized
+    summary = "Desktop screenshot captured; image attached for visual inspection."
+    return {
+        "_multimodal": True,
+        "content": [
+            {"type": "text", "text": f"{summary}\n{json.dumps(metadata)}"},
+            {"type": "image_url", "image_url": {
+                "url": f"data:{mime};base64,{encoded}",
+            }},
+        ],
+        "text_summary": summary,
+    }
 
 
 def desktop_computer_action(action: str, **kwargs: Any) -> str:
@@ -1299,7 +1335,8 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
         "description": (
             "[EXPERIMENTAL] Capture a desktop screenshot for observe-mode "
             "computer-use. Wraps the existing desktop screenshot backend and "
-            "returns PNG bytes or a saved path plus coordinate metadata. "
+            "attaches a bounded image for host vision, or returns a saved path "
+            "plus coordinate metadata when save_to is set. "
             "Requires an active observe/assist/control grant. "
             "Sensitive-window redaction and cursor inclusion are planned fields "
             "and are reported honestly when unavailable."

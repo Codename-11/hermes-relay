@@ -103,6 +103,8 @@ class RelayVoiceClient(
     private val voiceOutputFirstAudioTimeoutMs: Long = VOICE_OUTPUT_FIRST_AUDIO_TIMEOUT_MS,
     /** Dashboard-authenticated transport for same-origin plugin ingress. */
     private val dashboardHttpClientProvider: ((String) -> OkHttpClient?)? = null,
+    /** Pinned-TLS client for Hermes Secure Link relay URLs (self-signed leaf). */
+    private val pluginProxyHttpClientProvider: ((String) -> OkHttpClient?)? = null,
     /** Fresh Dashboard ticket request for every ingress voice socket dial. */
     private val dashboardIngressWebSocketRequestProvider:
         (suspend (String) -> Request?)? = null,
@@ -114,11 +116,7 @@ class RelayVoiceClient(
     private val okHttpClient: OkHttpClient
         get() {
             val relayUrl = relayUrlProvider()?.trim().orEmpty()
-            return if (isDashboardRelayIngressUrl(relayUrl)) {
-                dashboardHttpClientProvider?.invoke(relayUrl) ?: directOkHttpClient
-            } else {
-                directOkHttpClient
-            }
+            return resolveClient(relayUrl)
         }
 
     companion object {
@@ -163,12 +161,15 @@ class RelayVoiceClient(
         }
     }
 
-    private fun callClient(url: String): OkHttpClient =
-        if (isDashboardRelayIngressUrl(url)) {
-            dashboardHttpClientProvider?.invoke(url) ?: directOkHttpClient
-        } else {
-            directOkHttpClient
+    private fun resolveClient(url: String): OkHttpClient =
+        when {
+            isDashboardRelayIngressUrl(url) ->
+                dashboardHttpClientProvider?.invoke(url) ?: directOkHttpClient
+            else ->
+                pluginProxyHttpClientProvider?.invoke(url) ?: directOkHttpClient
         }
+
+    private fun callClient(url: String): OkHttpClient = resolveClient(url)
 
     private fun sessionClient(): OkHttpClient =
         okHttpClient.newBuilder()

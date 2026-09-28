@@ -1,0 +1,11 @@
+{
+  "name": "secure_link_gateway_auth",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260821_120000_fixture",
+  "profile": "default",
+  "contract_requirements": ["gateway.ticket_subprotocol", "gateway.session_activate_live"],
+  "turns": [{"steps": [
+    {"op": "event", "type": "message.start"},
+    {"op": "event", "type": "message.complete", "payload": {"text": "Secure Link Gateway response.", "status": "complete"}}
+  ]}]
+}

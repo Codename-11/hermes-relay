@@ -315,7 +315,7 @@
     <string name="cw_cloud_subtitle">连接到你的托管智能体</string>
     <string name="cw_server_vps_title">远程网关</string>
     <string name="cw_server_vps_subtitle">输入其 Dashboard 地址</string>
-    <string name="cw_relay_optional_note">私有 LAN 和 Tailscale 地址可使用 HTTP 或 HTTPS。公共地址必须使用 HTTPS。Relay 与 API 后备均为可选。</string>
+    <string name="cw_relay_optional_note">建议使用 HTTPS。其他 HTTP 地址需要明确接受风险。应用不会强制执行 VPN 保护。Relay 和 Direct API 均为可选。</string>
     <string name="cw_cloud_entry_title">连接到 Nous 托管的 Hermes</string>
     <string name="cw_cloud_entry_description">输入 Nous Portal 中显示的智能体地址。找到 Hermes 后，你将安全登录。</string>
     <string name="cw_cloud_agent_name">智能体地址</string>
@@ -323,7 +323,7 @@
     <string name="cw_cloud_slug_hint">我们将连接到 your-agent.agents.nousresearch.com。</string>
     <string name="cw_cloud_slug_error">请准确输入 .agents.nousresearch.com 前的字母、数字和连字符。</string>
     <string name="cw_cloud_address_placeholder">https://your-agent.example.com</string>
-    <string name="cw_cloud_address_hint">请使用为托管智能体显示的完整 HTTPS 地址。</string>
+    <string name="cw_cloud_address_hint">请使用为托管智能体显示的完整 HTTPS 地址；如有提供，也请包含 :端口。</string>
     <string name="cw_cloud_use_custom_address">使用自定义网址</string>
     <string name="cw_cloud_use_nous_address">使用 Nous 托管地址</string>
     <string name="cw_before_connecting">连接之前</string>
@@ -343,10 +343,10 @@
     <string name="cw_nearby_enter_address">改为输入地址</string>
     <string name="cw_other_connection_methods">其他连接方式</string>
     <string name="cw_manual_hermes_title">输入网关地址</string>
-    <string name="cw_manual_hermes_description">请输入你在浏览器中打开的仪表板地址。如果此手机无法打开，请启动 hermes dashboard 并检查 Wi-Fi 或 Tailscale。</string>
+    <string name="cw_manual_hermes_description">输入可在此手机浏览器中打开的 Dashboard 地址。通过 LAN 或 VPN 访问时，主机需要可达的 Dashboard 和身份验证。若浏览器无法连接，请参阅设置指南。</string>
     <string name="cw_hermes_address">Hermes 地址</string>
-    <string name="cw_hermes_address_placeholder">192.168.1.10 或 hermes.example.com</string>
-    <string name="cw_hermes_address_hint">无需 API 密钥。未指定端口时使用仪表板端口 9119。</string>
+    <string name="cw_hermes_address_placeholder">192.168.1.10:9119</string>
+    <string name="cw_hermes_address_hint">示例：192.168.1.10:9119 或 https://hermes.example.com:10443。省略时，私有主机使用端口 9119，HTTPS 使用端口 443。无需 API 密钥。</string>
     <string name="cw_find_hermes">查找 Hermes</string>
     <string name="cw_hermes_found">已找到 Hermes</string>
     <string name="cw_ready_to_connect">可以连接</string>
@@ -369,12 +369,12 @@
     <string name="cw_skip_for_now">暂时跳过——稍后在设置中配置</string>
     <string name="cw_back">上一步</string>
     <string name="cw_connect_button">连接</string>
-    <string name="cw_hermes_label">Hermes</string>
-    <string name="cw_hermes_label_desc">用于聊天和管理。等启用终端、Bridge、Relay 会话或授权时再配对 Relay。仪表盘登录是首选的上游认证方式；API 密钥仍是 Android 聊天的备用方式。</string>
+    <string name="cw_hermes_label">Direct API</string>
+    <string name="cw_hermes_label_desc">Direct API 是为 API 服务器聊天明确选择的兼容连接。Manage、Dashboard 会话和标准语音需要单独登录 Dashboard。它不会接管现有 Gateway 对话。</string>
     <string name="cw_api_url_label">API 服务器地址或主机名</string>
     <string name="cw_api_key_label">API 密钥</string>
     <string name="cw_api_key_placeholder">API_SERVER_KEY 的值</string>
-    <string name="cw_api_key_hint">在仪表盘网关传输启用前，Android 聊天需要此密钥。</string>
+    <string name="cw_api_key_hint">仅用于此 API 服务器的 Bearer 密钥，不能用于登录 Dashboard。</string>
     <string name="cw_tailscale_label">远程访问——Tailscale 地址（可选）</string>
     <string name="cw_dashboard">仪表盘</string>
     <string name="cw_dashboard_routes_hint">路由：默认优先，Tailscale 在可达时作为备用。</string>
@@ -390,7 +390,7 @@
 
     <!-- 方法卡片 -->
     <string name="cw_method_hermes_title">Hermes</string>
-    <string name="cw_method_hermes_subtitle">API/仪表盘设置，用于聊天、管理、技能、定时任务、MCP、配置文件、模型和设置</string>
+    <string name="cw_method_hermes_subtitle">为无界面或兼容配置明确选择的 API 服务器聊天</string>
     <string name="cw_method_scan_title">扫描设置二维码</string>
     <string name="cw_method_scan_subtitle">扫描包含 API 地址/密钥的二维码；Relay 二维码详情需要 Relay 插件</string>
     <string name="cw_method_pair_code_title">用配对码配对 Relay</string>
@@ -400,7 +400,7 @@
 
     <!-- 标准连接表单 -->
     <string name="cw_api_url_placeholder">192.168.1.10 或 http://你的服务器:8642</string>
-    <string name="cw_api_url_supporting">聊天和会话使用的 Hermes API——裸主机名默认使用 API 端口 8642 和 http://（仪表盘的 9119 端口单独推导）</string>
+    <string name="cw_api_url_supporting">Direct API 聊天使用的 API 服务器地址。仅输入主机时使用 HTTP 和端口 8642。</string>
     <string name="cw_scan_message">正在扫描本局域网寻找 Hermes 仪表盘/API…</string>
     <string name="cw_dashboard_signin_hint">通过仪表盘登录以解锁管理和语音——API 密钥仅用于明确配置的 Direct API 连接。</string>
     <string name="cw_pair_relay_section">配对 Relay（可选）</string>
@@ -495,7 +495,7 @@
     <string name="cw_timeout_entercode_showcode">主机尚未接受此配对码。请在 Hermes 主机上运行配对命令（或重新检查配对码），然后点击重试。</string>
     <string name="cw_timeout_scan">在 Relay 确认配对之前超时。请检查 Relay 是否在运行且在此网络上可达，然后重试。如果配对似乎成功但仍无法访问 Hermes，则 API 服务器可能位于登录网关之后。</string>
     <string name="cw_timeout_other">等待 Relay 超时。请检查 Relay 是否正在运行以及地址是否正确。</string>
-    <string name="cw_camera_denied">摄像头权限被拒绝。请改为手动配对——选择"用配对码配对 Relay"或输入您的服务器地址。</string>
+    <string name="cw_camera_denied">相机权限被拒绝。请选择远程 Gateway 并输入 Dashboard 地址。Relay 配对码位于高级选项中。</string>
 
     <!-- EndpointsCard -->
     <string name="endpoints_no_routes_stored">此连接尚未存储任何路由。</string>
@@ -987,6 +987,8 @@
     <string name="drawer_new_chat">新对话</string>
     <string name="drawer_search_placeholder">搜索会话或 ID…</string>
     <string name="drawer_search_sessions">搜索会话</string>
+    <string name="drawer_pin_sidebar">固定会话侧边栏</string>
+    <string name="drawer_unpin_sidebar">取消固定会话侧边栏</string>
     <string name="drawer_activity_working">正在处理</string>
     <string name="drawer_activity_needs_input">需要输入</string>
     <string name="drawer_activity_starting">正在启动</string>
@@ -2136,7 +2138,7 @@
     <string name="stats_last_sentence">最近句子</string>
     <string name="stats_avg_latency_last_format">平均延迟（最近 %1$d 次）</string>
     <string name="stats_response_chunks">响应片段</string>
-    <string name="stats_last_chunk_gap">最近片段间隔</string>
+    <string name="stats_last_chunk_gap">语音合成请求间隔</string>
     <string name="stats_received">已接收</string>
     <string name="stats_barge_in_playback">打断 / 播放</string>
     <string name="stats_barge_in_events">打断次数</string>
@@ -2782,6 +2784,7 @@
     <string name="model_picker_title">模型</string>
     <string name="model_picker_search">搜索模型或提供商…</string>
     <string name="model_picker_empty">没有匹配您搜索的模型</string>
+    <string name="model_picker_no_models">没有可用的模型。请尝试刷新。</string>
 
     <!-- InjectedContextSheet -->
     <string name="context_sheet_agent_sees">代理看到的内容</string>
@@ -3278,7 +3281,7 @@
     <string name="endpoints_pin_title">固定端点</string>
     <string name="endpoints_route_editor_desc">添加此手机在该网络上应使用的 Dashboard/Gateway 地址。</string>
     <string name="endpoints_route_name_placeholder">路由名称</string>
-    <string name="endpoints_url_host_placeholder">100.x.y.z 或 host.ts.net</string>
+    <string name="endpoints_url_host_placeholder">100.x.y.z:9119 或 https://host.ts.net:10443</string>
     <string name="endpoints_url_supporting_blank">输入服务器的 Dashboard 地址</string>
     <string name="endpoints_url_supporting_enter">使用 http:// 或 https:// Dashboard 地址</string>
     <string name="endpoints_url_supporting_preview">将测试：%1$s</string>
@@ -3517,16 +3520,16 @@
     <string name="cw_relay_pair_qr">配对 Hermes Relay</string>
     <string name="cw_relay_pair_qr_desc">扫描 Relay 设置二维码</string>
     <string name="cw_relay_enter_code">输入配对码</string>
-    <string name="cw_dashboard_connected_title">Hermes 已连接</string>
-    <string name="cw_dashboard_connected_body">Dashboard 和 Gateway 已就绪。你可以开始聊天或打开 Manage。</string>
+    <string name="cw_dashboard_connected_title">Dashboard 访问已验证</string>
+    <string name="cw_dashboard_connected_body">继续进入 Chat。Gateway 连接和语音可用性会分别检查。</string>
     <string name="cw_continue">继续</string>
     <string name="cw_timeline_discovered">已发现 Hermes</string>
-    <string name="cw_timeline_discovered_detail">已验证 Dashboard 标识和状态端点</string>
+    <string name="cw_timeline_discovered_detail">已获取 Dashboard 状态</string>
     <string name="cw_timeline_access">Dashboard 访问</string>
     <string name="cw_timeline_access_ready">无需额外登录</string>
     <string name="cw_timeline_authenticated">身份验证已确认</string>
-    <string name="cw_timeline_ready">连接已就绪</string>
-    <string name="cw_timeline_ready_detail">Chat、Manage 和 Voice 可以使用此 Dashboard</string>
+    <string name="cw_timeline_ready">可以继续</string>
+    <string name="cw_timeline_ready_detail">打开 Chat 时连接，语音可用性单独检查</string>
     <string name="active_section_optional_api_fallback">可选 Direct API</string>
     <string name="active_section_api_not_required">此连接使用 Hermes Dashboard 时不需要配置。</string>
     <string name="active_section_where_api_key">从哪里获取此密钥？</string>
@@ -4472,11 +4475,11 @@
     <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
     <string name="api_fallback_title">直接 API</string>
     <string name="current_surface_paths_title">Current paths</string>
-    <string name="dashboard_address_editor_body">设置此手机使用的 Dashboard 和 Gateway 地址。私有 LAN 与 Tailscale 路由可使用 HTTP 或 HTTPS；公共路由必须使用 HTTPS。</string>
+    <string name="dashboard_address_editor_body">设置此连接的 Dashboard 和 Gateway 地址。需要时请包含 :端口，例如 192.168.1.10:9119 或 https://hermes.example.com:10443。建议使用 HTTPS。其他 HTTP 地址需要明确接受风险。</string>
     <string name="dashboard_address_editor_title">网关地址</string>
     <string name="dashboard_address_label">Dashboard &amp; Gateway address</string>
-<string name="dashboard_address_oidc_hint">Use any Dashboard address this phone can reach. OIDC callback settings are configured on Hermes; no second sign-in address is required here.</string>
-    <string name="dashboard_address_placeholder">https://hermes.example.com</string>
+<string name="dashboard_address_oidc_hint">更改地址会保留此 Gateway 和历史记录引用，但更换源后需要重新登录。OIDC 回调在 Hermes 上配置。</string>
+    <string name="dashboard_address_placeholder">192.168.1.10:9119</string>
     <string name="dashboard_address_preview">Will use: %1$s</string>
     <string name="dashboard_address_required">输入 Hermes Gateway 地址</string>
     <string name="dashboard_gateway_configured">Configured address</string>
@@ -4534,4 +4537,13 @@
     <string name="voice_overlay_settings_hint">两个版本均可选择使用。在聊天的语音专注模式中选择悬浮窗。仅授予权限不会开始监听。</string>
     <string name="voice_overlay_reset_position">重置位置</string>
     <string name="injected_context_gateway_unsupported">Gateway 聊天不会发送此内容。此连接不支持每轮附加上下文。</string>
+    <string name="dashboard_http_risk">HTTP 不会加密发送到 %1$s 的请求。密码、会话令牌和对话可能泄露。如果依赖 VPN，您有责任确保流量始终处于 VPN 内，包括 VPN 断开时。应用不会检测或强制执行 VPN 保护。</string>
+    <string name="dashboard_http_allow">我接受风险并允许此地址使用 HTTP</string>
+    <string name="cw_auth_verified">登录已验证</string>
+    <string name="cw_chat_checked_on_open">打开 Chat 时验证</string>
+    <string name="dashboard_local_auth_help">Hermes 可达，但受保护的请求未获授权。如果 Dashboard 从回环地址转发，请检查主机的监听地址、身份验证提供方和 dashboard.public_url。仅凭 401 无法确定原因。</string>
+    <string name="voice_streaming_failed_basic">流式语音失败。正在使用基础语音，句子之间可能会有停顿。请检查语音提供商设置。</string>
+    <string name="voice_streaming_stopped_basic_next">流式语音已停止。剩余内容将使用基础语音。请检查语音提供商设置。</string>
+    <string name="stats_tts_queue_wait">音频队列等待时间</string>
+    <string name="stats_tts_player_start">播放器启动延迟</string>
 </resources>

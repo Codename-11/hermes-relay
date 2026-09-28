@@ -1,3 +1,3 @@
-v1.17.0 - Voice over other apps and clearer conversations
+v1.18.0 - Current Hermes prompts and safer connections
 
-Use optional voice controls over other apps, with clear permission setup and an immediate Stop action. Answer Clarify batches one question at a time, with progress preserved across reconnects. Enjoy cleaner chat cards, recognizable profile names, and context previews that show what your connection supports. Phone control remains sideload-only.
+Current Hermes Clarify, approval, sudo, and secret prompts work again. Set up Gateways with clearer authentication checks and explicit HTTP consent. Secure Link protects paired routes, Standard Voice speaks live background completions, and a wide Sessions sidebar improves navigation. Voice fallback now shows what happened; audible basic-TTS pauses remain under investigation.

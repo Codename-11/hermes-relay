@@ -315,7 +315,7 @@
     <string name="cw_cloud_subtitle">ホスト済みエージェントに接続します</string>
     <string name="cw_server_vps_title">リモートゲートウェイ</string>
     <string name="cw_server_vps_subtitle">Dashboard アドレスを入力</string>
-    <string name="cw_relay_optional_note">プライベート LAN と Tailscale のアドレスは HTTP または HTTPS を使用できます。公開アドレスには HTTPS が必要です。Relay と Direct API は任意です。</string>
+    <string name="cw_relay_optional_note">HTTPS を推奨します。それ以外の HTTP アドレスには明示的なリスク同意が必要です。アプリは VPN 保護を強制しません。Relay と Direct API は任意です。</string>
     <string name="cw_cloud_entry_title">Nous ホスト版 Hermes に接続</string>
     <string name="cw_cloud_entry_description">Nous Portal に表示されるエージェントのアドレスを入力してください。Hermes が見つかった後、安全にサインインします。</string>
     <string name="cw_cloud_agent_name">エージェントのアドレス</string>
@@ -323,7 +323,7 @@
     <string name="cw_cloud_slug_hint">your-agent.agents.nousresearch.com に接続します。</string>
     <string name="cw_cloud_slug_error">.agents.nousresearch.com の前にある英字、数字、ハイフンを正確に入力してください。</string>
     <string name="cw_cloud_address_placeholder">https://your-agent.example.com</string>
-    <string name="cw_cloud_address_hint">ホスト済みエージェントに表示される完全な HTTPS アドレスを使用してください。</string>
+    <string name="cw_cloud_address_hint">ホスト済みエージェントに表示される完全な HTTPS アドレスを使用し、指定されている場合は :ポートも含めてください。</string>
     <string name="cw_cloud_use_custom_address">カスタム URL を使用</string>
     <string name="cw_cloud_use_nous_address">Nous ホスト版アドレスを使用</string>
     <string name="cw_before_connecting">接続する前に</string>
@@ -343,10 +343,10 @@
     <string name="cw_nearby_enter_address">アドレスを入力</string>
     <string name="cw_other_connection_methods">その他の接続方法</string>
     <string name="cw_manual_hermes_title">ゲートウェイのアドレスを入力</string>
-    <string name="cw_manual_hermes_description">ブラウザで開くダッシュボードアドレスを入力します。このスマートフォンで開けない場合は hermes dashboard を起動し、Wi-Fi または Tailscale を確認してください。</string>
+    <string name="cw_manual_hermes_description">この端末のブラウザーで開ける Dashboard アドレスを入力してください。LAN や VPN では、ホストの Dashboard が到達可能で認証を設定済みである必要があります。接続できない場合はセットアップガイドを確認してください。</string>
     <string name="cw_hermes_address">Hermes アドレス</string>
-    <string name="cw_hermes_address_placeholder">192.168.1.10 または hermes.example.com</string>
-    <string name="cw_hermes_address_hint">API キーは不要です。ポートを省略するとダッシュボードの 9119 番ポートを使用します。</string>
+    <string name="cw_hermes_address_placeholder">192.168.1.10:9119</string>
+    <string name="cw_hermes_address_hint">例: 192.168.1.10:9119 または https://hermes.example.com:10443。省略した場合、プライベートホストはポート 9119、HTTPS はポート 443 を使用します。API キーは不要です。</string>
     <string name="cw_find_hermes">Hermes を検索</string>
     <string name="cw_hermes_found">Hermes が見つかりました</string>
     <string name="cw_ready_to_connect">接続できます</string>
@@ -369,12 +369,12 @@
     <string name="cw_skip_for_now">今はスキップします — 後で [設定] で設定します</string>
     <string name="cw_back">戻る</string>
     <string name="cw_connect_button">接続する</string>
-    <string name="cw_hermes_label">Hermes</string>
-    <string name="cw_hermes_label_desc">チャットと管理に使用します。後でターミナル、Bridge、Relay セッション、または許可を有効にする場合にのみ、Relay をペアリングします。ダッシュボード サインインは、優先されるアップストリーム認証パスです。 API キーは Android チャット フォールバックのままです。</string>
+    <string name="cw_hermes_label">Direct API</string>
+    <string name="cw_hermes_label_desc">Direct API は、API サーバーのチャット用に明示的に選ぶ互換接続です。Manage、Dashboard のセッション、標準音声には別途 Dashboard へのサインインが必要です。既存の Gateway の会話を引き継ぐものではありません。</string>
     <string name="cw_api_url_label">API サーバー URL またはホスト</string>
     <string name="cw_api_key_label">API キー</string>
     <string name="cw_api_key_placeholder">API_SERVER_KEY の値</string>
-    <string name="cw_api_key_hint">ダッシュボード Gateway トランスポートが有効になるまで、Android チャットに必要です。</string>
+    <string name="cw_api_key_hint">この API サーバー専用の Bearer キーです。Dashboard へのサインインには使えません。</string>
     <string name="cw_tailscale_label">リモート アクセス — Tailscale URL (オプション)</string>
     <string name="cw_dashboard">ダッシュボード</string>
     <string name="cw_dashboard_routes_hint">ルート: 最初はデフォルト、到達可能な場合は Tailscale フォールバック。</string>
@@ -390,7 +390,7 @@
 
     <!-- Method tiles -->
     <string name="cw_method_hermes_title">Hermes</string>
-    <string name="cw_method_hermes_subtitle">API/チャット、管理、スキル、Cron、MCP、プロファイル、モデル、設定のダッシュボード設定</string>
+    <string name="cw_method_hermes_subtitle">ヘッドレス構成や互換用途で明示的に使う API サーバーチャット</string>
     <string name="cw_method_scan_title">スキャン設定 QR</string>
     <string name="cw_method_scan_subtitle">QR を API URL/キーで Hermes にスキャンします。 Relay QR の詳細には Relay プラグインが必要です</string>
     <string name="cw_method_pair_code_title">Relay をコードでペアリングする</string>
@@ -400,7 +400,7 @@
 
     <!-- Standard connect form -->
     <string name="cw_api_url_placeholder">192.168.1.10 または http://your-server:8642</string>
-    <string name="cw_api_url_supporting">Hermes API チャットとセッションで使用されます — API ポート 8642 および http:// はベア ホストとして想定されます (ダッシュボードの 9119 は個別に派生します)</string>
+    <string name="cw_api_url_supporting">Direct API チャット用の API サーバーアドレス。ホスト名だけの場合は HTTP とポート 8642 を使います。</string>
     <string name="cw_scan_message">この LAN をスキャンして Hermes ダッシュボード/API を探しています…</string>
     <string name="cw_dashboard_signin_hint">ダッシュボード経由でサインインして、管理と音声のロックを解除します。API キーは明示的な Direct API 接続でのみ使います。</string>
     <string name="cw_pair_relay_section">Relay のペア (オプション)</string>
@@ -495,7 +495,7 @@
     <string name="cw_timeout_entercode_showcode">ホストはまだこのペアリング コードを受け入れていません。 Hermes ホストでペアリング コマンドを実行し (またはコードを再確認し)、[再試行] をタップします。</string>
     <string name="cw_timeout_scan">Relayがペアリングを確認する前にタイムアウトしました。Relayが実行中であり、このネットワーク上で到達可能であることを確認してから、再試行してください。ペアリングが成功したように見えても、Hermes にまだ到達できない場合は、API サーバーがログイン Gatewayの背後にある可能性があります。</string>
     <string name="cw_timeout_other">Relay待ちでタイムアウト。Relayが動作していること、URL が正しいことを確認してください。</string>
-    <string name="cw_camera_denied">カメラの許可が拒否されました。代わりに手動でペアリングします。「コードで Relay をペアリング」を選択するか、サーバー URL を入力します。</string>
+    <string name="cw_camera_denied">カメラの権限が拒否されました。リモート Gateway を選び、Dashboard アドレスを入力してください。Relay のペアリングコードは詳細設定にあります。</string>
 
     <!-- EndpointsCard -->
     <string name="endpoints_no_routes_stored">この接続にはルートが保存されていません。</string>
@@ -1003,6 +1003,8 @@
     <string name="drawer_new_chat">新しいチャット</string>
     <string name="drawer_search_placeholder">セッションまたは ID を検索...</string>
     <string name="drawer_search_sessions">セッションを検索</string>
+    <string name="drawer_pin_sidebar">セッションサイドバーをピン留め</string>
+    <string name="drawer_unpin_sidebar">セッションサイドバーのピン留めを解除</string>
     <string name="drawer_activity_working">処理中</string>
     <string name="drawer_activity_needs_input">入力が必要</string>
     <string name="drawer_activity_starting">開始中</string>
@@ -2152,7 +2154,7 @@
     <string name="stats_last_sentence">最後の文</string>
     <string name="stats_avg_latency_last_format">平均レイテンシ (最後の %1$d)</string>
     <string name="stats_response_chunks">応答チャンク</string>
-    <string name="stats_last_chunk_gap">最後のチャンクギャップ</string>
+    <string name="stats_last_chunk_gap">音声合成リクエストの間隔</string>
     <string name="stats_received">受け取った</string>
     <string name="stats_barge_in_playback">バージイン/再生</string>
     <string name="stats_barge_in_events">バージインイベント</string>
@@ -2796,6 +2798,7 @@
     <string name="model_picker_title">モデル</string>
     <string name="model_picker_search">モデルまたはプロバイダーを検索&#8230;</string>
     <string name="model_picker_empty">検索に一致するモデルはありません</string>
+    <string name="model_picker_no_models">利用可能なモデルがありません。更新してください。</string>
 
     <!-- InjectedContextSheet -->
     <string name="context_sheet_agent_sees">エージェントが見ているもの</string>
@@ -3354,7 +3357,7 @@
     <string name="endpoints_pin_title">固定されたエンドポイント</string>
     <string name="endpoints_route_editor_desc">このネットワークで電話が使用する Dashboard/Gateway アドレスを追加します。</string>
     <string name="endpoints_route_name_placeholder">路線名</string>
-    <string name="endpoints_url_host_placeholder">100.x.y.z または host.ts.net</string>
+    <string name="endpoints_url_host_placeholder">100.x.y.z:9119 または https://host.ts.net:10443</string>
     <string name="endpoints_url_supporting_blank">サーバーの Dashboard アドレスを入力します</string>
     <string name="endpoints_url_supporting_enter">http:// または https:// の Dashboard アドレスを使用します</string>
     <string name="endpoints_url_supporting_preview">テスト対象: %1$s</string>
@@ -3581,16 +3584,16 @@
     <string name="cw_relay_pair_qr">Hermes Relay をペアリング</string>
     <string name="cw_relay_pair_qr_desc">Relay セットアップ QR をスキャン</string>
     <string name="cw_relay_enter_code">ペアリングコードを入力</string>
-    <string name="cw_dashboard_connected_title">Hermes に接続しました</string>
-    <string name="cw_dashboard_connected_body">Dashboard と Gateway の準備ができました。チャットを開始するか Manage を開けます。</string>
+    <string name="cw_dashboard_connected_title">Dashboard アクセス確認済み</string>
+    <string name="cw_dashboard_connected_body">Chat に進みます。Gateway 接続と音声の利用可否は別途確認します。</string>
     <string name="cw_continue">続行</string>
     <string name="cw_timeline_discovered">Hermes を検出</string>
-    <string name="cw_timeline_discovered_detail">Dashboard の識別情報とステータスエンドポイントを確認済み</string>
+    <string name="cw_timeline_discovered_detail">Dashboard の状態を取得しました</string>
     <string name="cw_timeline_access">Dashboard アクセス</string>
     <string name="cw_timeline_access_ready">追加のサインインは不要です</string>
     <string name="cw_timeline_authenticated">認証を確認済み</string>
-    <string name="cw_timeline_ready">接続準備完了</string>
-    <string name="cw_timeline_ready_detail">Chat、Manage、Voice でこの Dashboard を使用できます</string>
+    <string name="cw_timeline_ready">続行できます</string>
+    <string name="cw_timeline_ready_detail">Chat は開く際に接続し、音声の利用可否は別途確認します</string>
     <string name="active_section_optional_api_fallback">任意の Direct API</string>
     <string name="active_section_api_not_required">この接続が Hermes Dashboard を使用する場合は必要ありません。</string>
     <string name="active_section_where_api_key">このキーはどこで入手しますか？</string>
@@ -4543,11 +4546,11 @@
     <string name="active_section_unavailable_mechanism">Unavailable · %1$s</string>
     <string name="api_fallback_title">Direct API</string>
     <string name="current_surface_paths_title">Current paths</string>
-    <string name="dashboard_address_editor_body">この端末で使う Dashboard と Gateway のアドレスを設定します。プライベート LAN と Tailscale ルートは HTTP または HTTPS を使用でき、公開ルートには HTTPS が必要です。</string>
+    <string name="dashboard_address_editor_body">この接続の Dashboard と Gateway のアドレスを設定します。必要に応じて :ポートを指定してください（例: 192.168.1.10:9119 または https://hermes.example.com:10443）。HTTPS を推奨します。それ以外の HTTP アドレスにはリスクへの明示的な同意が必要です。</string>
     <string name="dashboard_address_editor_title">ゲートウェイのアドレス</string>
     <string name="dashboard_address_label">Dashboard &amp; Gateway address</string>
-<string name="dashboard_address_oidc_hint">Use any Dashboard address this phone can reach. OIDC callback settings are configured on Hermes; no second sign-in address is required here.</string>
-    <string name="dashboard_address_placeholder">https://hermes.example.com</string>
+<string name="dashboard_address_oidc_hint">アドレスを変更しても Gateway と履歴への参照は保持されますが、接続元が変わる場合は再サインインが必要です。OIDC コールバックは Hermes 側で設定します。</string>
+    <string name="dashboard_address_placeholder">192.168.1.10:9119</string>
     <string name="dashboard_address_preview">Will use: %1$s</string>
     <string name="dashboard_address_required">Hermes Gateway のアドレスを入力してください</string>
     <string name="dashboard_gateway_configured">Configured address</string>
@@ -4605,4 +4608,13 @@
     <string name="voice_overlay_settings_hint">両方のビルドで任意に利用できます。チャットの音声フォーカスでオーバーレイを選択します。権限の付与だけで録音は始まりません。</string>
     <string name="voice_overlay_reset_position">位置をリセット</string>
     <string name="injected_context_gateway_unsupported">Gateway チャットでは送信されません。この接続はターンごとの追加コンテキストに対応していません。</string>
+    <string name="dashboard_http_risk">HTTP は %1$s へのリクエストを暗号化しません。パスワード、セッショントークン、会話が露出する可能性があります。VPN に依存する場合、VPN 切断時も含め、通信を VPN 内に保つ責任は利用者にあります。アプリは VPN の保護を検出も強制もしません。</string>
+    <string name="dashboard_http_allow">リスクを理解し、このアドレスで HTTP を許可します</string>
+    <string name="cw_auth_verified">サインイン確認済み</string>
+    <string name="cw_chat_checked_on_open">Chat を開く際に確認します</string>
+    <string name="dashboard_local_auth_help">Hermes には到達できますが、保護されたリクエストが認可されていません。Dashboard をループバックから転送している場合は、ホストのバインドアドレス、認証プロバイダー、dashboard.public_url を確認してください。401 だけでは原因を特定できません。</string>
+    <string name="voice_streaming_failed_basic">ストリーミング音声に失敗しました。基本音声を使用します。文の間に間が空く場合があります。音声プロバイダーの設定を確認してください。</string>
+    <string name="voice_streaming_stopped_basic_next">ストリーミング音声が停止しました。残りは基本音声を使用します。音声プロバイダーの設定を確認してください。</string>
+    <string name="stats_tts_queue_wait">音声キューの待機時間</string>
+    <string name="stats_tts_player_start">プレーヤーの開始遅延</string>
 </resources>
