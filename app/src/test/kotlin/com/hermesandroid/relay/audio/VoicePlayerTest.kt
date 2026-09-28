@@ -163,6 +163,30 @@ class VoicePlayerTest {
     }
 
     @Test
+    fun `startup measurement ends at playing callback and stop discards pending sample`() {
+        var now = 100L
+        val player = VoicePlayer(context, elapsedRealtimeMs = { now }) { exoPlayer }
+        every { exoPlayer.play() } just Runs
+        player.play(File("first.mp3"))
+        assertEquals(null, player.lastStartLatencyMs)
+        now = 175L
+        listener?.onIsPlayingChanged(true)
+        assertEquals(75L, player.lastStartLatencyMs)
+        listener?.onIsPlayingChanged(false)
+        now = 200L
+        listener?.onIsPlayingChanged(true)
+        assertEquals(75L, player.lastStartLatencyMs)
+
+        player.stop()
+        player.play(File("cancelled.mp3"))
+        player.stop()
+        now = 900L
+        listener?.onIsPlayingChanged(true)
+        assertEquals(null, player.lastStartLatencyMs)
+        player.release()
+    }
+
+    @Test
     fun `play appends a MediaItem and prepares the player when idle`() {
         val voicePlayer = VoicePlayer(context) { exoPlayer }
         val file = File("/tmp/voice_tts_0.mp3")

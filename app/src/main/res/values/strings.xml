@@ -2513,7 +2513,7 @@
     <string name="stats_last_sentence">Last sentence</string>
     <string name="stats_avg_latency_last_format">Avg latency (last %1$d)</string>
     <string name="stats_response_chunks">Response chunks</string>
-    <string name="stats_last_chunk_gap">Last chunk gap</string>
+    <string name="stats_last_chunk_gap">Synthesis request gap</string>
     <string name="stats_received">Received</string>
     <string name="stats_barge_in_playback">Barge-in / Playback</string>
     <string name="stats_barge_in_events">Barge-in events</string>
@@ -4676,4 +4676,8 @@
     <string name="cw_auth_verified">Sign-in verified</string>
     <string name="cw_chat_checked_on_open">Verified when Chat opens</string>
     <string name="dashboard_local_auth_help">Hermes is reachable, but protected requests are not authorized. If this Dashboard is forwarded from loopback, check its bind address, authentication provider, and dashboard.public_url on the host. A 401 alone does not identify the cause.</string>
+    <string name="voice_streaming_failed_basic">Streaming voice failed. Using basic speech, which may pause between sentences. Check the voice provider settings.</string>
+    <string name="voice_streaming_stopped_basic_next">Streaming voice stopped. Remaining speech will use basic speech. Check the voice provider settings.</string>
+    <string name="stats_tts_queue_wait">Audio queue wait</string>
+    <string name="stats_tts_player_start">Player start delay</string>
 </resources>

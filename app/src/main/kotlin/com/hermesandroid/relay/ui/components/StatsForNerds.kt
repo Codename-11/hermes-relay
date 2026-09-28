@@ -696,6 +696,14 @@ private fun VoiceSection(stats: VoiceStats) {
             value = if (stats.currentResponseTtsChunks <= 1) "—" else formatMsWithSeconds(stats.lastTtsChunkGapMs),
         )
         KeyValueRow(
+            label = stringResource(R.string.stats_tts_queue_wait),
+            value = stats.lastTtsQueueWaitMs?.let(::formatMsWithSeconds) ?: "—",
+        )
+        KeyValueRow(
+            label = stringResource(R.string.stats_tts_player_start),
+            value = stats.lastTtsPlayerStartMs?.let(::formatMsWithSeconds) ?: "—",
+        )
+        KeyValueRow(
             label = stringResource(R.string.stats_received),
             value = formatByteCount(stats.ttsBytesReceived),
         )

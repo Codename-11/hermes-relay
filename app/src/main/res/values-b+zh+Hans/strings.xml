@@ -2138,7 +2138,7 @@
     <string name="stats_last_sentence">最近句子</string>
     <string name="stats_avg_latency_last_format">平均延迟（最近 %1$d 次）</string>
     <string name="stats_response_chunks">响应片段</string>
-    <string name="stats_last_chunk_gap">最近片段间隔</string>
+    <string name="stats_last_chunk_gap">语音合成请求间隔</string>
     <string name="stats_received">已接收</string>
     <string name="stats_barge_in_playback">打断 / 播放</string>
     <string name="stats_barge_in_events">打断次数</string>
@@ -4542,4 +4542,8 @@
     <string name="cw_auth_verified">登录已验证</string>
     <string name="cw_chat_checked_on_open">打开 Chat 时验证</string>
     <string name="dashboard_local_auth_help">Hermes 可达，但受保护的请求未获授权。如果 Dashboard 从回环地址转发，请检查主机的监听地址、身份验证提供方和 dashboard.public_url。仅凭 401 无法确定原因。</string>
+    <string name="voice_streaming_failed_basic">流式语音失败。正在使用基础语音，句子之间可能会有停顿。请检查语音提供商设置。</string>
+    <string name="voice_streaming_stopped_basic_next">流式语音已停止。剩余内容将使用基础语音。请检查语音提供商设置。</string>
+    <string name="stats_tts_queue_wait">音频队列等待时间</string>
+    <string name="stats_tts_player_start">播放器启动延迟</string>
 </resources>

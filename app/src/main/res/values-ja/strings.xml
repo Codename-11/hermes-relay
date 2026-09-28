@@ -2154,7 +2154,7 @@
     <string name="stats_last_sentence">最後の文</string>
     <string name="stats_avg_latency_last_format">平均レイテンシ (最後の %1$d)</string>
     <string name="stats_response_chunks">応答チャンク</string>
-    <string name="stats_last_chunk_gap">最後のチャンクギャップ</string>
+    <string name="stats_last_chunk_gap">音声合成リクエストの間隔</string>
     <string name="stats_received">受け取った</string>
     <string name="stats_barge_in_playback">バージイン/再生</string>
     <string name="stats_barge_in_events">バージインイベント</string>
@@ -4613,4 +4613,8 @@
     <string name="cw_auth_verified">サインイン確認済み</string>
     <string name="cw_chat_checked_on_open">Chat を開く際に確認します</string>
     <string name="dashboard_local_auth_help">Hermes には到達できますが、保護されたリクエストが認可されていません。Dashboard をループバックから転送している場合は、ホストのバインドアドレス、認証プロバイダー、dashboard.public_url を確認してください。401 だけでは原因を特定できません。</string>
+    <string name="voice_streaming_failed_basic">ストリーミング音声に失敗しました。基本音声を使用します。文の間に間が空く場合があります。音声プロバイダーの設定を確認してください。</string>
+    <string name="voice_streaming_stopped_basic_next">ストリーミング音声が停止しました。残りは基本音声を使用します。音声プロバイダーの設定を確認してください。</string>
+    <string name="stats_tts_queue_wait">音声キューの待機時間</string>
+    <string name="stats_tts_player_start">プレーヤーの開始遅延</string>
 </resources>

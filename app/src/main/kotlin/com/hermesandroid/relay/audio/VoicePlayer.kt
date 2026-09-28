@@ -2,6 +2,7 @@ package com.hermesandroid.relay.audio
 
 import android.content.Context
 import android.media.audiofx.Visualizer
+import android.os.SystemClock
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.core.net.toUri
@@ -60,6 +61,7 @@ import kotlin.math.sqrt
 @OptIn(UnstableApi::class)
 class VoicePlayer(
     context: Context,
+    private val elapsedRealtimeMs: () -> Long = SystemClock::elapsedRealtime,
     exoPlayerFactory: (Context) -> ExoPlayer = ::defaultExoPlayer,
 ) {
 
@@ -70,6 +72,11 @@ class VoicePlayer(
 
     private val _amplitude = MutableStateFlow(0f)
     val amplitude: StateFlow<Float> = _amplitude.asStateFlow()
+
+    /** Time from an idle queue receiving a file to Media3 reporting playback. */
+    var lastStartLatencyMs: Long? = null
+        private set
+    private var startRequestedAtMs: Long? = null
 
     // Mirrors the most recent value passed to [setVolume] / [duck] / [unduck].
     // ExoPlayer's own `volume` getter is the source of truth for the audio
@@ -136,6 +143,12 @@ class VoicePlayer(
         })
         exoPlayer.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) {
+                    startRequestedAtMs?.let { requested ->
+                        lastStartLatencyMs = (elapsedRealtimeMs() - requested).coerceAtLeast(0L)
+                        startRequestedAtMs = null
+                    }
+                }
                 _isPlaying.value = isPlaying
                 if (!isPlaying) _amplitude.value = 0f
                 // Lazily attach the Visualizer the first time playback
@@ -192,6 +205,10 @@ class VoicePlayer(
      * rather than a single file.
      */
     fun play(audioFile: File) {
+        if (_queueCount.value == 0) {
+            startRequestedAtMs = elapsedRealtimeMs()
+            lastStartLatencyMs = null
+        }
         val wasIdle = exoPlayer.mediaItemCount == 0 &&
             exoPlayer.playbackState != Player.STATE_READY &&
             exoPlayer.playbackState != Player.STATE_BUFFERING
@@ -212,10 +229,8 @@ class VoicePlayer(
      * **Semantic change from the old MediaPlayer implementation.** Previously
      * this returned when the *current file* completed. Now it returns when
      * the entire logical queue has been consumed — i.e. `_queueCount == 0 &&
-     * !isPlaying`. This matches the gapless-playback model where adjacent
-     * sentences play back-to-back from the same ExoPlayer, and it's exactly
-     * what the V4 prefetch pipelining rewrite needs (synth worker can enqueue
-     * N+1 while play worker is still awaiting queue-drain on N).
+     * !isPlaying`. Callers can append adjacent items before draining, but
+     * the legacy TTS play worker currently awaits this after every file.
      *
      * If a caller appends new items to the queue while this is suspended,
      * the wait extends through the new items as well.
@@ -237,6 +252,8 @@ class VoicePlayer(
      * will re-prepare it. Safe to call repeatedly.
      */
     fun stop() {
+        startRequestedAtMs = null
+        lastStartLatencyMs = null
         exoPlayer.clearMediaItems()
         exoPlayer.stop()
         _queueCount.value = 0

@@ -2144,7 +2144,7 @@
     <string name="stats_last_sentence">Letzter Satz</string>
     <string name="stats_avg_latency_last_format">Durchschn. Latenz (letzte %1$d)</string>
     <string name="stats_response_chunks">Antwortblöcke</string>
-    <string name="stats_last_chunk_gap">Letzter Blockabstand</string>
+    <string name="stats_last_chunk_gap">Abstand der Syntheseanfragen</string>
     <string name="stats_received">Empfangen</string>
     <string name="stats_barge_in_playback">Unterbrechung / Wiedergabe</string>
     <string name="stats_barge_in_events">Unterbrechungsereignisse</string>
@@ -4618,4 +4618,8 @@
     <string name="cw_auth_verified">Anmeldung bestätigt</string>
     <string name="cw_chat_checked_on_open">Wird beim Öffnen von Chat geprüft</string>
     <string name="dashboard_local_auth_help">Hermes ist erreichbar, aber geschützte Anfragen sind nicht autorisiert. Wird das Dashboard von Loopback weitergeleitet, prüfe Bind-Adresse, Authentifizierungsanbieter und dashboard.public_url auf dem Host. Ein 401 allein bestimmt die Ursache nicht.</string>
+    <string name="voice_streaming_failed_basic">Die Streaming-Sprachausgabe ist fehlgeschlagen. Einfache Sprachausgabe wird verwendet; zwischen Sätzen können Pausen entstehen. Prüfe die Einstellungen des Sprachanbieters.</string>
+    <string name="voice_streaming_stopped_basic_next">Die Streaming-Sprachausgabe wurde unterbrochen. Der restliche Text nutzt die einfache Sprachausgabe. Prüfe die Einstellungen des Sprachanbieters.</string>
+    <string name="stats_tts_queue_wait">Wartezeit auf Audio</string>
+    <string name="stats_tts_player_start">Startverzögerung des Players</string>
 </resources>
