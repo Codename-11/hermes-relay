@@ -97,7 +97,13 @@ class ChatViewModelGatewayInboundTurnTest {
 
     @Before
     fun setUp() {
-        gatewayHarness = GatewayClientHarness()
+        gatewayHarness = GatewayClientHarness(advanceCallbacks = {
+            // Fixture waits on the test thread must allow paused Main continuations to open
+            // the socket and dispatch RPCs; blocking that looper creates artificial timeouts.
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                shadowOf(Looper.getMainLooper()).idleFor(20, TimeUnit.MILLISECONDS)
+            }
+        })
         apiServer = MockWebServer().apply {
             dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
@@ -973,6 +979,8 @@ class ChatViewModelGatewayInboundTurnTest {
         directoryResult.complete(Result.success(emptyList()))
 
         awaitCondition { gatewayHarness.ticketMints.get() == mintsBefore + 1 }
+        // Ticket completion resumes prewarm on the paused main looper before the WS can open.
+        awaitCondition { gatewayHarness.serverSockets.isNotEmpty() }
         gatewayHarness.awaitServerSocket()
     }
 

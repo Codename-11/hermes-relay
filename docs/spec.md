@@ -39,6 +39,25 @@ token, terminal/bridge grants, and optional network candidates.
 
 ---
 
+## Gateway interactive requests
+
+Current upstream asks arrive as JSON-RPC server requests after Android advertises
+`client.capabilities {server_requests:true}` following each `gateway.ready`.
+Android supports native Clarify (single and batch), approval, sudo and secret
+cards. Answers use the original typed frame id. Batch answers use `clarify.lock`
+with the original frame id and exact question id; each accepted lock survives
+reconnect replay. Skip sends an empty answer. Supervised mode cancels Clarify,
+denies approvals and declines sudo/secret without displaying inputs.
+
+Request ownership includes the Gateway client, socket generation and exact live
+session. A checkpoint cannot authorize a native answer until upstream replays
+it. Unsupported vault, Desktop renderer and display installation requests receive
+JSON-RPC method-not-found so they do not wait for a renderer Android lacks.
+Older Gateway notification asks retain their `*.respond` path.
+
+See [Gateway request contract](gateway-server-requests.md) for the method matrix,
+cancellation semantics and verification commands.
+
 ## 2. Design Principles
 
 1. **Vanilla Hermes first** — chat, Manage, and voice must work against unmodified upstream Hermes before any Relay power path is considered.

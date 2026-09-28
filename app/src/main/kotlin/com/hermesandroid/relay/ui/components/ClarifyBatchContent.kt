@@ -73,6 +73,11 @@ internal fun ClarifyBatchContent(
                     enabled = !active.submitting,
                     stackedChoices = true,
                 )
+                if (batch.allowSkip) {
+                    TextButton(enabled = !active.submitting, onClick = { onInputSubmit(active.key, "") }) {
+                        Text(stringResource(R.string.chat_approval_skip))
+                    }
+                }
                 if (active.submitting) {
                     Text(stringResource(R.string.clarify_batch_sending), style = MaterialTheme.typography.labelMedium)
                 }

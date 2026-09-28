@@ -36,9 +36,21 @@ import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(qualifiers = "w360dp-h720dp-xhdpi")
+@Config(sdk = [35], qualifiers = "w360dp-h720dp-xhdpi")
 class ClarifyBatchInteractionTest {
     @get:Rule val compose = createComposeRule()
+
+    @Test fun nativeSkipLocksOnlyTheActiveQuestionWithAnEmptyAnswer() {
+        val answers = mutableListOf<Pair<String, String>>()
+        compose.setContent {
+            MaterialTheme {
+                HermesCardBubble(card().copy(clarifyBatch = HermesCardClarifyBatch(listOf(question), allowSkip = true)),
+                    "batch", emptyList(), { _, _ -> }, { key, value -> answers += key to value })
+            }
+        }
+        compose.onNodeWithText("Skip").performClick()
+        compose.runOnIdle { assertEquals(listOf("qid-key" to ""), answers) }
+    }
 
     @Test fun draftsAndSelectionSurviveSavedStateAndFocusFollowsQuestionOrder() {
         val restoration = StateRestorationTester(compose)

@@ -439,6 +439,19 @@ class GatewayChatClient(
     /** Invalidates an older async prewarm when a newer session selection wins. */
     private val prewarmRequestGeneration = AtomicLong(0)
     private val pendingRpcs = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
+    private data class OpenServerRequest(
+        val request: GatewayServerRequest,
+        val connection: CompletableDeferred<Unit>,
+        val receivedSequence: Long,
+        val socket: WebSocket,
+    )
+    private data class DeferredServerRequest(val frame: JsonObject, val sequence: Long)
+    private val serverRequestSequence = AtomicLong(0)
+    private val reconcilingServerRequests = ConcurrentHashMap.newKeySet<Pair<CompletableDeferred<Unit>, String>>()
+    private val serverRequestLock = Any()
+    private val openServerRequests = linkedMapOf<String, OpenServerRequest>()
+    private val retiredServerRequests = linkedSetOf<String>()
+    private val deferredServerRequests = mutableListOf<DeferredServerRequest>()
     private val lazyLiveSessions = ConcurrentHashMap.newKeySet<String>()
     private val readyLiveSessions = ConcurrentHashMap.newKeySet<String>()
     private val sessionReadyWaiters = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
@@ -1598,6 +1611,7 @@ class GatewayChatClient(
                     boundTurn.restoreInteraction(ask)
                 }
                 boundTurn.restorePendingClarify(response)
+                replayServerRequests(response)
                 boundTurn.armWatchdog()
             } else if (queued != null) {
                 synchronized(recoveryEventLock) { recoveryEvents = null }
@@ -1756,6 +1770,193 @@ class GatewayChatClient(
                 }
             }.orEmpty(),
         )
+
+    /** All card replies enter here so restored native asks can never fall back to legacy RPCs. */
+    suspend fun respondAsk(
+        ask: GatewayAsk,
+        value: String,
+        questionId: String? = null,
+        cancel: Boolean = false,
+    ): Result<GatewayAskResponse> {
+        if (!ask.serverRequest) return when (ask.kind) {
+            GatewayAsk.Kind.CLARIFY -> ask.requestId?.let { respondClarify(it, if (cancel) "This supervised client cannot answer interactive requests." else value, questionId) }
+            GatewayAsk.Kind.APPROVAL -> respondApproval(value)
+            GatewayAsk.Kind.SUDO -> ask.requestId?.let { respondSudo(it, value) }
+            GatewayAsk.Kind.SECRET -> ask.requestId?.let { respondSecret(it, value) }
+        } ?: Result.failure(GatewayRpcException("ask has no request id"))
+        val key = ask.requestId ?: return Result.failure(GatewayRpcException("ask has no request id"))
+        val open = synchronized(serverRequestLock) { openServerRequests[key] }
+            ?: return Result.failure(GatewayRpcException("Request awaits reconnect replay or is no longer active"))
+        val turn = activeTurn
+        if (open.connection !== readySignal || rejoinInProgress || open.request.sessionId != liveSessionId ||
+            turn?.pendingInteraction?.requestId != key || turn.pendingInteraction?.serverRequest != true ||
+            ask.ownershipToken.retired.get()
+        ) return Result.failure(GatewayRpcException("Request is not owned by this conversation"))
+        if (ask.kind == GatewayAsk.Kind.APPROVAL &&
+            (value !in ask.choices.orEmpty().ifEmpty { listOf("deny") } ||
+                (ask.smartDenied && value !in setOf("once", "deny")))) {
+            return Result.failure(GatewayRpcException("Approval choice is not allowed"))
+        }
+        if (ask.kind == GatewayAsk.Kind.CLARIFY && ask.questions.isNotEmpty() && !cancel) {
+            if (questionId == null || ask.questions.none { it.qid == questionId } ||
+                questionId in turn.pendingInteraction!!.ownershipToken.answers.get()) {
+                return Result.failure(GatewayRpcException("Clarification is not ready for this question"))
+            }
+            val generation = turn.interactionGeneration
+            val owner = turn.pendingInteraction!!.ownershipToken
+            return rpc("clarify.lock", buildJsonObject {
+                put("request_id", open.request.id.content)
+                put("question_id", questionId)
+                put("answer", value)
+            }, expectedConnection = open.connection, expectedSocket = open.socket).mapCatching { result ->
+                val outcome = when (result.stringField("status")) {
+                    "expired" -> GatewayAskResponse.EXPIRED
+                    "ok" -> if (result["remaining"] is JsonArray) GatewayAskResponse.ACCEPTED
+                        else throw GatewayRpcException("Invalid clarification acknowledgement")
+                    else -> throw GatewayRpcException("Invalid clarification acknowledgement")
+                }
+                turn.acknowledgeClarify(key, questionId, value, outcome == GatewayAskResponse.EXPIRED, generation)
+                if (activeTurn !== turn) activeTurn?.acknowledgeClarifyOwner(key, questionId, value, outcome == GatewayAskResponse.EXPIRED, owner)
+                if (outcome == GatewayAskResponse.EXPIRED || (result["remaining"] as? JsonArray)?.isEmpty() == true) retireServerRequest(key)
+                outcome
+            }
+        }
+        val result = buildJsonObject {
+            when (ask.kind) {
+                GatewayAsk.Kind.CLARIFY -> if (!cancel) put("answer", value)
+                GatewayAsk.Kind.APPROVAL -> put("choice", value)
+                GatewayAsk.Kind.SUDO, GatewayAsk.Kind.SECRET -> put("value", value)
+            }
+        }
+        return synchronized(serverRequestLock) {
+            if (openServerRequests[key] !== open || open.connection !== readySignal || open.request.sessionId != liveSessionId) {
+                Result.failure(GatewayRpcException("Request is no longer active"))
+            } else if (open.socket.send(buildJsonObject {
+                    put("jsonrpc", "2.0"); put("id", open.request.id); put("result", result)
+                }.toString()) == true) {
+                retireServerRequest(key)
+                turn.acknowledgeInteraction(GatewayAskExpiry(ask.kind, key))
+                Result.success(GatewayAskResponse.ACCEPTED)
+            } else Result.failure(GatewayRpcException("send failed — socket closed"))
+        }
+    }
+
+    private fun retireServerRequest(key: String) = synchronized(serverRequestLock) {
+        openServerRequests.remove(key)
+        retiredServerRequests += key
+        if (retiredServerRequests.size > 256) retiredServerRequests.remove(retiredServerRequests.first())
+    }
+
+    private fun serverRequestError(id: JsonPrimitive, code: Int, message: String, ready: CompletableDeferred<Unit>) {
+        val socket = webSocket ?: return
+        if (readySignal !== ready) return
+        socket.send(buildJsonObject {
+            put("jsonrpc", "2.0"); put("id", id)
+            put("error", buildJsonObject { put("code", code); put("message", message) })
+        }.toString())
+    }
+
+    private fun receiveServerRequest(
+        frame: JsonObject,
+        ready: CompletableDeferred<Unit>,
+        replay: Boolean = false,
+        sequence: Long = serverRequestSequence.incrementAndGet(),
+    ) {
+        val socket = webSocket ?: return
+        if (readySignal !== ready) return
+        val id = GatewayServerRequest.id(frame) ?: return
+        val request = GatewayServerRequest.parse(frame)
+        if (request == null) {
+            serverRequestError(id, -32602, "Invalid request parameters", ready)
+            return
+        }
+        // Log method/status only. Prompt, command, credential and response contents are never logged.
+        Log.d(TAG, "GW ← server request ${request.method.take(64)}")
+        if (request.method !in GatewayServerRequest.supportedMethods) {
+            serverRequestError(id, -32601, "Method is not supported by Android", ready)
+            return
+        }
+        val sid = request.sessionId
+        val owned = !sid.isNullOrBlank() && (sid == liveSessionId || backgroundTurns.containsKey(sid))
+        if (!owned) {
+            val recovering = synchronized(recoveryEventLock) { recoveryEvents != null }
+            if (!replay && recovering) {
+                synchronized(serverRequestLock) {
+                    if (deferredServerRequests.size < 64) { deferredServerRequests += DeferredServerRequest(frame, sequence); return }
+                }
+            }
+            serverRequestError(id, -32602, "Request is not owned by this conversation", ready)
+            return
+        }
+        val ask = GatewayEventMapper.interactionRequest(request.eventType, request.payload)
+        if (ask == null || (request.method == "clarify" && ask.questions.isEmpty() &&
+                (request.params["question"] as? JsonPrimitive)?.contentOrNull.isNullOrBlank())) {
+            serverRequestError(id, -32602, "Invalid interaction parameters", ready)
+            return
+        }
+        synchronized(serverRequestLock) {
+            if (request.key in retiredServerRequests) return
+            val previous = openServerRequests[request.key]
+            if (previous != null && (previous.request.method != request.method || previous.request.sessionId != sid)) {
+                serverRequestError(id, -32602, "Request identity changed", ready)
+                return
+            }
+            if (openServerRequests.size >= 64 && previous == null) {
+                serverRequestError(id, -32000, "Too many open requests", ready)
+                return
+            }
+            openServerRequests[request.key] = OpenServerRequest(request, ready, maxOf(sequence, previous?.receivedSequence ?: sequence), socket)
+        }
+        val pending = if (sid == liveSessionId) activeTurn?.pendingInteraction else backgroundTurns[sid]?.pendingAsk
+        if (pending == null || pending.requestId == request.key) {
+            if (sid == liveSessionId && activeTurn == null) {
+                retireServerRequest(request.key)
+                serverRequestError(id, -32000, "No interactive turn is attached", ready)
+            } else handleEvent(request.eventType, request.payload, sid, ready)
+        }
+    }
+
+    /** Called after the UI has recorded the previous response, preserving each queued approval. */
+    fun advanceServerRequests(sessionId: String? = liveSessionId) {
+        val next = synchronized(serverRequestLock) {
+            openServerRequests.values.firstOrNull {
+                it.connection === readySignal && it.request.sessionId == sessionId
+            }
+        } ?: return
+        val pending = if (sessionId == liveSessionId) activeTurn?.pendingInteraction else backgroundTurns[sessionId]?.pendingAsk
+        if (pending == null) {
+            handleEvent(next.request.eventType, next.request.payload, next.request.sessionId, next.connection)
+        }
+    }
+
+    private fun replayServerRequests(snapshot: JsonObject, sessionId: String? = liveSessionId) {
+        if (sessionId == null) return
+        val ready = readySignal ?: return
+        val frames = (snapshot["open_requests"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
+        val deferred = synchronized(serverRequestLock) { deferredServerRequests.toList().also { deferredServerRequests.clear() } }
+        val boundary = (snapshot["_android_request_sequence"] as? JsonPrimitive)?.longOrNull ?: serverRequestSequence.get()
+        if (snapshot.containsKey("open_requests")) {
+            val keys = synchronized(serverRequestLock) {
+                frames.mapNotNull(GatewayServerRequest::parse).filter { it.sessionId == sessionId }.map { it.key }.toSet() - retiredServerRequests
+            }
+            val pending = if (sessionId == liveSessionId) activeTurn?.pendingInteraction else backgroundTurns[sessionId]?.pendingAsk
+            val pendingSequence = synchronized(serverRequestLock) {
+                openServerRequests[pending?.requestId]?.receivedSequence ?: Long.MIN_VALUE
+            }
+            synchronized(serverRequestLock) {
+                openServerRequests.values.filter {
+                    it.request.sessionId == sessionId && it.receivedSequence <= boundary && it.request.key !in keys
+                }.map { it.request.key }.forEach(::retireServerRequest)
+            }
+            pending?.takeIf { it.serverRequest && it.requestId !in keys && pendingSequence <= boundary }?.let { stale ->
+                handleEvent("${stale.kind.name.lowercase()}.expire", buildJsonObject {
+                    put("request_id", stale.requestId); put("_server_request", true)
+                }, sessionId, ready)
+            }
+        }
+        deferred.forEach { receiveServerRequest(it.frame, ready, replay = true, sequence = it.sequence) }
+        frames.forEach { receiveServerRequest(it, ready, replay = true, sequence = boundary) }
+    }
 
     /** Answer a [GatewayAsk.Kind.CLARIFY] ask. */
     suspend fun respondClarify(
@@ -3142,6 +3343,11 @@ class GatewayChatClient(
         _connectionState.value = GatewayConnectionState.Connecting
         val ready = CompletableDeferred<Unit>()
         readySignal = ready
+        synchronized(serverRequestLock) {
+            openServerRequests.clear()
+            deferredServerRequests.clear()
+            retiredServerRequests.clear()
+        }
         val socket = transport.socket.newWebSocket(
             Request.Builder().url(url).build(),
             createListener(ready),
@@ -3579,7 +3785,13 @@ class GatewayChatClient(
     }
 
     private fun createListener(ready: CompletableDeferred<Unit>) = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            if (readySignal === ready) this@GatewayChatClient.webSocket = webSocket
+            else webSocket.cancel()
+        }
+
         override fun onMessage(webSocket: WebSocket, text: String) {
+            if (readySignal !== ready) return
             // Newline-delimited JSON-RPC: tolerate multiple objects per frame.
             text.lineSequence().forEach { line ->
                 val trimmed = line.trim()
@@ -3711,7 +3923,12 @@ class GatewayChatClient(
             return
         }
 
-        // RPC response?
+        if (readySignal !== ready) return
+        if (frame.containsKey("method") && frame.containsKey("id")) {
+            receiveServerRequest(frame, ready)
+            return
+        }
+        // RPC response? Only responses can consume an ordinary pending call.
         val id = (frame["id"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
         if (id != null && (frame.containsKey("result") || frame.containsKey("error"))) {
             val pending = pendingRpcs.remove(id) ?: return
@@ -3721,7 +3938,11 @@ class GatewayChatClient(
                 val code = (error["code"] as? JsonPrimitive)?.intOrNull
                 pending.completeExceptionally(GatewayRpcException(message, code))
             } else {
-                pending.complete(frame["result"] as? JsonObject ?: JsonObject(emptyMap()))
+                val result = frame["result"] as? JsonObject ?: JsonObject(emptyMap())
+                // Capture on the reader thread. A coroutine may consume this snapshot only after
+                // a later request/cancellation has arrived on the same socket.
+                pending.complete(if (result.containsKey("open_requests")) JsonObject(result +
+                    ("_android_request_sequence" to JsonPrimitive(serverRequestSequence.get()))) else result)
             }
             return
         }
@@ -3734,17 +3955,92 @@ class GatewayChatClient(
         val payload = params["payload"] as? JsonObject
         val eventSessionId = params.stringField("session_id")
 
+        handleEvent(type, payload, eventSessionId, ready)
+    }
+
+    private fun handleEvent(
+        type: String,
+        payload: JsonObject?,
+        eventSessionId: String?,
+        ready: CompletableDeferred<Unit>,
+        requestsReconciled: Boolean = false,
+    ) {
+        if (readySignal !== ready) return
+        if (type == "request.cancel") {
+            val id = payload?.get("id") as? JsonPrimitive ?: return
+            val key = "jsonrpc:$id"
+            val open = synchronized(serverRequestLock) { openServerRequests[key] }
+            if (open == null) {
+                val method = payload.stringField("method") ?: return
+                val owned = !eventSessionId.isNullOrBlank() &&
+                    (eventSessionId == liveSessionId || backgroundTurns.containsKey(eventSessionId))
+                val recovering = synchronized(recoveryEventLock) { recoveryEvents != null }
+                if (method !in GatewayServerRequest.supportedMethods || (!owned && !recovering)) return
+                retireServerRequest(key)
+                if (owned) handleEvent("$method.expire", buildJsonObject {
+                    put("request_id", key); put("_server_request", true)
+                }, eventSessionId, ready)
+                return
+            }
+            if (open.connection !== ready || open.request.sessionId != eventSessionId ||
+                payload.stringField("method") != open.request.method) return
+            retireServerRequest(key)
+            handleEvent("${open.request.method}.expire", open.request.payload, eventSessionId, ready)
+            advanceServerRequests(eventSessionId)
+            return
+        }
+        val terminal = type in setOf("message.complete", "error") ||
+            (type == "session.info" && payload?.booleanField("running") == false)
+        val requestOwner = eventSessionId?.let { sid ->
+            if (sid == liveSessionId) activeTurn?.pendingInteraction else backgroundTurns[sid]?.pendingAsk
+        }
+        if (!requestsReconciled && terminal && requestOwner?.serverRequest == true && eventSessionId != null) {
+            val key = ready to eventSessionId
+            if (!reconcilingServerRequests.add(key)) return
+            val socket = webSocket ?: run { reconcilingServerRequests.remove(key); return }
+            val turn = activeTurn.takeIf { eventSessionId == liveSessionId }
+            val background = backgroundTurns[eventSessionId]
+            scope.launch {
+                try {
+                    // Read only the open-request snapshot. No event replay or ownership mutation.
+                    val snapshot = rpc("session.events.since", buildJsonObject {
+                        put("session_id", eventSessionId); put("last_seen", Long.MAX_VALUE)
+                    }, expectedConnection = ready, expectedSocket = socket).getOrNull()
+                    if (readySignal !== ready) return@launch
+                    val stillOwned = (turn != null && activeTurn === turn && liveSessionId == eventSessionId) ||
+                        (background != null && backgroundTurns[eventSessionId] === background) ||
+                        (turn != null && backgroundTurns.containsKey(eventSessionId))
+                    if (!stillOwned) return@launch
+                    if (snapshot?.containsKey("open_requests") == true) replayServerRequests(snapshot, eventSessionId)
+                    handleEvent(type, payload, eventSessionId, ready, requestsReconciled = true)
+                } finally {
+                    reconcilingServerRequests.remove(key)
+                }
+            }
+            return
+        }
         // Mirror HermesApiClient's per-event SSE logging — high-frequency
         // delta types log length only, everything else logs a payload
         // excerpt so on-device diagnosis doesn't read absences.
-        when (type) {
-            "message.delta", "reasoning.delta", "thinking.delta", "agent.terminal.output" ->
+        when {
+            type.endsWith(".request") || type.endsWith(".expire") -> Log.d(TAG, "GW ← $type")
+            type in setOf("message.delta", "reasoning.delta", "thinking.delta", "agent.terminal.output") ->
                 Log.d(TAG, "GW ← $type (${payload?.toString()?.length ?: 0} chars)")
             else ->
                 Log.d(TAG, "GW ← $type | ${payload?.toString()?.take(300) ?: "{}"}")
         }
 
         if (type == "gateway.ready") {
+            if (!ready.isCompleted) {
+                // Enqueue before releasing readiness: create/resume must never outrun this advertisement.
+                // No acknowledgement is needed; legacy gateways may return method-not-found.
+                webSocket?.send(buildJsonObject {
+                    put("jsonrpc", "2.0")
+                    put("id", rpcId.getAndIncrement())
+                    put("method", "client.capabilities")
+                    put("params", buildJsonObject { put("server_requests", true) })
+                }.toString())
+            }
             ready.complete(Unit)
             return
         }
@@ -3921,8 +4217,7 @@ class GatewayChatClient(
             val pendingAsk = backgroundTurn.pendingAsk
             val explicitlyExpired = expiry != null && pendingAsk != null &&
                 pendingAsk.kind == expiry.kind &&
-                (pendingAsk.kind == GatewayAsk.Kind.APPROVAL ||
-                    pendingAsk.requestId == expiry.requestId)
+                pendingAsk.requestId == expiry.requestId
             // Ordinary turn activity is not a decision acknowledgement. It can
             // be replayed or buffered. Only an authoritative expiry retires a
             // detached ask; an explicit response is retired by its foreground VM.
@@ -4135,10 +4430,20 @@ class GatewayChatClient(
         _approvalModeCapability.value = GatewayApprovalModeCapability.Unknown
         _reconnectDisposition.value = disposition
         _connectionState.value = GatewayConnectionState.Idle
+        // Completing a pending submit wakes its caller immediately. Mark ambiguous acceptance
+        // first so that caller cannot clear the turn before rejoin takes ownership below.
+        activeTurn?.markTransportRecoveryStarted()
         pendingRpcs.values.forEach {
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
         }
         pendingRpcs.clear()
+        synchronized(serverRequestLock) {
+            openServerRequests.clear()
+            deferredServerRequests.clear()
+            // Successful enqueue is not a server acknowledgement. A new socket's authoritative
+            // replay may ask again; retain no response value (especially credentials) for retries.
+            retiredServerRequests.clear()
+        }
         failSessionReadyWaiters("gateway connection lost")
         lazyLiveSessions.clear()
         readyLiveSessions.clear()
@@ -4255,6 +4560,7 @@ class GatewayChatClient(
                             activated.getOrNull()?.let { result ->
                                 applySessionResultInfo(result)
                                 turn.restorePendingClarify(result)
+                                replayServerRequests(result)
                                 turn.settleFromAuthoritativeSessionState(
                                     running = result.booleanField("running"),
                                     source = "session.activate",
@@ -4379,8 +4685,13 @@ class GatewayChatClient(
         method: String,
         params: JsonObject,
         timeoutMs: Long = rpcTimeoutMs,
+        expectedConnection: CompletableDeferred<Unit>? = null,
+        expectedSocket: WebSocket? = null,
     ): Result<JsonObject> {
-        val socket = webSocket ?: return Result.failure(GatewayRpcException("not connected"))
+        val socket = expectedSocket ?: webSocket ?: return Result.failure(GatewayRpcException("not connected"))
+        if (expectedConnection != null && readySignal !== expectedConnection) {
+            return Result.failure(GatewayRpcException("Request connection changed"))
+        }
         val id = rpcId.getAndIncrement()
         val deferred = CompletableDeferred<JsonObject>()
         pendingRpcs[id] = deferred
@@ -4555,11 +4866,15 @@ class GatewayChatClient(
             mapper.restoreInteraction(ask)
         }
         fun acknowledgeInteraction(expiry: GatewayAskExpiry) {
+            val native = mapper.currentInteraction?.serverRequest == true
             mapper.acknowledgeInteraction(expiry)
+            if (native && !ended) armWatchdog()
         }
         val interactionGeneration: Long get() = mapper.interactionGeneration
         fun acknowledgeClarify(requestId: String, questionId: String?, answer: String, expired: Boolean, generation: Long) {
+            val native = mapper.currentInteraction?.serverRequest == true
             mapper.acknowledgeClarify(requestId, questionId, answer, expired, generation)
+            if (native && !ended) armWatchdog()
         }
         fun acknowledgeClarifyOwner(requestId: String, questionId: String?, answer: String, expired: Boolean, owner: GatewayAskOwnership) {
             mapper.acknowledgeClarifyOwner(requestId, questionId, answer, expired, owner)
@@ -4610,6 +4925,10 @@ class GatewayChatClient(
          * Mark reconciliation before reconnecting so a terminal event arriving
          * immediately after `gateway.ready` cannot race ahead of the signal.
          */
+        fun markTransportRecoveryStarted() {
+            if (!ended) transportRecoveryStarted = true
+        }
+
         fun beginRejoin(): Boolean {
             val shouldRejoin = !ended && rejoinAttempts.incrementAndGet() <= MAX_TURN_REJOINS
             if (shouldRejoin) {
@@ -4669,10 +4988,6 @@ class GatewayChatClient(
             if (type == "message.delta" || type == "reasoning.delta" || type == "thinking.delta") {
                 tracer.mark("ttft")
             }
-            // Reset on every event — long tool runs keep the turn alive.
-            // Ask requests block with no further events, so they arm with
-            // their own (longer) duration via watchdogTimeoutFor.
-            armWatchdog(watchdogTimeoutFor(type, payload))
             // Queue this immediately before the terminal callbacks. Both are
             // marshalled through the same dispatcher, preserving callback order
             // even when the WebSocket reader and reconnect coroutine differ.
@@ -4684,6 +4999,9 @@ class GatewayChatClient(
                 disarmWatchdog()
                 tracer.done()
                 handoffQueuedSuccessor()
+            } else {
+                // Map first: native asks own their deadline, including across unrelated events.
+                armWatchdog(watchdogTimeoutFor(type, payload))
             }
         }
 
@@ -4700,7 +5018,7 @@ class GatewayChatClient(
             source: String,
             expectedProgressGeneration: Long? = null,
         ): Boolean {
-            if (running != false || !started) return false
+            if (running != false || !started || mapper.currentInteraction?.serverRequest == true) return false
             val settled = synchronized(deferredEventLock) {
                 if (ended ||
                     (expectedProgressGeneration != null &&
@@ -4794,7 +5112,8 @@ class GatewayChatClient(
         }
 
         fun armWatchdog(timeoutMs: Long = turnIdleTimeoutMs) {
-            watchdog?.cancel()
+            disarmWatchdog()
+            if (mapper.currentInteraction?.serverRequest == true) return
             watchdog = scope.launch {
                 delay(timeoutMs)
                 if (!ended) {

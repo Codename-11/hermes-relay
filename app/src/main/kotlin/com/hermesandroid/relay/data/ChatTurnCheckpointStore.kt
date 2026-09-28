@@ -133,6 +133,7 @@ data class ChatTurnBackgroundTaskCheckpoint(
 data class ChatTurnAskCheckpoint(
     val kind: String,
     val requestId: String? = null,
+    val serverRequest: Boolean = false,
     val text: String,
     val choices: List<String>? = null,
     val multiSelect: Boolean = false,

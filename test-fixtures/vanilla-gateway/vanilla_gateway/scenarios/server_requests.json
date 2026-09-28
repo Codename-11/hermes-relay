@@ -1,0 +1,134 @@
+{
+  "name": "server_requests",
+  "live_session_id": "fixture-live-requests",
+  "stored_session_id": "fixture-stored-requests",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.server_requests"
+  ],
+  "turns": [
+    {
+      "steps": [
+        {
+          "op": "event",
+          "type": "message.start"
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-0",
+          "method": "clarify",
+          "payload": {
+            "question": "Choose?",
+            "choices": [
+              "A",
+              "B"
+            ]
+          }
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-1",
+          "method": "approval",
+          "payload": {
+            "request_id": "approval-queue",
+            "command": "echo fixture",
+            "choices": [
+              "once",
+              "deny"
+            ]
+          }
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-2",
+          "method": "sudo",
+          "payload": {
+            "command": "echo fixture"
+          }
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-3",
+          "method": "secret",
+          "payload": {
+            "env_var": "FIXTURE",
+            "prompt": "Value?"
+          }
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-4",
+          "method": "vault.unlock_prompt",
+          "payload": {
+            "backend": "fixture",
+            "display_name": "Fixture"
+          }
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-5",
+          "method": "vault.save_login",
+          "payload": {
+            "origin": "https://example.com",
+            "site": "Fixture"
+          }
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-6",
+          "method": "vault.code",
+          "payload": {
+            "site": "Fixture"
+          }
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-7",
+          "method": "terminal.read",
+          "payload": {}
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-8",
+          "method": "preview.read",
+          "payload": {}
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-9",
+          "method": "preview.act",
+          "payload": {
+            "action": "snapshot"
+          }
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-10",
+          "method": "window.read",
+          "payload": {}
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-11",
+          "method": "tour",
+          "payload": {
+            "action": "start"
+          }
+        },
+        {
+          "op": "server_request",
+          "id": "srq-fixture-12",
+          "method": "display.install.sudo",
+          "payload": {}
+        },
+        {
+          "op": "event",
+          "type": "message.complete",
+          "payload": {
+            "text": "Requests settled."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -102,6 +102,7 @@ data class HermesCard(
 data class HermesCardClarifyBatch(
     val questions: List<HermesCardClarifyQuestion>,
     val expiresAtMillis: Long? = null,
+    val allowSkip: Boolean = false,
 )
 
 @Serializable

@@ -69,6 +69,8 @@ class GatewayFixture:
         self._tasks: set[asyncio.Task[None]] = set()
         self._sockets: set[web.WebSocketResponse] = set()
         self._clarify: dict[str, Any] | None = None
+        self._native_request: dict[str, Any] | None = None
+        self._capable: set[web.WebSocketResponse] = set()
         self._clarify_answers: dict[str, str] = {}
         self._clarify_done = asyncio.Event()
         self._clarify_owner: tuple[web.WebSocketResponse, int] | None = None
@@ -184,6 +186,7 @@ class GatewayFixture:
                     break
         finally:
             self._sockets.discard(socket)
+            self._capable.discard(socket)
             self.evidence.add("socket", connection=connection, outcome="closed")
         return socket
 
@@ -198,10 +201,20 @@ class GatewayFixture:
         method = frame.get("method")
         request_id = frame.get("id")
         params = frame.get("params") if isinstance(frame.get("params"), dict) else {}
+        if method is None and request_id is not None:
+            pending = self._native_request
+            if pending and request_id == pending["id"] and ("result" in frame or "error" in frame):
+                self.evidence.add("rpc", connection=connection, method=pending["method"], outcome="answered")
+                self._clarify_done.set()
+            return
         if not isinstance(method, str) or request_id is None:
             return
         self.evidence.add("rpc", connection=connection, method=method, outcome="received")
-        if self.scenario.dashboard_setup and method == "profiles.list":
+        if method == "client.capabilities":
+            if params.get("server_requests") is True:
+                self._capable.add(socket)
+            result = {"ok": True}
+        elif self.scenario.dashboard_setup and method == "profiles.list":
             result = {"profiles": [{"name": self.scenario.profile, "model": "fixture", "is_default": True}]}
         elif self.scenario.dashboard_setup and method == "pet.info":
             result = {"enabled": False}
@@ -218,7 +231,7 @@ class GatewayFixture:
                 await self._rpc_error(socket, request_id, 4040, "Stored session not found")
                 return
             result = self._session_snapshot(include_stored=True)
-            if self._clarify is not None:
+            if self._clarify is not None or self._native_request is not None:
                 self._clarify_owner = socket, connection
         elif method == "session.activate":
             requested = params.get("session_id")
@@ -226,12 +239,27 @@ class GatewayFixture:
                 await self._rpc_error(socket, request_id, 4041, "Live session not found")
                 return
             result = self._session_snapshot(include_stored=True)
-            if self._clarify is not None:
+            if self._clarify is not None or self._native_request is not None:
                 self._clarify_owner = socket, connection
         elif method == "prompt.submit":
             await self._rpc_result(socket, request_id, {"ok": True})
             await self._submit(socket, connection)
             return
+        elif method == "clarify.lock":
+            pending = self._native_request
+            if pending is None or params.get("request_id") != pending["id"]:
+                result = {"status": "expired"}
+            else:
+                qids = [q["qid"] for q in pending["params"].get("questions", [])]
+                qid = params.get("question_id")
+                if qid not in qids:
+                    await self._rpc_error(socket, request_id, 4002, "unknown question_id")
+                    return
+                self._clarify_answers[qid] = params.get("answer", "")
+                remaining = [q for q in qids if q not in self._clarify_answers]
+                result = {"status": "ok", "remaining": remaining}
+                if not remaining:
+                    self._clarify_done.set()
         elif method == "clarify.respond":
             pending = self._clarify
             if pending is None or params.get("request_id") != pending["request_id"]:
@@ -286,6 +314,10 @@ class GatewayFixture:
         }
         if include_stored:
             snapshot["stored_session_id"] = self.scenario.stored_session_id
+        snapshot["open_requests"] = []
+        if self._native_request is not None:
+            frame = self._native_request
+            snapshot["open_requests"] = [dict(frame, params=dict(frame["params"], answers=dict(self._clarify_answers)))]
         if self._clarify is not None:
             snapshot["pending_clarify"] = dict(self._clarify, answers=dict(self._clarify_answers))
             snapshot["info"]["pending_clarify"] = snapshot["pending_clarify"]
@@ -328,6 +360,20 @@ class GatewayFixture:
                 operation = step["op"]
                 if operation == "sleep":
                     await asyncio.sleep(step["milliseconds"] / 1_000)
+                elif operation == "server_request":
+                    if socket not in self._capable:
+                        self.evidence.add("rpc", connection=connection, method=step["method"], outcome="legacy_client")
+                        continue
+                    self._native_request = {"id": step["id"], "method": step["method"],
+                                            "params": dict(step["payload"], session_id=self.scenario.live_session_id)}
+                    self._clarify_answers = {}
+                    self._clarify_owner = socket, connection
+                    self._clarify_done.clear()
+                    await socket.send_json(dict(self._native_request, jsonrpc="2.0"))
+                    self.evidence.add("rpc", connection=connection, method=step["method"], outcome="sent")
+                    await self._clarify_done.wait()
+                    socket, connection = self._clarify_owner
+                    self._native_request = None
                 elif operation == "clarify":
                     self._clarify = dict(step["payload"])
                     self._clarify_answers = {}
@@ -367,6 +413,11 @@ class GatewayFixture:
                     )
                     self.evidence.add("fault", connection=connection, outcome="socket_gap")
         finally:
+            if self._native_request is not None:
+                await self._send_event(socket, connection, "request.cancel", {
+                    "id": self._native_request["id"], "method": self._native_request["method"], "reason": "interrupted",
+                }, self.scenario.live_session_id)
+            self._native_request = None
             self._clarify = None
             self._clarify_owner = None
             self._turn_active = False
