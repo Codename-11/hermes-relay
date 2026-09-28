@@ -1,30 +1,76 @@
-# OpenAI Realtime Agent audio contract
+# OpenAI Realtime Agent contract
 
-The Plugin OpenAI provider uses the GA WebSocket session shape: `type: realtime`,
-`output_modalities: [audio]`, nested `audio.input` and `audio.output`, and manual
-turn detection. Both PCM formats explicitly carry `type: audio/pcm` and
-`rate: 24000`. Other sample rates fail locally before a socket opens. The selected
-model and voice pass through unchanged; the default model is `gpt-realtime-2.1`.
+Checked against official OpenAI documentation on 2026-09-28 for issue #644.
+This concerns the Plugin's provider-native Realtime Agent WebSocket adapter.
+Standard Dashboard/Gateway voice has a separate upstream-owned transport.
 
-## Official documentation checked on 2026-09-28
+## Session configuration
 
-- [Realtime conversations](https://developers.openai.com/api/docs/guides/realtime-conversations)
-  explicitly supplies 24000 for both PCM directions and documents the GA audio,
-  transcript, tool, cancellation, and response events used by this adapter.
-- [Client event reference](https://developers.openai.com/api/reference/resources/realtime/client-events)
-  limits PCM to 24 kHz, but its generated PCM schema still labels `rate` optional.
-  That differs from the missing-required-parameter rejection reported in #644.
-  Sending the explicit supported rate follows the guide and avoids depending on
-  omission semantics; no API rollout date or universal new requirement is assumed.
-- [Deprecations](https://developers.openai.com/api/docs/deprecations#2025-09-15-realtime-api-beta)
-  records removal of `OpenAI-Beta: realtime=v1` on May 12, 2026. This adapter does
-  not select a beta schema by model name. Legacy event aliases remain accepted.
+The adapter uses the GA `session.update` shape: `session.type = realtime`,
+`output_modalities = [audio]`, and nested `audio.input` / `audio.output`.
+Both format objects explicitly send `{"type": "audio/pcm", "rate": 24000}`.
+The adapter accepts only 24 kHz session audio and advertises PCM16; it does not
+offer a codec selector or negotiate G.711. Unsupported session rates fail before
+opening a socket. Microphone PCM resampling remains separate from this session
+format constraint.
 
-Fake-WebSocket tests cover configured `gpt-realtime-2`, `gpt-realtime-2.1`,
-`gpt-realtime`, and the default model, exact PCM payloads, acknowledgement,
-schema errors, unsupported rates, voice selection, manual turns, cancellation,
-transcripts and tool results. These tests establish local wire behavior, not
-model availability or paid-account access. No provider credentials are needed.
+The [conversation guide](https://developers.openai.com/api/docs/guides/realtime-conversations)
+includes the rate on both PCM formats. The generated
+[client-event reference](https://developers.openai.com/api/reference/resources/realtime/client-events)
+currently labels the PCM rate optional but limits its value to `24000`.
+Issue #644 reports the service rejecting an omitted output rate. Sending the
+explicit validated rate satisfies both documented shapes and the reported
+service requirement. These sources do not establish when enforcement changed.
 
-The fix addresses session negotiation only. Standard Voice renderer failure and
-legacy TTS playback gaps (#639) use a separate path and require separate evidence.
+The same reference lists `gpt-realtime-2`, `gpt-realtime-2.1`,
+`gpt-realtime-2.1-mini`, `gpt-realtime`, `gpt-realtime-1.5`, and
+`gpt-realtime-mini` under this shared session schema. Model availability remains
+account-dependent. The Plugin's selectable defaults remain 2.1, 2.1-mini, and 2.
+The official [2](https://developers.openai.com/api/docs/models/gpt-realtime-2),
+[2.1](https://developers.openai.com/api/docs/models/gpt-realtime-2.1), and
+[2.1 Mini](https://developers.openai.com/api/docs/models/gpt-realtime-2.1-mini)
+pages describe reasoning and capability differences, without a separate PCM
+session format. No model-specific rate fallback is applied.
+
+## Sibling contract audit
+
+- Voice remains under `audio.output.voice`; the selected voice is preserved.
+- `audio.input.turn_detection = null` keeps manual turn ownership. Transcription
+  remains `gpt-realtime-whisper` by default, with its unsupported prompt omitted;
+  existing transcription overrides and disable behavior are preserved.
+- Only the four brokered Hermes functions are exposed. Reasoning and parallel
+  tool settings are optional, so this fix introduces no model-specific fields.
+- GA `response.output_audio.delta`, transcript, function-call, and response events
+  are already normalized. Legacy audio/text event aliases remain accepted.
+  The [GA migration guide](https://developers.openai.com/api/docs/guides/realtime#beta-to-ga-migration)
+  calls for the nested session fields and newer event names; the adapter does
+  not add the old `OpenAI-Beta: realtime=v1` header.
+- A rejected update arrives as an `error` event; the adapter preserves its
+  human-readable message and the broker surfaces it as a voice error. A
+  `session.created` event describes initial defaults; only `session.updated`
+  acknowledges the configuration update. See the
+  [server-event reference](https://developers.openai.com/api/reference/resources/realtime/server-events).
+- xAI already includes both rates in its own session shape. The OpenAI
+  render-only adapter already includes the output rate in both `session.update`
+  and `response.create`. Neither implementation needs the missing-field fix.
+
+No additional required-field mismatch was found in the native session payload.
+This audit does not certify every optional model feature or live event sequence.
+
+## Verification scope
+
+`plugin/tests/test_realtime_agent_openai_provider.py` checks the serialized
+session fields and uses an injected fake socket that rejects a missing rate
+and acknowledges explicit 24 kHz PCM with `session.updated`. Removing the
+production fix makes negotiation fail. Separate coverage verifies rejection
+messages and refusal of unsupported session rates before connection.
+
+These tests use dummy credentials and make no provider calls. They prove the
+local payload and event handling, not account access, live negotiation, audio
+quality, or physical-device interruption behavior. The reporter's successful
+local patch remains the live-provider evidence attached to #644.
+
+The [deprecation record](https://developers.openai.com/api/docs/deprecations#2025-09-15-realtime-api-beta)
+records removal of the beta interface on May 12, 2026. Standard Voice renderer
+failure and legacy TTS playback gaps (#639) follow a separate path; the output-rate
+fix does not resolve them.
