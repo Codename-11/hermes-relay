@@ -1,14 +1,23 @@
 # Hermes-Relay Plugin v__VERSION__
 
-**Release Date:** September 13, 2026
+**Release Date:** September 28, 2026
 
 ## Summary
 
-Dashboard WebSocket connections work again with current Hermes authentication helpers, while older Hermes hosts remain supported.
+Secure Link gains guided host checks and pairing, Android screenshot tools deliver captured images to host vision, and OpenAI Realtime sessions use the required output audio rate.
+
+## Added
+
+- Guided Secure Link setup in Dashboard and the Desktop Relay pane uses read-only host checks, restart instructions, and a signed pairing handoff.
+- Provider usage reports SuperGrok subscription windows, product usage, and on-demand credit state for hosts signed in with `xai-oauth`.
 
 ## Fixed
 
-- Resolve WebSocket guards from their current upstream module and retain the older-host fallback. Single-use tickets, Host/Origin/IP checks, and independent Hermes-Relay session authentication remain enforced. Missing or incomplete helper contracts deny admission.
+- OpenAI Realtime Agent sessions include the output PCM sample rate required by the current API. (#644)
+- Android screenshot and navigation tools resolve authenticated media tokens into bounded images for host vision while retaining legacy inline-image compatibility. (#593)
+- Relay-owned media uploads are removed on token expiry, eviction, and shutdown, and media logs omit sensitive tokens and file paths.
+- Secure Link preserves Gateway ticket authentication and Dashboard sign-in, bounds proxied responses, and leaves ordinary Relay available when optional Secure Link configuration fails.
+- Dashboard pairing QR codes support certificate-bearing invites, and health/status checks avoid extra loopback probes.
 
 ## Install / update
 
@@ -20,7 +29,7 @@ Dashboard WebSocket connections work again with current Hermes authentication he
     # or, if already installed:
     hermes-relay-update
 
-Restart or reload the Hermes Dashboard and Relay after updating so the new manifest and prompt context are active.
+Restart or reload the Hermes Dashboard and Relay after updating so the new manifest and provider context are active.
 
 ## Verify
 
