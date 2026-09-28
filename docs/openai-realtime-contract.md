@@ -69,3 +69,8 @@ These tests use dummy credentials and make no provider calls. They prove the
 local payload and event handling, not account access, live negotiation, audio
 quality, or physical-device interruption behavior. The reporter's successful
 local patch remains the live-provider evidence attached to #644.
+
+The [deprecation record](https://developers.openai.com/api/docs/deprecations#2025-09-15-realtime-api-beta)
+records removal of the beta interface on May 12, 2026. Standard Voice renderer
+failure and legacy TTS playback gaps (#639) follow a separate path; the output-rate
+fix does not resolve them.

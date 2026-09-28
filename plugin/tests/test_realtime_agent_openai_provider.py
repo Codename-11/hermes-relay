@@ -325,6 +325,73 @@ class OpenAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("live/external data", run_tool["description"])
         self.assertIn("speech-safe summary", run_tool["description"])
 
+    async def test_ga_pcm_session_negotiation_for_configured_and_default_models(self) -> None:
+        for model in ("gpt-realtime-2", "gpt-realtime-2.1", "gpt-realtime", ""):
+            with self.subTest(model=model):
+                socket = FakeOpenAISocket()
+
+                async def factory(url: str, headers: dict[str, str], timeout: float):
+                    self.assertNotIn("OpenAI-Beta", headers)
+                    return socket
+
+                connection = await OpenAIRealtimeAgentProvider(factory).connect(
+                    RealtimeAgentSessionConfig(
+                        provider="openai_realtime", model=model, voice="cedar",
+                        sample_rate=24000, profile=None, hermes_session_id=None,
+                        provider_options={"api_key": "test-only", "input_transcription_enabled": False},
+                    )
+                )
+                session = socket.sent[0]["session"]
+                expected_model = model or "gpt-realtime-2.1"
+                self.assertEqual(session["model"], expected_model)
+                self.assertEqual(session["audio"], {
+                    "input": {"format": {"type": "audio/pcm", "rate": 24000}, "turn_detection": None},
+                    "output": {"format": {"type": "audio/pcm", "rate": 24000}, "voice": "cedar"},
+                })
+                self.assertNotIn("test-only", str(socket.sent))
+                # Simulate acknowledgement of the exact format sent on the wire.
+                socket.incoming.append({"type": "session.updated", "session": session})
+                events = [event async for event in connection.events()]
+                self.assertEqual(events[0].kind, ProviderEventKind.READY)
+                self.assertEqual(events[0].payload["resolved_model"], expected_model)
+                await connection.close()
+                self.assertTrue(socket.closed)
+
+    async def test_unsupported_pcm_rate_fails_before_opening_socket(self) -> None:
+        async def factory(url: str, headers: dict[str, str], timeout: float):
+            self.fail("Invalid PCM rate must not open a provider connection")
+
+        for rate in (0, 8000, 16000, 48000):
+            with self.subTest(rate=rate), self.assertRaisesRegex(ProviderUnavailable, "sample_rate=24000"):
+                await OpenAIRealtimeAgentProvider(factory).connect(
+                    RealtimeAgentSessionConfig(
+                        provider="openai_realtime", model="gpt-realtime-2.1", voice="marin",
+                        sample_rate=rate, profile=None, hermes_session_id=None,
+                        provider_options={"api_key": "test-only"},
+                    )
+                )
+
+    async def test_schema_rejection_remains_an_error_not_a_ready_event(self) -> None:
+        socket = FakeOpenAISocket()
+
+        async def factory(url: str, headers: dict[str, str], timeout: float):
+            return socket
+
+        connection = await OpenAIRealtimeAgentProvider(factory).connect(
+            RealtimeAgentSessionConfig(
+                provider="openai_realtime", model="gpt-realtime-2.1", voice="marin",
+                sample_rate=24000, profile=None, hermes_session_id=None,
+                provider_options={"api_key": "test-only"},
+            )
+        )
+        socket.incoming.append({"type": "error", "error": {
+            "type": "invalid_request_error",
+            "message": "Missing required parameter: 'session.audio.output.format.rate'.",
+        }})
+        events = [event async for event in connection.events()]
+        self.assertEqual(events[0].kind, ProviderEventKind.ERROR)
+        self.assertIn("session.audio.output.format.rate", events[0].payload["message"])
+
     async def test_audio_tool_and_response_events_normalize(self) -> None:
         fake_socket = FakeOpenAISocket()
 
