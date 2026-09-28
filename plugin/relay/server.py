@@ -4255,7 +4255,7 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
     except _AuthFailed:
         # The failed envelope can contain arbitrary client text. Keep it out
         # of logs; the client already receives the bounded auth.fail reason.
-        logger.info("Auth failed from %s", remote_ip)
+        logger.info("Auth failed")
         server._client_capabilities.pop(ws, None)
         server.chat.detach_ws(ws)
         # WebSocket was already sent an auth.fail message
@@ -4271,7 +4271,7 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
 
     server._clients[ws] = session_token
     server._client_tasks[ws] = set()
-    logger.info("Client authenticated from %s", remote_ip)
+    logger.info("Client authenticated")
 
     try:
         async for msg in ws:

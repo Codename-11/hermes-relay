@@ -48,7 +48,7 @@ class PairingAuthorityTests(AioHTTPTestCase):
             await ws.close()
 
         self.assertEqual(response["type"], "auth.fail")
-        self.assertIn("Auth failed from", "\n".join(captured.output))
+        self.assertIn("Auth failed", "\n".join(captured.output))
         self.assertNotIn(sentinel, "\n".join(captured.output))
 
     async def _authenticate(
