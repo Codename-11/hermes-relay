@@ -439,6 +439,9 @@ class GatewayChatClient(
     /** Invalidates an older async prewarm when a newer session selection wins. */
     private val prewarmRequestGeneration = AtomicLong(0)
     private val pendingRpcs = ConcurrentHashMap<Long, CompletableDeferred<JsonObject>>()
+    private val pendingServerRequests = ConcurrentHashMap.newKeySet<String>()
+    @Volatile
+    private var serverRequestsSupported = false
     private val lazyLiveSessions = ConcurrentHashMap.newKeySet<String>()
     private val readyLiveSessions = ConcurrentHashMap.newKeySet<String>()
     private val sessionReadyWaiters = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
@@ -1578,6 +1581,16 @@ class GatewayChatClient(
                         activeTurn = turn
                     }
                 }
+                (response["open_requests"] as? JsonArray).orEmpty().forEach { raw ->
+                    val request = raw as? JsonObject ?: return@forEach
+                    val requestId = (request["id"] as? JsonPrimitive)?.contentOrNull
+                    val params = request["params"] as? JsonObject
+                    if (serverRequestsSupported && request.stringField("method") == "approval" &&
+                        !requestId.isNullOrBlank() && params != null
+                    ) {
+                        routeApprovalRequest(requestId, params)
+                    }
+                }
                 val buffered = synchronized(recoveryEventLock) {
                     recoveryEvents
                         ?.filter { it.sessionId == recoveredLiveId }
@@ -1855,6 +1868,43 @@ class GatewayChatClient(
                 respondingTurn?.acknowledgeInteraction(GatewayAskExpiry(GatewayAsk.Kind.APPROVAL, null))
             }
         }
+    }
+
+    /** Answer a native server-to-client approval request using its JSON-RPC id. */
+    suspend fun respondApprovalRequest(requestId: String, choice: String): Result<GatewayAskResponse> =
+        respondServerRequest(requestId, buildJsonObject {
+            put("choice", choice)
+        }).map { it.gatewayAskResponse() }
+
+    private suspend fun respondServerRequest(requestId: String, result: JsonObject): Result<JsonObject> {
+        val socket = webSocket ?: return Result.failure(GatewayRpcException("not connected"))
+        if (!pendingServerRequests.remove(requestId)) {
+            return Result.failure(GatewayRpcException("server request is no longer active"))
+        }
+        val frame = buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("id", requestId)
+            put("result", result)
+        }
+        return if (socket.send(json.encodeToString(JsonObject.serializer(), frame)))
+            Result.success(JsonObject(emptyMap()))
+        else Result.failure(GatewayRpcException("send failed — socket closed"))
+    }
+
+    private fun sendServerRequestError(id: kotlinx.serialization.json.JsonElement, code: Int, message: String) {
+        webSocket?.send(json.encodeToString(JsonObject.serializer(), buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("id", id)
+            put("error", buildJsonObject { put("code", code); put("message", message) })
+        }))
+    }
+
+    private fun routeApprovalRequest(id: String, params: JsonObject) {
+        val sid = params.stringField("session_id")
+        if (sid.isNullOrBlank() || sid != liveSessionId || activeTurn == null) return
+        val approval = JsonObject(params + ("_server_request_id" to JsonPrimitive(id)))
+        pendingServerRequests.add(id)
+        activeTurn?.onEvent("approval.request", approval)
     }
 
     /**
@@ -3173,6 +3223,20 @@ class GatewayChatClient(
                     retryable = true,
                 ))
         }
+        // Current upstream gates client-originated RPC requests on this
+        // capability. Older servers may not implement it, so keep the
+        // notification-based interaction path intact.
+        serverRequestsSupported = rpc(
+            "client.capabilities",
+            buildJsonObject { put("server_requests", true) },
+            timeoutMs = 2_000L,
+        ).fold(
+            onSuccess = { true },
+            onFailure = { error ->
+                Log.d(TAG, "Gateway server requests unavailable (${error.javaClass.simpleName})")
+                false
+            },
+        )
         // Split the cold-connect cost so a slow ticket mint (HTTP) is told
         // apart from a slow WS upgrade + gateway.ready (socket/TLS) on device.
         val wsMs = (System.nanoTime() - connectStart) / 1_000_000 - ticketMs
@@ -3711,6 +3775,32 @@ class GatewayChatClient(
             return
         }
 
+        // Responses to client-originated JSON-RPC server requests use string ids.
+        val serverRequestId = (frame["id"] as? JsonPrimitive)
+            ?.takeIf { it.isString }?.contentOrNull
+        if (serverRequestId != null && (frame.containsKey("result") || frame.containsKey("error"))) {
+            pendingServerRequests.remove(serverRequestId)
+            return
+        }
+
+        // Server-to-client request? Unsupported methods fail closed.
+        val incomingMethod = frame.stringField("method")
+        if (incomingMethod != null && frame["id"] != null) {
+            val params = frame["params"] as? JsonObject
+            if (serverRequestsSupported && serverRequestId != null && incomingMethod == "approval" && params != null) {
+                val sid = params.stringField("session_id")
+                val requestId = params.stringField("request_id")
+                if (!sid.isNullOrBlank() && sid == liveSessionId && !requestId.isNullOrBlank() && activeTurn != null) {
+                    routeApprovalRequest(serverRequestId, params)
+                } else {
+                    sendServerRequestError(frame.getValue("id"), -32602, "approval request is not owned by this client")
+                }
+            } else {
+                sendServerRequestError(frame.getValue("id"), -32601, "method not supported")
+            }
+            return
+        }
+
         // RPC response?
         val id = (frame["id"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
         if (id != null && (frame.containsKey("result") || frame.containsKey("error"))) {
@@ -3746,6 +3836,16 @@ class GatewayChatClient(
 
         if (type == "gateway.ready") {
             ready.complete(Unit)
+            return
+        }
+
+        if (type == "request.cancel") {
+            val requestId = payload?.stringField("id") ?: payload?.stringField("request_id")
+            if (requestId != null && pendingServerRequests.remove(requestId)) {
+                activeTurn?.onEvent("approval.expire", buildJsonObject {
+                    put("_server_request_id", requestId)
+                })
+            }
             return
         }
 
@@ -3921,8 +4021,7 @@ class GatewayChatClient(
             val pendingAsk = backgroundTurn.pendingAsk
             val explicitlyExpired = expiry != null && pendingAsk != null &&
                 pendingAsk.kind == expiry.kind &&
-                (pendingAsk.kind == GatewayAsk.Kind.APPROVAL ||
-                    pendingAsk.requestId == expiry.requestId)
+                pendingAsk.requestId == expiry.requestId
             // Ordinary turn activity is not a decision acknowledgement. It can
             // be replayed or buffered. Only an authoritative expiry retires a
             // detached ask; an explicit response is retired by its foreground VM.
@@ -4139,6 +4238,8 @@ class GatewayChatClient(
             it.completeExceptionally(GatewayRpcException("gateway connection lost"))
         }
         pendingRpcs.clear()
+        pendingServerRequests.clear()
+        serverRequestsSupported = false
         failSessionReadyWaiters("gateway connection lost")
         lazyLiveSessions.clear()
         readyLiveSessions.clear()

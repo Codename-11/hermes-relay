@@ -17,6 +17,19 @@ import org.junit.Test
 class GatewayEventMapperTest {
 
     @Test
+    fun `native approval retains JSON-RPC id and cancellation matches only that request`() {
+        val recorder = Recorder()
+        val mapper = mapperWith(recorder)
+        mapper.onEvent("approval.request", obj("""{"_server_request_id":"srq-1","command":"rm -rf tmp","choices":["once","session","always","deny"]}"""))
+        assertEquals("srq-1", recorder.interactions.single().requestId)
+        assertEquals(listOf("once", "session", "always", "deny"), recorder.interactions.single().choices)
+        mapper.onEvent("approval.expire", obj("""{"_server_request_id":"srq-other"}"""))
+        assertTrue(mapper.currentInteraction != null)
+        mapper.onEvent("approval.expire", obj("""{"_server_request_id":"srq-1"}"""))
+        assertNull(mapper.currentInteraction)
+    }
+
+    @Test
     fun `acknowledgement before reclaim remains in the shared request snapshot`() {
         val original = mapperWith(Recorder())
         original.onEvent("clarify.request", obj("""{"request_id":"batch","questions":[

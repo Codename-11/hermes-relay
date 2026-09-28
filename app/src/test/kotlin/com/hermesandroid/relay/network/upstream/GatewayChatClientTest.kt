@@ -59,6 +59,7 @@ class GatewayClientHarness(
     val serverSockets = LinkedBlockingQueue<WebSocket>()
     private val allServerSockets = ConcurrentLinkedQueue<WebSocket>()
     val rpcLog = ConcurrentLinkedQueue<Pair<String, JsonObject>>()
+    val serverRequestResponses = LinkedBlockingQueue<JsonObject>()
     var failTicketMint = false
     var malformedTicketMint = false
     val transientTicketFailures = AtomicInteger(0)
@@ -271,7 +272,11 @@ class GatewayClientHarness(
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             val frame = json.parseToJsonElement(text) as JsonObject
-            val method = (frame["method"] as? JsonPrimitive)?.contentOrNull ?: return
+            val method = (frame["method"] as? JsonPrimitive)?.contentOrNull
+            if (method == null) {
+                serverRequestResponses.offer(frame)
+                return
+            }
             val id = (frame["id"] as? JsonPrimitive)?.contentOrNull ?: return
             val params = frame["params"] as? JsonObject ?: JsonObject(emptyMap())
             rpcLog.add(method to params)
@@ -682,6 +687,15 @@ class GatewayClientHarness(
 
     fun sendGatewayReady(webSocket: WebSocket) {
         webSocket.send(eventFrame("gateway.ready", null, null))
+    }
+
+    fun sendServerRequest(webSocket: WebSocket, id: String, method: String, params: JsonObject) {
+        webSocket.send(buildJsonObject {
+            put("jsonrpc", "2.0")
+            put("id", id)
+            put("method", method)
+            put("params", params)
+        }.toString())
     }
 
     fun awaitRpc(method: String): JsonObject {
@@ -1351,6 +1365,8 @@ class GatewayChatClientTest {
 
         val serverWs = harness.awaitServerSocket()
         harness.awaitRpc("prompt.submit")
+        val capability = harness.awaitRpc("client.capabilities")
+        assertEquals(true, capability["server_requests"]?.jsonPrimitive?.booleanOrNull)
 
         // Verify the create carried the title and the stored id was reported.
         val create = harness.awaitRpc("session.create")
@@ -1388,6 +1404,79 @@ class GatewayChatClientTest {
         assertEquals(0, r.reconcileRequests.get())
         assertTrue(r.errors.isEmpty())
         assertTrue(r.preflightFailures.isEmpty())
+    }
+
+    @Test
+    fun `native approval request preserves string id and returns exact choice result`() = runBlocking {
+        val recorder = Recorder()
+        client.sendTurn(null, "approve this", null, recorder.callbacks) { recorder.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        harness.sendServerRequest(ws, "srq-42", "approval", buildJsonObject {
+            put("session_id", "live-1")
+            put("request_id", "approval-1")
+            put("command", "run task")
+            put("description", "Run requested task")
+            put("choices", buildJsonArray { add(JsonPrimitive("once")); add(JsonPrimitive("session")); add(JsonPrimitive("always")); add(JsonPrimitive("deny")) })
+        })
+        awaitCondition { recorder.interactions.any { it.requestId == "srq-42" } }
+        client.respondApprovalRequest("srq-42", "session").getOrThrow()
+        val response = harness.serverRequestResponses.poll(5, TimeUnit.SECONDS)
+            ?: error("approval response was not sent")
+        assertEquals("srq-42", response["id"]?.jsonPrimitive?.content)
+        assertEquals("session", (response["result"] as JsonObject)["choice"]?.jsonPrimitive?.content)
+        assertTrue(harness.rpcLog.none { it.first == "approval.respond" })
+
+        harness.sendServerRequest(ws, "srq-cancel", "approval", buildJsonObject {
+            put("session_id", "live-1")
+            put("request_id", "approval-cancel")
+            put("command", "another task")
+            put("choices", buildJsonArray { add(JsonPrimitive("once")); add(JsonPrimitive("deny")) })
+        })
+        awaitCondition { recorder.interactions.any { it.requestId == "srq-cancel" } }
+        ws.send(harness.eventFrame("request.cancel", buildJsonObject {
+            put("id", "srq-not-owned")
+        }, "live-1"))
+        client.respondApprovalRequest("srq-cancel", "deny").getOrThrow()
+        val cancelOwnershipResponse = harness.serverRequestResponses.poll(5, TimeUnit.SECONDS)
+            ?: error("unowned cancellation removed the pending request")
+        assertEquals("srq-cancel", cancelOwnershipResponse["id"]?.jsonPrimitive?.content)
+        harness.sendServerRequest(ws, "srq-cancel-expire", "approval", buildJsonObject {
+            put("session_id", "live-1")
+            put("request_id", "approval-cancel-expire")
+            put("choices", buildJsonArray { add(JsonPrimitive("once")); add(JsonPrimitive("deny")) })
+        })
+        awaitCondition { recorder.interactions.any { it.requestId == "srq-cancel-expire" } }
+        ws.send(harness.eventFrame("request.cancel", buildJsonObject {
+            put("id", "srq-cancel-expire")
+            put("method", "approval")
+            put("reason", "dismissed")
+        }, "live-1"))
+        awaitCondition { recorder.interactionExpiries.any { it.requestId == "srq-cancel-expire" } }
+        harness.sendServerRequest(ws, "srq-unsupported", "not.supported", JsonObject(emptyMap()))
+        val unsupported = harness.serverRequestResponses.poll(5, TimeUnit.SECONDS)
+            ?: error("unsupported request did not receive an error")
+        assertEquals("srq-unsupported", unsupported["id"]?.jsonPrimitive?.content)
+        assertEquals(-32601, (unsupported["error"] as JsonObject)["code"]?.jsonPrimitive?.content?.toInt())
+    }
+
+    @Test
+    fun `failed server request capability probe keeps native requests unsupported`() = runBlocking {
+        harness.rpcErrors["client.capabilities"] = -32601 to "Method not found"
+        val recorder = Recorder()
+        client.sendTurn(null, "hello", null, recorder.callbacks) { recorder.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("client.capabilities")
+        harness.sendServerRequest(ws, "srq-unsupported", "approval", buildJsonObject {
+            put("session_id", "live-1")
+            put("request_id", "approval-1")
+            put("choices", buildJsonArray { add(JsonPrimitive("once")); add(JsonPrimitive("deny")) })
+        })
+
+        val response = harness.serverRequestResponses.poll(5, TimeUnit.SECONDS)
+            ?: error("unsupported approval request did not receive an error")
+        assertEquals(-32601, (response["error"] as JsonObject)["code"]?.jsonPrimitive?.content?.toInt())
+        assertTrue(recorder.interactions.isEmpty())
     }
 
     @Test
