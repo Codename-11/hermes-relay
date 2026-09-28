@@ -1,10 +1,10 @@
-# Hermes-Relay Android v1.17.0
+# Hermes-Relay Android v1.18.0
 
-**Release Date:** September 13, 2026
+**Release Date:** September 28, 2026
 
 ## Download
 
-> Installing on your phone? Download `hermes-relay-1.17.0-sideload-release.apk` and tap it for the full feature set, or install from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+> Installing on your phone? Download `hermes-relay-1.18.0-sideload-release.apk` and tap it for the full feature set, or install from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
 The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
@@ -12,28 +12,32 @@ Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://h
 
 ## Summary
 
-Google Play gains optional voice controls over other apps. This release also makes Clarify batches, profile identity, and chat context easier to follow while preserving confirmed answers and saved conversations.
+Current Hermes Gateway prompts work again on Android. Setup, sign-in, voice handoff, media, and large-screen session navigation are more reliable, with optional Secure Link support for paired connections.
 
 ## Added
 
-- Start Voice Overlay from Voice Focus after granting microphone, notification, and display-over-other-apps access. Permission grants require a separate Start action. Stop voice from the overlay or persistent notification; screen lock, task removal, and permission loss end the session.
+- Keep Sessions visible in an optional wide sidebar on larger screens.
+- Show SuperGrok usage by default when no provider visibility choice is saved.
 
 ## Changed
 
-- Standalone response cards use one surface, assistant bubbles are subtler, and timestamps share a row with delivery status.
+- Gateway setup verifies Dashboard access and explains authentication failures. An HTTP address outside recognized private ranges requires explicit acceptance for that exact address and port; VPN protection remains the operator's responsibility.
+- Secure Link shows the paired Dashboard route and applies its certificate pin to HTTP, Gateway, and voice traffic.
+- Standard Voice reports when streaming output falls back to basic TTS, keeps queued speech in order, and exposes synthesis and playback timing in Stats for Nerds.
 
 ## Fixed
 
-- Answer upstream Clarify batches one question at a time, with independent choices, custom answers, and confirmed progress across reconnects. (#474)
-- Context previews show that Gateway chats cannot send phone status or general turn context. Automatic phone-status sharing remains supported for API-only chats. (#556)
-- Profiles display their Hermes names and group the resolved server default under its agent identity, preserving explicit selection and saved conversations.
+- Clarify, approval, sudo, and secret cards work with current upstream Hermes Gateway requests. Partial Clarify progress survives reconnects. (#631)
+- Native Dashboard sign-in no longer lets an incomplete browser callback hold later attempts or their timeout and cancellation. (#632)
+- The Gateway foreground service completes an accepted start before local retention stops, avoiding a startup/shutdown crash. (#603)
+- Standard Voice speaks live background completions in the active conversation after the original turn finishes. (#545)
+- Chat loads Gateway models when the picker first opens, including before the first message.
+- Cold start applies the saved Appearance palette and light/dark choice before the first frame.
+- Proactive phone Thread media appears as attachments without losing multiline text. (#485)
 
 ## Install / Verify
 
-- App version: **1.17.0** (versionCode **57**).
-- Standard Chat, sessions, profiles, Manage, voice, and ordinary media use current upstream Hermes. Speech-to-text still requires a configured provider on the host.
-- Hermes-Relay Plugin **1.11.3** is the optional release for Hermes-Relay tools and current Dashboard WebSocket compatibility.
-- Explicit Direct API/API-only connections remain supported and are not used as silent failover for Dashboard-owned chats.
-- Voice Overlay is available in Google Play and sideload builds. Device Control remains sideload-only.
-- Gateway phone-status delivery and automatic Android identification remain unavailable pending upstream support.
-- Physical Android 14-16 and OEM voice-overlay testing was not performed for this release. Code, rendered UI, existing emulator evidence, CI, and signed-package preflight provide the recorded verification.
+- App version: **1.18.0** (versionCode **58**).
+- Standard Chat, sessions, profiles, Manage, and Standard Voice use current upstream Hermes. The optional Hermes-Relay Plugin **1.12.0** supplies Relay tools and Secure Link host support.
+- Existing saved connections, profiles, sessions, history, and drafts remain in place.
+- Physical paid-provider playback and speaker continuity were not independently tested for this release. The remaining audible pauses in legacy TTS stay open under #639; this release improves fallback handling and diagnostics without claiming those pauses are fixed.

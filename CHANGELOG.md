@@ -6,32 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Desktop tray notices, screenshot evidence, and grant prompts stay reusable after dismissal; screenshot evidence keeps the most recently selected image. (#606)
+- Desktop computer screenshots attach validated image bytes to the host tool result instead of returning base64 as plain text.
+
+## [Android 1.18.0] - 2026-09-28
+
 ### Added
 
-- Provider usage shows Grok subscription periods, product usage, and on-demand credit state for hosts signed in with `xai-oauth`. Android shows SuperGrok by default when no provider visibility choice is saved.
-- Guided Secure Link setup in Dashboard and the Desktop Relay pane, with shared read-only host CLI checks, restart instructions, and signed pairing handoff.
+- Optional wide Sessions sidebar keeps session navigation visible on larger screens.
+- Android shows SuperGrok usage by default when no provider visibility choice is saved.
 
 ### Fixed
 
-- Android discloses streaming voice failure, preserves queued speech when switching to basic TTS, and separates synthesis timing from audio queue wait and player startup in Stats for Nerds. (#639)
-- Plugin OpenAI Realtime Agent sessions include the required output PCM sample rate, fixing immediate session rejection. (#644)
-- Android Dashboard sign-in handles fragmented browser callbacks without letting idle or incomplete connections stall cancellation, retry, or timeout. Diagnostics identify callback reads and rejections without including credentials. (#632)
 - Android restores Clarify, approval, sudo, and secret cards on current Hermes, preserves partial Clarify answers across reconnects, and explicitly declines unsupported requests. (#631)
-
-- Desktop tray notices, screenshot evidence, and grant prompts stay reusable after dismissal; screenshot evidence keeps the most recently selected image. (#606)
+- Android Dashboard sign-in handles fragmented browser callbacks without letting idle or incomplete connections stall cancellation, retry, or timeout. Diagnostics identify callback reads and rejections without including credentials. (#632)
+- Android Gateway onboarding verifies Dashboard access without overstating Chat or voice readiness, explains common authentication setup failures, and requires exact-address consent before using HTTP. Custom Dashboard ports are accepted throughout setup and route editing. (#604)
+- Android safely settles Gateway foreground-service starts before stopping local retention. Turning off always-on connectivity preserves active turns. (#603)
+- Android Standard Voice speaks live background completions in its active conversation after the original reply finishes. Stop and conversation changes discard pending speech. (#545)
+- Android discloses streaming voice failure, preserves queued speech when switching to basic TTS, and separates synthesis timing from audio queue wait and player startup in Stats for Nerds. Audible legacy-TTS pauses remain under investigation. (#639)
+- Android Chat loads Gateway models when its picker opens before the first turn and distinguishes loading, unavailable, and empty catalogs.
+- Android Secure Link enforces the paired certificate pin for HTTP, Gateway, and voice traffic, retains the correct TLS policy during Gateway route changes, and displays the active HTTPS Dashboard route.
+- Android cold start restores the saved Appearance palette and platform light/dark mode before the first app frame.
 - Proactive phone Thread messages render relay-token and host-path media as attachments while preserving multiline text; notification previews omit media markers. (#485)
-- Desktop computer screenshots attach validated image bytes to the host tool result instead of returning base64 as plain text.
+
+## [Plugin 1.12.0] - 2026-09-28
+
+### Added
+
+- Provider usage shows Grok subscription periods, product usage, and on-demand credit state for hosts signed in with `xai-oauth`.
+- Guided Secure Link setup in Dashboard and the Desktop Relay pane provides read-only host checks, restart instructions, and signed pairing handoff.
+
+### Fixed
+
+- Plugin OpenAI Realtime Agent sessions include the output PCM sample rate, fixing immediate session rejection. (#644)
 - Relay-owned media uploads are removed on token expiry, eviction, and shutdown; media activity logs omit tokens, file paths, and screenshot bytes.
 - Plugin screenshot and navigation tools resolve Android's authenticated media token, attach the actual bounded image to host vision, and keep legacy inline screenshots readable. (#593)
-- Android Chat can open the model picker before the first turn, loads Gateway models when opened, and distinguishes loading, unavailable, and empty catalogs.
 - Secure Link configuration failures leave ordinary Relay available; route details and pairing previews resolve the advertised service namespaces.
 - Dashboard pairing QR codes support larger certificate-bearing Secure Link invites.
 - Secure Link preserves Gateway ticket authentication and Dashboard login paths, bounds rewritten responses, and serves compatible health information without additional loopback probes.
-- Android Secure Link enforces the paired certificate pin for HTTP, Gateway, and voice traffic, retains the correct TLS policy during Gateway route changes, and displays the active HTTPS Dashboard route.
-- Android cold start restores the saved Appearance palette and platform light/dark mode before the first app frame.
-- Android Gateway onboarding verifies Dashboard access without overstating Chat or voice readiness, explains common authentication setup failures, and requires exact-address consent before using HTTP. Custom Dashboard ports are accepted and shown throughout setup and route editing. (#604)
-- Android safely settles Gateway foreground-service starts before stopping local retention, preventing the startup/shutdown race reported in #603. Turning off always-on connectivity preserves active turns.
-- Android Standard Voice speaks live background completions in its active conversation after the original reply finishes. Stop and conversation changes discard pending speech. (#545)
 
 ## [Android 1.17.0] - 2026-09-13
 
