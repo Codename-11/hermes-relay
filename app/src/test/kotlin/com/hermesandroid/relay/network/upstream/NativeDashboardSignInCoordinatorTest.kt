@@ -14,6 +14,13 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
+import java.util.Collections
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -38,6 +45,162 @@ class NativeDashboardSignInCoordinatorTest {
     @After
     fun tearDown() {
         server.shutdown()
+    }
+
+    @Test
+    fun signIn_tricklingRequestCannotExtendAttemptDeadline() = runBlocking {
+        val coordinator = NativeDashboardSignInCoordinator(
+            NativeDashboardAuthClient(server.url("/").toString(), store),
+            timeoutMillis = 350,
+        )
+        val launched = CompletableDeferred<String>()
+        val result = async(Dispatchers.IO) {
+            runCatching { coordinator.signIn("basic") { launched.complete(it) } }
+        }
+        val redirect = URI(query(URI(launched.await())).getValue("redirect_uri"))
+        Socket("127.0.0.1", redirect.port).use { socket ->
+            val trickle = async(Dispatchers.IO) {
+                runCatching {
+                    while (true) {
+                        socket.getOutputStream().write('G'.code)
+                        delay(30)
+                    }
+                }
+            }
+            try {
+                val outcome = withTimeoutOrNull(1_500) { result.await() }
+                assertTrue("An incomplete socket must not defeat the attempt deadline", outcome != null)
+                assertTrue(outcome?.exceptionOrNull() is NativeDashboardSignInTimeoutException)
+            } finally {
+                socket.close()
+                trickle.cancelAndJoin()
+                result.cancelAndJoin()
+            }
+        }
+    }
+
+    @Test
+    fun signIn_idlePreconnectionDoesNotBlockFragmentedCallback() = runBlocking {
+        server.enqueue(tokenResponse())
+        val stages = Collections.synchronizedList(mutableListOf<String>())
+        val accepted = CompletableDeferred<Unit>()
+        val launched = CompletableDeferred<String>()
+        val coordinator = NativeDashboardSignInCoordinator(NativeDashboardAuthClient(server.url("/").toString(), store))
+        val result = async(Dispatchers.IO) {
+            coordinator.signIn("basic", onDiagnostic = {
+                stages.add(it)
+                if (it == "socket_accepted") accepted.complete(Unit)
+            }) { launched.complete(it) }
+        }
+        val auth = query(URI(launched.await()))
+        val redirect = URI(auth.getValue("redirect_uri"))
+        Socket("127.0.0.1", redirect.port).use { idle ->
+            withTimeout(2_000) { accepted.await() }
+            val response = withContext(Dispatchers.IO) {
+                Socket("127.0.0.1", redirect.port).use { socket ->
+                    socket.soTimeout = 2_000
+                    val request = "GET /callback?code=code-1&state=${auth.getValue("state")} HTTP/1.1\r\nHost: 127.0.0.1:${redirect.port}\r\n\r\n"
+                    for (byte in request.toByteArray()) {
+                        socket.getOutputStream().write(byte.toInt())
+                        socket.getOutputStream().flush()
+                        delay(1)
+                    }
+                    socket.getInputStream().bufferedReader().readText()
+                }
+            }
+            assertTrue(response.contains("Sign-in complete"))
+            assertEquals("access-1", withTimeout(2_000) { result.await() }.accessToken)
+            idle.soTimeout = 1_000
+            assertEquals(-1, idle.getInputStream().read())
+        }
+        assertTrue(stages.contains("request_read_completed"))
+        assertFalse(stages.any { it.contains(auth.getValue("state")) || it.contains("code-1") })
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun signIn_cancellationClosesReadingSocketAndRetrySucceeds() = runBlocking {
+        val coordinator = NativeDashboardSignInCoordinator(NativeDashboardAuthClient(server.url("/").toString(), store))
+        val launched = CompletableDeferred<String>()
+        val accepted = CompletableDeferred<Unit>()
+        val result = async(Dispatchers.IO) {
+            coordinator.signIn("basic", onDiagnostic = {
+                if (it == "socket_accepted") accepted.complete(Unit)
+            }) { launched.complete(it) }
+        }
+        val redirect = URI(query(URI(launched.await())).getValue("redirect_uri"))
+        Socket("127.0.0.1", redirect.port).use { socket ->
+            socket.getOutputStream().write("GET /call".toByteArray())
+            withTimeout(2_000) { accepted.await() }
+            withTimeout(1_500) { result.cancelAndJoin() }
+            socket.soTimeout = 1_000
+            // Some TCP stacks reset a socket closed with unread request data.
+            val closed = runCatching { socket.getInputStream().read() }.getOrDefault(-1)
+            assertEquals(-1, closed)
+        }
+        assertThrows(Exception::class.java) { Socket("127.0.0.1", redirect.port).close() }
+        assertEquals(null, store.tokens)
+        server.enqueue(tokenResponse())
+        assertEquals("access-1", completeSignIn(coordinator, "basic").accessToken)
+    }
+
+    @Test
+    fun signIn_requestDeadlineExpiresEvenWithIncomingBytes() = runBlocking {
+        val launched = CompletableDeferred<String>()
+        val expired = CompletableDeferred<Unit>()
+        val coordinator = NativeDashboardSignInCoordinator(NativeDashboardAuthClient(server.url("/").toString(), store))
+        val result = async(Dispatchers.IO) {
+            coordinator.signIn("basic", onDiagnostic = {
+                if (it == "request_read_timeout") expired.complete(Unit)
+            }) { launched.complete(it) }
+        }
+        val redirect = URI(query(URI(launched.await())).getValue("redirect_uri"))
+        Socket("127.0.0.1", redirect.port).use { socket ->
+            val trickle = async(Dispatchers.IO) {
+                runCatching { while (true) { socket.getOutputStream().write('G'.code); delay(30) } }
+            }
+            try {
+                withTimeout(7_000) { expired.await() }
+                assertFalse(result.isCompleted)
+            } finally {
+                socket.close()
+                trickle.cancelAndJoin()
+                result.cancelAndJoin()
+            }
+        }
+    }
+
+    @Test
+    fun signIn_cancelDuringTokenExchangeDoesNotSaveLateCredentials() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE))
+        val launched = CompletableDeferred<String>()
+        val coordinator = NativeDashboardSignInCoordinator(NativeDashboardAuthClient(server.url("/").toString(), store))
+        val result = async(Dispatchers.IO) { coordinator.signIn("basic") { launched.complete(it) } }
+        val auth = query(URI(launched.await()))
+        val redirect = URI(auth.getValue("redirect_uri"))
+        val browser = async(Dispatchers.IO) {
+            runCatching { sendCallbackResponse(redirect, "/callback?code=code-1&state=${auth.getValue("state")}") }
+        }
+        withContext(Dispatchers.IO) { assertTrue(server.takeRequest(3, java.util.concurrent.TimeUnit.SECONDS) != null) }
+        withTimeout(1_500) { result.cancelAndJoin() }
+        withTimeout(1_500) { browser.await() }
+        assertEquals(null, store.tokens)
+    }
+
+    @Test
+    fun signIn_bindFailureDoesNotLaunchBrowserOrChangeExistingSession() = runBlocking {
+        val previous = NativeDashboardTokens("previous")
+        store.tokens = previous
+        java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1")).use { bound ->
+            val coordinator = NativeDashboardSignInCoordinator(
+                NativeDashboardAuthClient(server.url("/").toString(), store),
+                serverSocketFactory = { bound },
+            )
+            val error = runCatching { coordinator.signIn("basic") { error("must not launch") } }.exceptionOrNull()
+            assertTrue(error is java.net.SocketException)
+            assertTrue(bound.isClosed)
+            assertEquals(previous, store.tokens)
+        }
     }
 
     @Test
