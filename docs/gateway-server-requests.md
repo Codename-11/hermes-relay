@@ -1,7 +1,7 @@
 # Gateway server requests
 
 Contract baseline: unmodified `NousResearch/hermes-agent` revision
-`6f7a7991bb069db07ae74a479823ce8310f8c7e0` (2026-09-27 inspection).
+`d6c91913689775fee5f38f3f97ecedbefc34104d` (2026-09-28 inspection).
 The migration landed through upstream #110521; capability gating was added in
 `f9d178f78e`. The authoritative sources are `tui_gateway/server_requests.py`,
 `tui_gateway/contracts/server_requests.py`, `contracts/display.py`,

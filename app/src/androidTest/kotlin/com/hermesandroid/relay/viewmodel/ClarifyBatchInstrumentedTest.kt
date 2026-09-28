@@ -13,6 +13,7 @@ import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.Lifecycle
@@ -71,7 +72,8 @@ class ClarifyBatchInstrumentedTest {
                 LazyColumn(Modifier.fillMaxSize()) {
                     items(messages.size, key = { messages[it].id }) { index ->
                         MessageBubble(messages[index], showTimestamps = false,
-                            onCardInput = viewModel::answerAsk, animationEnabled = false)
+                            onCardInput = viewModel::answerAsk,
+                            onCardAction = viewModel::dispatchCardAction, animationEnabled = false)
                     }
                 }
             }
@@ -129,6 +131,33 @@ class ClarifyBatchInstrumentedTest {
         val response = fixture.serverResponses.poll(5, java.util.concurrent.TimeUnit.SECONDS) ?: error("No unsupported response")
         assertEquals(JsonPrimitive(-32601), (response["error"] as JsonObject)["code"])
         compose.onNodeWithContentDescription("Type an answer…").assertDoesNotExist()
+    }
+
+    @Test fun nativeApprovalSudoSecretRenderAndCorrelateTheirActions() {
+        compose.runOnIdle { viewModel.sendMessage("Ask for confirmation") }
+        fixture.awaitRpc("prompt.submit")
+        val cases = listOf(
+            Triple("approval", "Approval requested", "Approve once"),
+            Triple("sudo", "Elevated permission requested", "Deny"),
+            Triple("secret", "Secret requested", "Skip"),
+        )
+        for ((method, title, action) in cases) {
+            socket.send("""{"id":"srq-$method","method":"$method","params":{
+                "session_id":"fixture-live-1","request_id":"queue-$method","command":"echo fixture",
+                "choices":["once","deny"],"env_var":"FIXTURE_TOKEN","prompt":"Enter the fixture value"}}""")
+            compose.waitUntil(10_000) { viewModel.pendingAsk.value?.ask?.requestId == "jsonrpc:\"srq-$method\"" }
+            compose.onNodeWithText(title).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText(action).performScrollTo().performClick()
+            compose.waitUntil(10_000) { viewModel.pendingAsk.value == null }
+            val response = fixture.serverResponses.poll(5, java.util.concurrent.TimeUnit.SECONDS) ?: error("No $method response")
+            assertEquals(JsonPrimitive("srq-$method"), response["id"])
+            val result = response["result"] as JsonObject
+            assertEquals(if (method == "approval") setOf("choice") else setOf("value"), result.keys)
+            assertEquals(JsonPrimitive(if (method == "approval") "once" else ""), result.values.single())
+        }
+        assertEquals(0, fixture.rpcCount("approval.respond"))
+        assertEquals(0, fixture.rpcCount("sudo.respond"))
+        assertEquals(0, fixture.rpcCount("secret.respond"))
     }
 
     @Test fun nativeAnswerCannotCrossSessionSwitch() = verifySwitchFence(false)

@@ -3990,7 +3990,9 @@ class GatewayChatClient(
         }
         val terminal = type in setOf("message.complete", "error") ||
             (type == "session.info" && payload?.booleanField("running") == false)
-        val requestOwner = if (eventSessionId == liveSessionId) activeTurn?.pendingInteraction else backgroundTurns[eventSessionId]?.pendingAsk
+        val requestOwner = eventSessionId?.let { sid ->
+            if (sid == liveSessionId) activeTurn?.pendingInteraction else backgroundTurns[sid]?.pendingAsk
+        }
         if (!requestsReconciled && terminal && requestOwner?.serverRequest == true && eventSessionId != null) {
             val key = ready to eventSessionId
             if (!reconcilingServerRequests.add(key)) return
