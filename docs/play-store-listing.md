@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.18.0 - Current Hermes prompts and safer connections
+v1.18.1 - Reliable browser sign-in
 
-Current Hermes Clarify, approval, sudo, and secret prompts work again. Set up Gateways with clearer authentication checks and explicit HTTP consent. Secure Link protects paired routes, Standard Voice speaks live background completions, and a wide Sessions sidebar improves navigation. Voice fallback now shows what happened; audible basic-TTS pauses remain under investigation.
+Browser sign-in stays connected while you complete your provider's flow and return to Hermes-Relay. The sign-in notification ends when the attempt finishes or is canceled, and callback pages identify the selected provider.
 ```
 ## Category
 
