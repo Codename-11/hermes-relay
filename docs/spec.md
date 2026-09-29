@@ -306,8 +306,12 @@ the selected provider when upstream requires it, while retaining the hosted
 Nous compatibility behavior where the gateway selects its single
 native-eligible provider.
 The app owns an ephemeral five-minute loopback callback and stores the resulting
-bearer session only for that connection and exact dashboard origin. Callback,
-code-exchange, hosted-gateway, transport, response-shape, and secure-storage
+bearer session only for that connection and exact dashboard origin. A bound
+foreground service shows a sign-in notification before the browser opens and
+retains network access through callback, token exchange, and session verification.
+The sign-in coroutine releases its binding on completion, cancellation, or
+timeout; it does not enable persistent connectivity or change battery settings.
+Callback, code-exchange, hosted-gateway, transport, response-shape, and secure-storage
 failures surface as distinct secret-free recovery guidance. Client-local native
 failures automatically continue through the upstream cookie/WebView fallback;
 explicit provider denial, server rejection, and rate limiting remain visible
@@ -319,6 +323,8 @@ validates the exact Host/port, `/callback` target and unique state/code paramete
 before a single-use PKCE exchange. Cancellation closes accepted sockets and the
 listener and cancels an active token call. Browser response writes have a separate
 two-second bound; failure to deliver the page does not undo a saved session.
+Completion and error pages show the selected provider's escaped display name;
+shared guidance does not assume Google or a hosted gateway.
 If a provider establishes its browser session but does not resume the original
 authorization transaction, the waiting screen offers Continue sign-in. That
 action cancels the old native attempt before opening a fresh authorization, so

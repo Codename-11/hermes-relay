@@ -2346,6 +2346,16 @@ storage, and exact-origin attachment. Android passes a provider selector when
 the gateway requires one; hosted Nous retains upstream's compatibility behavior
 where the gateway chooses its single native-eligible provider.
 
+While the system browser is foregrounded, Android can block a background UID's
+loopback callback and token exchange even with Battery Saver disabled. Native
+sign-in therefore binds a dedicated, non-exported `specialUse` foreground service
+and waits for notification promotion before opening the browser. The ephemeral
+sign-in coroutine owns the binding through session verification and unbinds on
+every exit. Cancellation before service connection never launches the browser;
+service loss cancels the attempt. No authorization material enters service
+intents, notifications, or storage, and this does not enable persistent Gateway
+connectivity. The Play foreground-service declaration must cover this use case.
+
 Missing `native_pkce` uses the dashboard cookie flow. A client-local native
 failure (transport/listener, secure storage, or unsupported native response)
 automatically continues through that same compatibility flow. Explicit

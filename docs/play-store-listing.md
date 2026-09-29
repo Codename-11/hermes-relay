@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.18.0 - Current Hermes prompts and safer connections
+v1.18.1 - Reliable browser sign-in
 
-Current Hermes Clarify, approval, sudo, and secret prompts work again. Set up Gateways with clearer authentication checks and explicit HTTP consent. Secure Link protects paired routes, Standard Voice speaks live background completions, and a wide Sessions sidebar improves navigation. Voice fallback now shows what happened; audible basic-TTS pauses remain under investigation.
+Browser sign-in stays connected while you complete your provider's flow and return to Hermes-Relay. The sign-in notification ends when the attempt finishes or is canceled, and callback pages identify the selected provider.
 ```
 ## Category
 
@@ -174,6 +174,14 @@ idle connectivity. Declare `specialUse` with:
 - **Why a foreground service:** it's a real-time, user-initiated streaming connection that must survive Doze / background execution limits; `dataSync` is force-stopped after a 6-hour/day cap on Android 15, so `specialUse` is the only fit for "stay connected."
 - **User control:** the service starts when the user sends a chat message and stops after all active turns settle. Continuous idle retention is off by default and enabled only via *Settings → Quick Controls → Persistent connection*. The ongoing notification shows the active/waiting session count; its **Turn off always-on** action disables idle retention without interrupting active work. Swiping the app from recents ends it.
 - Google usually asks for a short screen recording of a backgrounded active turn, the ongoing notification, and the optional persistent toggle.
+
+The same `specialUse` declaration must also cover `NativeDashboardAuthService`:
+it retains the local callback and token-exchange network access during a
+user-started system-browser sign-in. A sign-in notification appears before the
+browser opens. The binding ends on completion, cancellation, or the five-minute
+callback timeout, after any bounded session verification. It never enables
+Persistent connection. Include a browser sign-in and notification teardown in
+the review recording before releasing this service on Play.
 
 The Play build also declares `**FOREGROUND_SERVICE_MICROPHONE**` for two
 explicitly user-started voice features. Declare `microphone` and cover both
