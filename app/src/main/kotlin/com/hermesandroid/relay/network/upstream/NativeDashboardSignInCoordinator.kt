@@ -28,6 +28,14 @@ private const val CALLBACK_PATH = "/callback"
 internal const val DEFAULT_NATIVE_SIGN_IN_TIMEOUT_MILLIS = 5 * 60 * 1000L
 internal val NATIVE_SIGN_IN_RETURN_URI = "${BuildConfig.APPLICATION_ID}://return"
 
+/** Provider display names are untrusted text, never callback HTML. */
+private fun callbackProviderLabel(value: String): String = value
+    .replace("&", "&amp;")
+    .replace("<", "&lt;")
+    .replace(">", "&gt;")
+    .replace("\"", "&quot;")
+    .replace("'", "&#39;")
+
 internal class NativeDashboardSignInTimeoutException :
     InterruptedIOException("Dashboard sign-in timed out")
 
@@ -61,37 +69,37 @@ private enum class CallbackPage(
     ),
     CodeRejected(
         modifier = "failure",
-        eyebrow = "Hosted Hermes callback",
+        eyebrow = "Hermes callback",
         title = "Hermes rejected the sign-in code",
-        message = "Google sign-in finished, but hosted Hermes could not exchange its one-time callback code for a session.",
+        message = "Your provider accepted sign-in, but Hermes could not exchange its one-time callback code for a session.",
         guidance = "Return to Hermes Relay and start a fresh sign-in attempt.",
     ),
     GatewayUnavailable(
         modifier = "failure",
-        eyebrow = "Hosted Hermes callback",
-        title = "Hosted Hermes could not finish sign-in",
-        message = "The callback reached Hermes Relay, but the hosted Hermes sign-in service was unavailable.",
+        eyebrow = "Hermes callback",
+        title = "Hermes could not finish sign-in",
+        message = "The callback reached Hermes Relay, but the Hermes sign-in service was unavailable.",
         guidance = "Return to Hermes Relay, wait a moment, and try again.",
     ),
     TransportFailure(
         modifier = "failure",
         eyebrow = "Secure sign-in connection",
-        title = "Could not reach hosted Hermes",
-        message = "Google sign-in finished, but the secure connection back to hosted Hermes was interrupted.",
+        title = "Could not reach Hermes",
+        message = "Your provider accepted sign-in, but the secure connection back to Hermes was interrupted.",
         guidance = "Return to Hermes Relay and retry on a stable connection.",
     ),
     ResponseUnsupported(
         modifier = "failure",
-        eyebrow = "Hosted Hermes callback",
+        eyebrow = "Hermes callback",
         title = "Hermes returned an unsupported session",
-        message = "The hosted gateway answered, but its sign-in response was not compatible with this app.",
-        guidance = "Return to Hermes Relay and check for app and hosted Hermes updates.",
+        message = "The Hermes gateway answered, but its sign-in response was not compatible with this app.",
+        guidance = "Return to Hermes Relay and check for app and Hermes updates.",
     ),
     SessionStorageFailure(
         modifier = "failure",
         eyebrow = "Secure session storage",
         title = "The session could not be saved",
-        message = "Google sign-in finished, but Android could not securely save the Hermes session on this device.",
+        message = "Your provider accepted sign-in, but Android could not securely save the Hermes session on this device.",
         guidance = "Return to Hermes Relay and try again. If it repeats, check the app's diagnostics.",
     ),
     Rejected(
@@ -145,6 +153,7 @@ class NativeDashboardSignInCoordinator(
     private val authClient: NativeDashboardAuthClient,
     private val timeoutMillis: Long = DEFAULT_NATIVE_SIGN_IN_TIMEOUT_MILLIS,
     private val serverSocketFactory: () -> ServerSocket = ::ServerSocket,
+    private val providerDisplayName: String = "Hermes",
 ) {
     suspend fun signIn(
         provider: String?,
@@ -319,7 +328,7 @@ class NativeDashboardSignInCoordinator(
             <section class="card ${page.modifier}" aria-labelledby="page-title" aria-describedby="page-message page-guidance">
               <div class="status-rail" aria-hidden="true"></div>
               <p class="brand">Hermes Relay</p>
-              <p class="eyebrow">${page.eyebrow}</p>
+              <p class="eyebrow">${callbackProviderLabel(providerDisplayName)} · ${page.eyebrow}</p>
               <h1 id="page-title" tabindex="-1">${page.title}</h1>
               <p id="page-message" class="message">${page.message}</p>
               <p id="page-guidance" class="guidance">${page.guidance}</p>

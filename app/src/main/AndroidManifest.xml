@@ -151,6 +151,17 @@
                 android:value="Keeps user-started Hermes turns connected until they finish or need input, and optionally keeps idle connections responsive when the user enables Persistent connection." />
         </service>
 
+        <!-- Bound only during a user-started browser sign-in. Include this
+             bounded callback use case in the Play specialUse declaration. -->
+        <service
+            android:name=".network.upstream.NativeDashboardAuthService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Keeps the local callback reachable during a user-started browser sign-in with a five-minute callback timeout and bounded token exchange and session verification." />
+        </service>
+
         <!-- Experimental, explicitly user-started on-device wake-word listener.
              Audio remains local and the service is never boot/restart started.
              The Play build's microphone type needs an App content declaration. -->

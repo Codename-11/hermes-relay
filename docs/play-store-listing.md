@@ -175,6 +175,14 @@ idle connectivity. Declare `specialUse` with:
 - **User control:** the service starts when the user sends a chat message and stops after all active turns settle. Continuous idle retention is off by default and enabled only via *Settings → Quick Controls → Persistent connection*. The ongoing notification shows the active/waiting session count; its **Turn off always-on** action disables idle retention without interrupting active work. Swiping the app from recents ends it.
 - Google usually asks for a short screen recording of a backgrounded active turn, the ongoing notification, and the optional persistent toggle.
 
+The same `specialUse` declaration must also cover `NativeDashboardAuthService`:
+it retains the local callback and token-exchange network access during a
+user-started system-browser sign-in. A sign-in notification appears before the
+browser opens. The binding ends on completion, cancellation, or the five-minute
+callback timeout, after any bounded session verification. It never enables
+Persistent connection. Include a browser sign-in and notification teardown in
+the review recording before releasing this service on Play.
+
 The Play build also declares `**FOREGROUND_SERVICE_MICROPHONE**` for two
 explicitly user-started voice features. Declare `microphone` and cover both
 entry points in its description and demonstration:
