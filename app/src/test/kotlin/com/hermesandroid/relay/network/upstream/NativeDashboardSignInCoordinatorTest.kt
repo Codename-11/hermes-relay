@@ -85,7 +85,10 @@ class NativeDashboardSignInCoordinatorTest {
         val stages = Collections.synchronizedList(mutableListOf<String>())
         val accepted = CompletableDeferred<Unit>()
         val launched = CompletableDeferred<String>()
-        val coordinator = NativeDashboardSignInCoordinator(NativeDashboardAuthClient(server.url("/").toString(), store))
+        val coordinator = NativeDashboardSignInCoordinator(
+            NativeDashboardAuthClient(server.url("/").toString(), store),
+            providerDisplayName = "Username & Password <provider>",
+        )
         val result = async(Dispatchers.IO) {
             coordinator.signIn("basic", onDiagnostic = {
                 stages.add(it)
@@ -109,6 +112,8 @@ class NativeDashboardSignInCoordinatorTest {
                 }
             }
             assertTrue(response.contains("Sign-in complete"))
+            assertTrue(response.contains("Username &amp; Password &lt;provider&gt;"))
+            assertFalse(response.contains("<provider>"))
             assertEquals("access-1", withTimeout(2_000) { result.await() }.accessToken)
             idle.soTimeout = 1_000
             assertEquals(-1, idle.getInputStream().read())
@@ -282,6 +287,7 @@ class NativeDashboardSignInCoordinatorTest {
         server.enqueue(MockResponse().setResponseCode(400).setBody("sensitive-upstream-detail"))
         val coordinator = NativeDashboardSignInCoordinator(
             NativeDashboardAuthClient(server.url("/").toString(), store),
+            providerDisplayName = "Self-Hosted OIDC",
         )
 
         coroutineScope {
@@ -301,7 +307,9 @@ class NativeDashboardSignInCoordinatorTest {
 
             assertTrue(response.startsWith("HTTP/1.1 400"))
             assertTrue(response.contains("Hermes rejected the sign-in code"))
-            assertTrue(response.contains("hosted Hermes could not exchange its one-time callback code"))
+            assertTrue(response.contains("Self-Hosted OIDC"))
+            assertTrue(response.contains("Hermes could not exchange its one-time callback code"))
+            assertFalse(response.contains("Google"))
             assertTrue(response.contains("Referrer-Policy: no-referrer"))
             assertTrue(response.contains("X-Content-Type-Options: nosniff"))
             assertTrue(response.contains("Permissions-Policy:"))
