@@ -2,6 +2,21 @@
  "schema": 3,
  "versions": [
   {
+   "version": "1.18.1",
+   "title": "Reliable browser sign-in",
+   "date": "2026-09-29",
+   "summary": "Dashboard browser sign-in stays connected while you complete the provider flow and return to Hermes-Relay. Callback pages show which provider handled the attempt.",
+   "changes": [
+    {"id": "native-signin-foreground", "kind": "fixed", "title": "Finish browser sign-in", "summary": "The app keeps the sign-in callback and session check connected while the browser is open, then ends the sign-in notification when the attempt finishes or is canceled.", "highlight": true},
+    {"id": "native-signin-provider-pages", "kind": "improved", "title": "Recognize the sign-in provider", "summary": "Browser callback success and error pages identify the selected provider and use guidance that applies to self-hosted and hosted Hermes."}
+   ],
+   "compatibility": [
+    "Browser sign-in continues to use upstream Hermes Dashboard; no Hermes-Relay Plugin update is required."
+   ],
+   "playNotes": "Browser sign-in stays connected while you complete your provider's flow and return to Hermes-Relay. The sign-in notification ends when the attempt finishes or is canceled, and callback pages identify the selected provider.",
+   "sections": []
+  },
+  {
    "version": "1.18.0",
    "title": "Current Hermes prompts and safer connections",
    "date": "2026-09-28",

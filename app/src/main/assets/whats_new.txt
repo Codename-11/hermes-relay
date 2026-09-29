@@ -1,29 +1,13 @@
-v1.18.0 - Current Hermes prompts and safer connections
+v1.18.1 - Reliable browser sign-in
 
 Summary
-* Current Hermes prompts work on Android again. Gateway setup, sign-in, voice handoff, media, and session navigation are more reliable, with optional Secure Link support.
+* Dashboard browser sign-in stays connected while you complete the provider flow and return to Hermes-Relay. Callback pages show which provider handled the attempt.
 
 Highlights
-* Answer current Hermes prompts — Clarify, approval, sudo, and secret cards work with current Hermes Gateway requests. Clarify answers remain in progress across reconnects, and unsupported requests fail clearly.
-* Finish Dashboard sign-in reliably — Incomplete browser callbacks cannot hold later sign-in attempts or prevent cancellation and timeout.
-* Set up Gateways with clearer checks — Setup verifies Dashboard access, explains authentication failures, accepts custom ports, and asks for exact-address consent before HTTP use.
-* Use paired Secure Link routes — Paired certificate checks cover HTTP, Gateway, and voice traffic. Route details show the active HTTPS Dashboard address.
-
-Added
-* Keep Sessions visible on wide screens — An optional sidebar keeps session navigation beside Chat on larger layouts.
-* See SuperGrok usage — New installs show SuperGrok subscription usage by default when the host provides it; existing display preferences stay intact.
+* Finish browser sign-in — The app keeps the sign-in callback and session check connected while the browser is open, then ends the sign-in notification when the attempt finishes or is canceled.
 
 Improved
-* Understand voice fallback — A failed streaming provider now shows a warning, keeps queued speech when basic TTS takes over, and exposes synthesis and player timing. Audible basic-TTS pauses remain under investigation.
-
-Fixed
-* Avoid a connection-service startup crash — Accepted foreground starts settle before local retention stops, while active Hermes turns remain protected.
-* Hear live background completions — Standard Voice speaks later answers in its active conversation once, while Stop and conversation changes discard pending speech.
-* Open models before the first message — Chat loads Gateway model choices when the picker opens and distinguishes loading, unavailable, and empty results.
-* Restore Appearance on launch — The saved palette and light/dark choice apply before the first app frame.
-* Show media in phone Threads — Proactive messages render media attachments while preserving multiline text and clean notification previews.
+* Recognize the sign-in provider — Browser callback success and error pages identify the selected provider and use guidance that applies to self-hosted and hosted Hermes.
 
 Compatibility
-* Standard Chat and Voice continue to use upstream Hermes; Secure Link and enhanced tools use the optional Hermes-Relay Plugin 1.12.0.
-* HTTP outside recognized private address ranges requires explicit consent for the exact address and port; the app does not verify VPN protection.
-* Legacy basic-TTS pauses remain under investigation under issue #639.
+* Browser sign-in continues to use upstream Hermes Dashboard; no Hermes-Relay Plugin update is required.
