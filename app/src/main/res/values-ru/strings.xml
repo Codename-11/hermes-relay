@@ -4361,4 +4361,6 @@
     <string name="voice_streaming_stopped_basic_next">Потоковая озвучка остановилась. Оставшийся текст будет озвучен в базовом режиме. Проверьте настройки голосового провайдера.</string>
     <string name="stats_tts_queue_wait">Ожидание в очереди аудио</string>
     <string name="stats_tts_player_start">Задержка запуска плеера</string>
+    <string name="chat_unread_reply">Непрочитанный ответ</string>
+    <string name="chat_unread_conversations">Непрочитанные беседы: %1$d</string>
 </resources>

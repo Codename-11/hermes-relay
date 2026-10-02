@@ -41,6 +41,7 @@ data class ChatTurnCheckpoint(
     val queueOnly: Boolean = false,
     val startedAt: Long,
     val updatedAt: Long,
+    val replyIdentity: com.hermesandroid.relay.notifications.ReplyNotificationIdentity? = null,
 ) {
     companion object {
         const val CURRENT_SCHEMA = 1

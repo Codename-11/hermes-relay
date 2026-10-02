@@ -4622,4 +4622,6 @@
     <string name="voice_streaming_stopped_basic_next">Die Streaming-Sprachausgabe wurde unterbrochen. Der restliche Text nutzt die einfache Sprachausgabe. Prüfe die Einstellungen des Sprachanbieters.</string>
     <string name="stats_tts_queue_wait">Wartezeit auf Audio</string>
     <string name="stats_tts_player_start">Startverzögerung des Players</string>
+    <string name="chat_unread_reply">Ungelesene Antwort</string>
+    <string name="chat_unread_conversations">Ungelesene Unterhaltungen: %1$d</string>
 </resources>

@@ -4465,4 +4465,6 @@
     <string name="voice_streaming_stopped_basic_next">A voz em streaming parou. O restante usará a voz básica. Confira as configurações do provedor de voz.</string>
     <string name="stats_tts_queue_wait">Espera na fila de áudio</string>
     <string name="stats_tts_player_start">Atraso ao iniciar o player</string>
+    <string name="chat_unread_reply">Resposta não lida</string>
+    <string name="chat_unread_conversations">Conversas não lidas: %1$d</string>
 </resources>

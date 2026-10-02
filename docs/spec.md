@@ -169,6 +169,50 @@ leases or assuming process termination; if the process survives, returning to
 the app can protect unfinished turns again. The service is not sticky and does
 not restart idle retention from stale notification actions after process death.
 
+Background chat alerts cover actionable Gateway requests and successful turn
+completion for locally owned conversations while the app is backgrounded. An
+absent alert preference follows Android notification permission and is refreshed on resume, including grants
+made during onboarding; an explicit user choice remains authoritative. The chat
+ViewModel observes the setting without requiring UI recomposition. Android's app
+and channel controls still govern delivery. Active-turn protection preserves the
+live connection; it does not provide offline push after process death.
+
+Alerts retain their saved connection, profile, and durable conversation identity.
+Successful detached turns may notify after a sibling conversation is selected
+and the app is backgrounded. Detached errors, interruptions, and reclaimed
+runtimes never produce success alerts.
+Each conversation has an independent reply slot, and replay of the same turn
+cannot re-alert an existing slot. Opening a notification restores its saved
+connection and profile before opening the explicit conversation. Cold-start taps
+wait for navigation policy hydration. Missing or disallowed owners never fall
+back to the currently selected conversation. Returning to the app dismisses only
+alerts for the conversation actually displayed; disabling alerts clears all chat
+alert slots. Public lock-screen reply copy omits response and profile details.
+
+Completed replies in off-screen conversations also create local unread receipts,
+independent of Android notification permission and the background-alert toggle.
+The drawer marks those conversations, the profile shelf and switcher show unread
+conversation counts, and the chat header retains the total while the shelf is
+closed. Opening the exact conversation clears its receipt. Receipts retain their
+last turn identity across app restart so replay cannot resurrect a read badge or
+re-alert that turn. Storage is bounded to the latest 512 conversation receipts;
+it contains no message bodies. Server Default and named-profile receipt owners
+remain distinct, including when their display choices would normally collapse.
+
+Reply notifications use the owning official profile's `display_name`/name and
+conversation title captured with the turn. When available, the large icon comes
+from the connection/profile-scoped cache populated by upstream
+`profiles.get_asset {name, asset: "avatar"}`. Missing, invalid, or oversized
+cached images fall back to the app icon; completion does not fetch arbitrary
+remote image URLs or borrow the newly selected profile's image. Public
+lock-screen copy remains generic and has no profile avatar.
+
+Chat progress uses the selected dots or matrix indicator in a fixed rail directly
+above the composer while the visible conversation is running. Scrolling the
+transcript does not move that rail. Waiting for user input and terminal settlement
+hide it; message bubbles retain reasoning, tool activity, and image-generation
+previews without duplicating the general progress indicator.
+
 The session drawer is a Dashboard REST consumer, not a Gateway-socket view.
 Profile-scoped session browsing and stored transcript reads remain available
 whenever the authenticated Dashboard route is available, including while the

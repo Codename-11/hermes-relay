@@ -21,6 +21,18 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 FOCUSED_TESTS = (
+    "com.hermesandroid.relay.data.ChatUnreadStoreTest",
+    "com.hermesandroid.relay.data.ChatTurnCheckpointStoreTest",
+    "com.hermesandroid.relay.notifications.ChatNotificationIntentTest",
+    "com.hermesandroid.relay.notifications.ReplyNotificationIdentityTest",
+    "com.hermesandroid.relay.notifications.TurnCompleteNotifierTest",
+    "com.hermesandroid.relay.notifications.InteractionRequestNotifierTest",
+    "com.hermesandroid.relay.ui.ChatNotificationNavigationTest",
+    "com.hermesandroid.relay.ui.ChatNotificationNavigationUiTest",
+    "com.hermesandroid.relay.viewmodel.ConnectionViewModelChatAlertsTest",
+    "com.hermesandroid.relay.screenshots.ChatComposerProgressScreenshotTest",
+    "com.hermesandroid.relay.screenshots.UnreadConversationsScreenshotTest",
+    "com.hermesandroid.relay.ui.components.ProfileShelfPolicyTest",
     "com.hermesandroid.relay.network.upstream.NativeDashboardAuthTest",
     "com.hermesandroid.relay.network.upstream.NativeDashboardCallbackRequestTest",
     "com.hermesandroid.relay.network.upstream.NativeDashboardSignInCoordinatorTest",

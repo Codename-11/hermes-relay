@@ -89,6 +89,9 @@ fun BotChatScreen(
     connectionViewModel: ConnectionViewModel,
     onBack: () -> Unit,
 ) {
+    LaunchedEffect(chatViewModel, connectionViewModel) {
+        chatViewModel.bindChatAlerts(connectionViewModel.notifyTurnComplete)
+    }
     val busyMessageAction by connectionViewModel.busyMessageAction.collectAsState()
     ChatMediaViewerHost(route.key, sessionId) {
         BotChatScreen(
@@ -138,6 +141,13 @@ internal fun BotChatScreen(
     val messages by handler.messages.collectAsState()
     val isStreaming by handler.isStreaming.collectAsState()
     val isLoading by chatViewModel.isLoadingHistory.collectAsState()
+    val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
+    val currentSession by handler.currentSessionId.collectAsState()
+    val completionReceipts by chatViewModel.completionReceipts.collectAsState()
+    LaunchedEffect(appForeground, route.key, currentSession, isLoading, completionReceipts) {
+        if (appForeground) chatViewModel.clearVisibleConversationNotifications()
+    }
+
     val error by handler.error.collectAsState()
     val iconPath by profileIconFlow(route.connectionId, route.profileName)
         .collectAsState(initial = null)

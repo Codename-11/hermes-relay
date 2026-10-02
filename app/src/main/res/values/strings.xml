@@ -4680,4 +4680,6 @@
     <string name="voice_streaming_stopped_basic_next">Streaming voice stopped. Remaining speech will use basic speech. Check the voice provider settings.</string>
     <string name="stats_tts_queue_wait">Audio queue wait</string>
     <string name="stats_tts_player_start">Player start delay</string>
+    <string name="chat_unread_reply">Unread reply</string>
+    <string name="chat_unread_conversations">Unread conversations: %1$d</string>
 </resources>
