@@ -123,6 +123,8 @@ class GatewayChatClient(
     private val sessionReadyTimeoutMs: Long = SESSION_READY_TIMEOUT_MS,
     /** Test seam — compaction idle lease. Production keeps [COMPACTING_TIMEOUT_MS]. */
     private val compactingTimeoutMs: Long = COMPACTING_TIMEOUT_MS,
+    /** Test seam — idle lease while a tool call is in flight. Production keeps [TOOL_IN_FLIGHT_TIMEOUT_MS]. */
+    private val toolInFlightTimeoutMs: Long = TOOL_IN_FLIGHT_TIMEOUT_MS,
     /** Random source for ordinary reconnect full-jitter. */
     private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
 ) : GatewayProfileEditorClient {
@@ -175,6 +177,18 @@ class GatewayChatClient(
          * [TURN_TIMEOUT_MS].
          */
         private const val COMPACTING_TIMEOUT_MS = 600_000L
+
+        /**
+         * The gateway emits NO events between `tool.start` and `tool.complete`,
+         * so a single healthy terminal/tool call that runs longer than
+         * [TURN_TIMEOUT_MS] would otherwise be killed by the idle watchdog's
+         * `session.interrupt`. While any tool call is in flight the watchdog
+         * arms this lease instead; the server enforces its own per-tool
+         * timeouts, and this matches the backend agent gateway timeout and
+         * [PROMPT_SUBMIT_REQUEST_TIMEOUT_MS] (1800s). `tool.complete` (or any
+         * other event) rearms the normal idle window once no tool is open.
+         */
+        private const val TOOL_IN_FLIGHT_TIMEOUT_MS = 1_800_000L
 
         private const val RPC_TIMEOUT_MS = 15_000L
         const val PROFILE_AVATAR_MAX_BYTES = 2_000_000
@@ -4615,6 +4629,9 @@ class GatewayChatClient(
                         retargetedThisTurn = false
                         POST_RETARGET_SETTLE_MS
                     } else {
+                        // The fresh socket will not replay a tool.complete that
+                        // landed during the gap; stop trusting stale in-flight state.
+                        turn.clearOpenTools()
                         turnIdleTimeoutMs
                     },
                 )
@@ -4849,12 +4866,17 @@ class GatewayChatClient(
     // ------------------------------------------------------------------
 
     /** Per-event idle-watchdog duration — asks block server-side with no events, so they arm longer. */
-    private fun watchdogTimeoutFor(eventType: String, payload: JsonObject? = null): Long = when {
+    private fun watchdogTimeoutFor(
+        eventType: String,
+        payload: JsonObject? = null,
+        toolInFlight: Boolean = false,
+    ): Long = when {
         eventType == "clarify.request" || eventType == "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
         eventType == "sudo.request" -> ASK_SUDO_TIMEOUT_MS
         eventType == "approval.request" -> ASK_UNBOUNDED_TIMEOUT_MS
         eventType == "status.update" &&
             payload?.stringField("kind") == "compacting" -> compactingTimeoutMs
+        toolInFlight -> maxOf(turnIdleTimeoutMs, toolInFlightTimeoutMs)
         else -> turnIdleTimeoutMs
     }
 
@@ -5007,7 +5029,7 @@ class GatewayChatClient(
                 handoffQueuedSuccessor()
             } else {
                 // Map first: native asks own their deadline, including across unrelated events.
-                armWatchdog(watchdogTimeoutFor(type, payload))
+                armWatchdog(watchdogTimeoutFor(type, payload, mapper.hasOpenTools))
             }
         }
 
@@ -5117,8 +5139,9 @@ class GatewayChatClient(
             }
         }
 
-        fun armWatchdog(timeoutMs: Long = turnIdleTimeoutMs) {
+        fun armWatchdog(timeoutMs: Long? = null) {
             disarmWatchdog()
+            val timeoutMs = timeoutMs ?: watchdogTimeoutFor("", null, mapper.hasOpenTools)
             if (mapper.currentInteraction?.serverRequest == true) return
             watchdog = scope.launch {
                 delay(timeoutMs)
@@ -5129,6 +5152,8 @@ class GatewayChatClient(
                 }
             }
         }
+
+        fun clearOpenTools() = mapper.clearOpenTools()
 
         fun disarmWatchdog() {
             watchdog?.cancel()

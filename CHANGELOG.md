@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
 - Desktop tray notices, screenshot evidence, and grant prompts stay reusable after dismissal; screenshot evidence keeps the most recently selected image. (#606)
 - Desktop computer screenshots attach validated image bytes to the host tool result instead of returning base64 as plain text.
+- Android no longer interrupts a healthy turn whose single tool call (for example a long terminal command) runs silently longer than the idle window; the watchdog now holds a longer lease while any tool call is in flight and resumes the normal idle timeout once it completes.
 
 ## [Android 1.18.1] - 2026-09-29
 
