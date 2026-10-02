@@ -8,6 +8,8 @@ import androidx.datastore.preferences.core.edit
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.hermesandroid.relay.data.relayDataStore
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertFalse
@@ -35,6 +37,18 @@ class ConnectionViewModelChatAlertsTest {
     @After fun tearDown() {
         store.clear()
         runBlocking { app.relayDataStore.edit { it.remove(key) } }
+    }
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @Test fun eagerProfileCollectionCannotObserveUninitializedTopology() {
+        kotlinx.coroutines.Dispatchers.setMain(kotlinx.coroutines.test.UnconfinedTestDispatcher())
+        try {
+            val vm = ConnectionViewModel(app).also { store.put("connection", it) }
+            org.junit.Assert.assertNull(vm.chatApiClient.value)
+        } finally {
+            store.clear()
+            kotlinx.coroutines.Dispatchers.resetMain()
+        }
     }
 
     @Test fun permissionGrantedAfterStartupRefreshesAbsentPreferenceOnResume() {

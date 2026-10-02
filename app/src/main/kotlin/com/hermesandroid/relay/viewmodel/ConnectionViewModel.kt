@@ -930,6 +930,12 @@ internal fun migratedBackgroundAvatar(
 
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
+    // Eager Main.immediate collectors can rebuild clients during construction.
+    // Their non-null topology input must exist before any collector starts.
+    private var topologyConnectionId: String? = null
+    private var topologyGatewayMode: String? = null
+    private var topologyProfiles: List<String> = emptyList()
+
     private val ctx: Context get() = getApplication()
 
     companion object {
@@ -5909,9 +5915,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
-    private var topologyConnectionId: String? = null
-    private var topologyGatewayMode: String? = null
-    private var topologyProfiles: List<String> = emptyList()
 
     fun selectedProfileUsesIsolatedApiRoute(): Boolean {
         val profile = profileController.selectedProfile.value ?: return false
