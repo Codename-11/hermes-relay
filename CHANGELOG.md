@@ -6,7 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Android marks unread completed conversations in the session drawer and shows unread conversation counts on profiles and the chat header.
+- Reply notifications show the owning agent's official profile name and cached avatar, plus the conversation title.
+
 ### Fixed
+
+- Android refreshes background-alert permission defaults after onboarding and keeps notification delivery tied to the original connection, profile, and conversation across navigation.
+- Replies from conversations left running get separate notification slots; opening one conversation preserves alerts from others.
+- Chat progress stays above the composer while scrolling and disappears when the turn finishes or waits for input.
 
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
 - Desktop tray notices, screenshot evidence, and grant prompts stay reusable after dismissal; screenshot evidence keeps the most recently selected image. (#606)

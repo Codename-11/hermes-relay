@@ -35,7 +35,7 @@ object InteractionRequestNotifier {
     private const val CHANNEL_NAME = "Hermes needs input"
     private const val GROUP_KEY = "gateway-interactions"
     internal const val NOTIFICATION_ID = 3823
-    internal const val DEFAULT_PROFILE_ROUTE_VALUE = "__server_default__"
+    internal const val DEFAULT_PROFILE_ROUTE_VALUE = ChatNotificationTarget.DEFAULT_PROFILE
 
     internal fun shouldPost(
         alertsEnabled: Boolean,
@@ -53,6 +53,9 @@ object InteractionRequestNotifier {
         ask: GatewayAsk,
         profile: String? = null,
     ): String = "gateway-interaction:${requestKey(sessionId, ask, profile)}"
+
+    private fun ownedRequestKey(target: ChatNotificationTarget, ask: GatewayAsk): String =
+        "${target.key}:${ask.kind.name}:${Uri.encode(ask.requestId ?: "session")}"
 
     internal fun chatRoute(sessionId: String, profile: String? = null): String =
         "chat?sessionId=${Uri.encode(sessionId)}&profile=${Uri.encode(profile ?: DEFAULT_PROFILE_ROUTE_VALUE)}"
@@ -106,14 +109,17 @@ object InteractionRequestNotifier {
         profile: String? = null,
         alertsEnabled: Boolean,
         appForeground: Boolean,
+        connectionId: String? = null,
     ): Boolean {
         ensureChannel(context)
         if (!shouldPost(alertsEnabled, appForeground, hasPostNotificationsPermission(context))) {
             return false
         }
 
-        val tag = notificationTag(sessionId, ask, profile)
-        val requestKey = requestKey(sessionId, ask, profile)
+        val target = connectionId?.let { ChatNotificationTarget(it, profile, sessionId) }
+        val requestKey = target?.let { ownedRequestKey(it, ask) }
+            ?: requestKey(sessionId, ask, profile)
+        val tag = "gateway-interaction:$requestKey"
         val requestCode = requestKey.hashCode()
         val tapIntent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -122,7 +128,7 @@ object InteractionRequestNotifier {
                 .authority("interaction")
                 .appendPath(requestKey)
                 .build()
-            putExtra(MainActivity.EXTRA_NAV_ROUTE, chatRoute(sessionId, profile))
+            putExtra(MainActivity.EXTRA_NAV_ROUTE, target?.route() ?: chatRoute(sessionId, profile))
         }
         val tapPending = PendingIntent.getActivity(
             context,
@@ -153,6 +159,7 @@ object InteractionRequestNotifier {
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(publicVersion)
             .setGroup(GROUP_KEY)
+            .addExtras(android.os.Bundle().apply { putString(ChatNotificationTarget.EXTRA_OWNER, target?.key) })
             .addAction(0, actionLabel(ask), tapPending)
             .build()
 
@@ -164,19 +171,29 @@ object InteractionRequestNotifier {
         }.getOrDefault(false)
     }
 
-    fun cancel(context: Context, sessionId: String, ask: GatewayAsk, profile: String? = null) {
+    fun cancel(context: Context, sessionId: String, ask: GatewayAsk, profile: String? = null, connectionId: String? = null) {
         runCatching {
             NotificationManagerCompat.from(context)
-                .cancel(notificationTag(sessionId, ask, profile), NOTIFICATION_ID)
+                .cancel(connectionId?.let {
+                    "gateway-interaction:${ownedRequestKey(ChatNotificationTarget(it, profile, sessionId), ask)}"
+                } ?: notificationTag(sessionId, ask, profile), NOTIFICATION_ID)
         }.onFailure {
             Log.w(TAG, "cancel failed", it)
         }
     }
 
+    fun cancelConversation(context: Context, target: ChatNotificationTarget) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        manager.activeNotifications.filter {
+            it.notification.channelId == CHANNEL_ID &&
+                it.notification.extras.getString(ChatNotificationTarget.EXTRA_OWNER) == target.key
+        }.forEach { manager.cancel(it.tag, it.id) }
+    }
+
     /**
      * Clear only this feature's notifications. Android keeps notifications
-     * across process death, so the active-notification scan is also used when
-     * MainActivity returns without an in-memory request registry.
+     * across process death. Only disabling alerts clears every conversation;
+     * foreground destinations use the exact-owner scan instead.
      */
     fun cancelAll(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return

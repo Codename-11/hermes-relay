@@ -239,6 +239,19 @@ class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fixture.scenario.live_session_id, resumed["session_id"])
         self.assertEqual(fixture.scenario.stored_session_id, resumed["stored_session_id"])
 
+    async def test_notification_terminal_outcomes_preserve_success_error_and_interrupt(self) -> None:
+        fixture, base_url = await self.start("notification_terminal_outcomes")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "session.create", {"profile": "default"})
+        await ws.receive_json()
+        for rpc_id, status in enumerate(("complete", "error", "interrupted"), 2):
+            await self.rpc(ws, rpc_id, "prompt.submit", {"text": "synthetic input"})
+            frames = await self.frames_until(
+                ws, lambda frame: frame.get("params", {}).get("type") == "message.complete",
+            )
+            self.assertEqual(status, frames[-1]["params"]["payload"]["status"])
+            self.assertEqual(fixture.scenario.live_session_id, frames[-1]["params"]["session_id"])
+
     async def test_ordinary_turn_persists_authoritative_history(self) -> None:
         fixture, base_url = await self.start("ordinary_turn")
         ws, _ = await self.connect(base_url)

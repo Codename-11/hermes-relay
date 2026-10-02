@@ -902,6 +902,19 @@ fun ChatScreen(
     val activityRecords by chatViewModel.activityRecords.collectAsState()
     val activityOwner by chatViewModel.conversationBinding.collectAsState()
     val activitySessionId by chatViewModel.currentSessionId.collectAsState()
+    val completionReceipts by chatViewModel.completionReceipts.collectAsState()
+    val unreadForConnection = remember(completionReceipts, activityOwner.contextKey) {
+        completionReceipts.filter {
+            it.unread && AgentDisplay.parseProfileContextKey(it.contextKey)?.connectionId ==
+                AgentDisplay.parseProfileContextKey(activityOwner.contextKey)?.connectionId
+        }
+    }
+    val unreadProfileCounts = remember(unreadForConnection) {
+        unreadForConnection.groupingBy {
+            requireNotNull(AgentDisplay.parseProfileContextKey(it.contextKey)).profileKey
+        }.eachCount()
+    }
+
     val receiptMessages = remember(rawMessages, activityRecords, activityOwner, activitySessionId, supervised, supervisedVisibility) {
         if (activityOwner.transport == com.hermesandroid.relay.data.SessionTransport.SSE ||
             (supervised && !supervisedVisibility.showWorkingStatus)
@@ -1237,6 +1250,9 @@ fun ChatScreen(
     // the foreground. setChatVisible owns that edge; an ordinary Gateway open
     // warms only the observation socket and never attaches a saved session.
     val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
+    LaunchedEffect(appForeground, activityOwner.contextKey, currentSessionId, isLoadingHistory, completionReceipts) {
+        if (appForeground) chatViewModel.clearVisibleConversationNotifications()
+    }
     LaunchedEffect(isGatewayTransport, appForeground, chatGatewayAvailability) {
         val visibleGatewayOwner = shouldOwnVisibleGateway(
             appForeground = appForeground,
@@ -1289,6 +1305,23 @@ fun ChatScreen(
     val thinkingIndicatorStyle by connectionViewModel.thinkingIndicatorStyle.collectAsState()
     val thinkingMatrixPattern by connectionViewModel.thinkingMatrixPattern.collectAsState()
     val thinkingMatrixColor by connectionViewModel.thinkingMatrixColor.collectAsState()
+    val thinkingIndicatorConfig = remember(
+        thinkingIndicatorStyle,
+        thinkingMatrixPattern,
+        thinkingMatrixColor,
+        animationEnabled,
+    ) {
+        ThinkingIndicatorConfig(
+            style = if (thinkingIndicatorStyle == "matrix") {
+                ThinkingIndicatorStyle.Matrix
+            } else {
+                ThinkingIndicatorStyle.Dots
+            },
+            pattern = ThinkingMatrixPattern.fromKey(thinkingMatrixPattern),
+            color = ThinkingMatrixColor.fromKey(thinkingMatrixColor),
+            animated = animationEnabled,
+        )
+    }
     val imageGenerationOrdinals = remember(messages) {
         var nextOrdinal = 0
         buildMap {
@@ -2459,6 +2492,7 @@ fun ChatScreen(
         presentation = profilePresentation,
         selectedProfileName = selectedProfile?.name,
         serverDefaultProfileName = serverDefaultDisplayProfile?.name,
+        unreadProfileKeys = unreadProfileCounts.keys,
     ).size > 1
     val profileSwitchEnabled = com.hermesandroid.relay.ui.components.ProfileShelfPolicy.canSwitch(
         isStreaming = isStreaming,
@@ -2580,6 +2614,11 @@ fun ChatScreen(
                 loadMoreFailed = sessionPageLoadFailed,
                 isOpen = drawerState.isOpen || isPinnedSidebar,
                 activityStates = sessionActivityStates,
+                unreadSessionIds = unreadForConnection.filter { it.contextKey == activityOwner.contextKey }
+                    .mapTo(mutableSetOf()) { it.sessionId },
+                unreadProfileSessions = unreadForConnection.mapTo(mutableSetOf()) {
+                    requireNotNull(AgentDisplay.parseProfileContextKey(it.contextKey)).profileKey to it.sessionId
+                },
                 animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
                 archiveSupported = sessionArchivingSupported,
@@ -3036,6 +3075,12 @@ fun ChatScreen(
                                     }
                                 }
                             }
+                            if (!supervised) {
+                                com.hermesandroid.relay.ui.components.UnreadConversationBadge(
+                                    count = unreadForConnection.size,
+                                    modifier = Modifier.align(Alignment.TopEnd),
+                                )
+                            }
                             if (!supervised || supervisedVisibility.showConnectionStatus) {
                                 ConnectionStatusBadge(
                                     isConnected = headerChatReady,
@@ -3248,6 +3293,7 @@ fun ChatScreen(
                     resolvedProfile = effectiveProfile,
                     presentation = profilePresentation,
                     activeDisplayName = globalSelectedAgentDisplayName,
+                    unreadCounts = unreadProfileCounts,
                     isProfileLocked = isProfileLocked,
                     lockedProfileName = lockedProfileName,
                     switchEnabled = profileSwitchEnabled,
@@ -3639,23 +3685,6 @@ fun ChatScreen(
                         if (supervised && !supervisedPolicy.capabilities.generatedImages) null
                         else RelayServerImageResolver { path -> chatViewModel.resolveServerImage(path) }
                     }
-                    val thinkingIndicatorConfig = remember(
-                        thinkingIndicatorStyle,
-                        thinkingMatrixPattern,
-                        thinkingMatrixColor,
-                        animationEnabled,
-                    ) {
-                        ThinkingIndicatorConfig(
-                            style = if (thinkingIndicatorStyle == "matrix") {
-                                ThinkingIndicatorStyle.Matrix
-                            } else {
-                                ThinkingIndicatorStyle.Dots
-                            },
-                            pattern = ThinkingMatrixPattern.fromKey(thinkingMatrixPattern),
-                            color = ThinkingMatrixColor.fromKey(thinkingMatrixColor),
-                            animated = animationEnabled,
-                        )
-                    }
                     CompositionLocalProvider(
                         LocalRelayServerImageResolver provides relayServerImageResolver,
                         LocalThinkingIndicator provides thinkingIndicatorConfig,
@@ -3810,6 +3839,7 @@ fun ChatScreen(
                                     showAgentIdentity = !supervised || supervisedVisibility.showAgentIdentity,
                                     showTimestamps = !supervised || supervisedVisibility.showTimestamps,
                                     showWorkingStatus = !supervised || supervisedVisibility.showWorkingStatus,
+                                    showStreamingStatus = false,
                                     showUsage = !supervised || supervisedVisibility.showUsage,
                                     showTechnicalBadges = !supervised || supervisedVisibility.showTechnicalRoute,
                                     showAssistantImages = !supervised || supervisedPolicy.capabilities.generatedImages,
@@ -4017,17 +4047,8 @@ fun ChatScreen(
                             }
                         }
 
-                        // NOTE: no standalone StreamingDots item here — the
-                        // streaming bubble already renders its own in-bubble
-                        // dots (MessageBubble), and a second indicator below
-                        // the bubble both read as a duplicate "typing" hint
-                        // and churned animateItem placement at the viewport
-                        // bottom on every delta (visible jitter at
-                        // gateway/token delta frequency). Same reason the
-                        // trailing spacer doesn't animateItem(): its position
-                        // shifts on every delta of the growing bubble above
-                        // it, and a constant 8dp gap gains nothing from
-                        // placement animation.
+                        // Progress belongs to the fixed composer rail. Keep the
+                        // trailing gap free of placement animation as rows grow.
                         item { Spacer(modifier = Modifier.height(8.dp)) }
                     }
                     } // CompositionLocalProvider(LocalRelayServerImageResolver)
@@ -4619,6 +4640,26 @@ fun ChatScreen(
                 )
             }
 
+            if (isStreaming && pendingAsk == null &&
+                (!supervised || supervisedVisibility.showWorkingStatus)
+            ) {
+                val progressLabel = stringResource(
+                    if (recoveringAnswer) R.string.msg_bubble_reconnecting
+                    else R.string.msg_bubble_still_working,
+                )
+                CompositionLocalProvider(LocalThinkingIndicator provides thinkingIndicatorConfig) {
+                    com.hermesandroid.relay.ui.components.ChatWorkingStatus(
+                        status = progressLabel,
+                        accessibilityDescription = progressLabel,
+                        textColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .testTag("chat-composer-progress"),
+                    )
+                }
+            }
+
             ChatInputBar(
                 busyAction = effectiveBusyAction.takeIf { isStreaming },
                 correctionAvailable = canSteerCurrentMessage,
@@ -5111,6 +5152,7 @@ fun ChatScreen(
             selectedProfile = selectedProfile,
             resolvedProfile = effectiveProfile,
             presentation = profilePresentation,
+            unreadCounts = unreadProfileCounts,
             isProfileLocked = isProfileLocked,
             switchEnabled = profileSwitchEnabled,
             onSelect = selectProfileFromShelf,

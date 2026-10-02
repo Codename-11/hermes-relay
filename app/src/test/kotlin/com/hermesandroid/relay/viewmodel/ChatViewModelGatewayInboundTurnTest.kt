@@ -158,6 +158,84 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun nativeClarifyBackgroundAlertReplaysResolvesAndCompletesWithLiveSettings() =
+        assertNativeClarifyAlerts(requestInForeground = false)
+
+    @Test
+    fun nativeClarifyForegroundRequestNotifiesOnlyAfterBackgrounding() =
+        assertNativeClarifyAlerts(requestInForeground = true)
+
+    private fun assertNativeClarifyAlerts(requestInForeground: Boolean) {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        val notifications = app.getSystemService(android.app.NotificationManager::class.java)
+        notifications.cancelAll()
+        @Suppress("UNCHECKED_CAST")
+        val foreground = com.hermesandroid.relay.util.AppForegroundTracker::class.java
+            .getDeclaredField("_isForeground").apply { isAccessible = true }
+            .get(null) as kotlinx.coroutines.flow.MutableStateFlow<Boolean>
+        val previousForeground = foreground.value
+        val alerts = kotlinx.coroutines.flow.MutableStateFlow(false)
+        try {
+            foreground.value = requestInForeground
+            viewModel.initializeGatewayOnly(app)
+            viewModel.setChatTurnCheckpointStore(MemoryCheckpointStore())
+            viewModel.switchProfileContext(AgentDisplay.profileContextKey("connection-a", null), STORED_SESSION_ID)
+            viewModel.bindChatAlerts(alerts)
+            // No composition is present. A permission/default refresh must still
+            // reach the delivery owner while Android has stopped drawing frames.
+            alerts.value = true
+            awaitCondition { viewModel.notifyOnTurnComplete }
+            viewModel.sendMessage("Ask Tea or Coffee")
+            gatewayHarness.awaitRpc("prompt.submit")
+            val frame = buildJsonObject {
+                put("jsonrpc", "2.0")
+                put("id", "srq-alert")
+                put("method", "clarify")
+                put("params", buildJsonObject {
+                    put("session_id", "live-resumed")
+                    put("question", "Tea or Coffee?")
+                })
+            }.toString()
+            serverWs.send(frame)
+            awaitCondition { viewModel.pendingAsk.value != null }
+            if (requestInForeground) assertTrue(notifications.activeNotifications.isEmpty())
+            foreground.value = false
+            awaitCondition { notifications.activeNotifications.size == 1 }
+            val posted = notifications.activeNotifications.single()
+            val tap = shadowOf(posted.notification.contentIntent).savedIntent
+            assertTrue(tap.getStringExtra(com.hermesandroid.relay.MainActivity.EXTRA_NAV_ROUTE)!!.contains(STORED_SESSION_ID))
+            serverWs.send(frame)
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(1, notifications.activeNotifications.size)
+
+            foreground.value = true
+            viewModel.clearVisibleConversationNotifications()
+            awaitCondition { notifications.activeNotifications.isEmpty() }
+            foreground.value = false
+            awaitCondition { notifications.activeNotifications.size == 1 }
+
+            alerts.value = false
+            awaitCondition { !viewModel.notifyOnTurnComplete && notifications.activeNotifications.isEmpty() }
+            alerts.value = true
+            awaitCondition { viewModel.notifyOnTurnComplete }
+            val pending = requireNotNull(viewModel.pendingAsk.value)
+            viewModel.answerAsk(pending.messageId, pending.cardKey, "Tea")
+            awaitCondition { viewModel.pendingAsk.value == null }
+            serverWs.send(gatewayHarness.eventFrame(
+                "message.complete", buildJsonObject { put("text", "Done") }, "live-resumed",
+            ))
+            awaitCondition { !handler.isStreaming.value && notifications.activeNotifications.any { it.id == 3822 } }
+            assertTrue(notifications.activeNotifications.none { it.id == 3823 })
+            alerts.value = false
+            awaitCondition { notifications.activeNotifications.isEmpty() }
+        } finally {
+            foreground.value = previousForeground
+            notifications.cancelAll()
+        }
+    }
+
+    @Test
     fun ordinaryProfileSwitchDoesNotInitializeModelCatalogAheadOfSessions() {
         val modelOptionsBefore = gatewayHarness.rpcLog.count { it.first == "model.options" }
 
@@ -2246,6 +2324,154 @@ class ChatViewModelGatewayInboundTurnTest {
             }
         }
         awaitCondition { !handler.isStreaming.value }
+    }
+
+    @Test
+    fun detachedCompletionNotifiesOriginalConversationWithoutChangingVisibleTurn() = detachedAlertCase()
+
+    @Test fun detachedErrorDoesNotPostSuccess() = detachedAlertCase(eventType = "error", successful = false)
+    @Test fun detachedFailedCompletionDoesNotPostSuccess() = detachedAlertCase(status = "error", successful = false)
+    @Test fun detachedInterruptedCompletionDoesNotPostSuccess() = detachedAlertCase(status = "interrupted", successful = false)
+    @Test fun profileSwitchRetainsOriginalCompletionOwner() = detachedAlertCase(switchProfile = true)
+    @Test fun foregroundSiblingCompletionLeavesUnreadWithoutSystemNotification() = detachedAlertCase(foreground = true)
+
+    private fun detachedAlertCase(
+        eventType: String = "message.complete",
+        status: String? = null,
+        successful: Boolean = true,
+        switchProfile: Boolean = false,
+        foreground: Boolean = false,
+    ) {
+        @Suppress("UNCHECKED_CAST")
+        val appForeground = com.hermesandroid.relay.util.AppForegroundTracker::class.java
+            .getDeclaredField("_isForeground").apply { isAccessible = true }
+            .get(null) as kotlinx.coroutines.flow.MutableStateFlow<Boolean>
+        val previousForeground = appForeground.value
+        appForeground.value = foreground
+        try {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        val notifications = app.getSystemService(android.app.NotificationManager::class.java)
+        notifications.cancelAll()
+        val contextKey = AgentDisplay.profileContextKey("connection-a", null)
+        viewModel.initializeGatewayOnly(app)
+        viewModel.setChatTurnCheckpointStore(MemoryCheckpointStore())
+        viewModel.switchProfileContext(contextKey, STORED_SESSION_ID)
+        var displayedProfile = Profile("research", "fixture", displayName = "Original Agent")
+        viewModel.setDisplayProfileProvider { displayedProfile }
+        handler.addSession(com.hermesandroid.relay.data.ChatSession(STORED_SESSION_ID, "Original conversation", null))
+        viewModel.sendMessage("Run task A")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(gatewayHarness.eventFrame("message.delta", buildJsonObject {
+            put("text", "Partial A")
+        }, "live-resumed"))
+        awaitCondition { handler.messages.value.any { it.content == "Partial A" } }
+        displayedProfile = Profile("writer", "fixture", displayName = "New Agent")
+        gatewayHarness.resumeLiveSessionIds["stored-session-b"] = "live-b"
+        if (switchProfile) {
+            viewModel.activateGatewayProfile(Profile(name = "other", model = "fixture"))
+            assertTrue(viewModel.openProfileSession("other", Profile(name = "other", model = "fixture"),
+                AgentDisplay.profileContextKey("connection-a", "other"), "stored-session-b"))
+        } else {
+            viewModel.switchSession("stored-session-b")
+        }
+        awaitCondition { !viewModel.isLoadingHistory.value }
+        viewModel.sendMessage("Run task B")
+        gatewayHarness.awaitRpcCount("prompt.submit", 2)
+        val leasesBefore = com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry.snapshot.value.activeTurnCount
+        serverWs.send(gatewayHarness.eventFrame(eventType, buildJsonObject {
+            put("text", "Task A complete")
+            status?.let { put("status", it) }
+            if (!successful) put("message", "Synthetic failure")
+        }, "live-resumed"))
+        awaitCondition { com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry.snapshot.value.activeTurnCount < leasesBefore }
+        if (successful) {
+            awaitCondition { viewModel.completionReceipts.value.any { it.contextKey == contextKey && it.sessionId == STORED_SESSION_ID && it.unread } }
+        }
+        if (successful && !foreground) {
+        awaitCondition { notifications.activeNotifications.any { it.id == 3822 } }
+        val alert = notifications.activeNotifications.single { it.id == 3822 }
+        assertEquals("Original Agent · Original conversation",
+            alert.notification.extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString())
+        val route = shadowOf(alert.notification.contentIntent).savedIntent
+            .getStringExtra(com.hermesandroid.relay.MainActivity.EXTRA_NAV_ROUTE)!!
+        assertTrue(route.contains("connectionId=connection-a"))
+        assertTrue(route.contains("sessionId=$STORED_SESSION_ID"))
+        assertTrue(route.contains("profile=__server_default__"))
+        // Duplicate/late completion cannot consume B or replace A's owner.
+        serverWs.send(gatewayHarness.eventFrame("message.complete", buildJsonObject { put("text", "duplicate") }, "live-resumed"))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(1, notifications.activeNotifications.count { it.id == 3822 })
+        } else {
+            assertTrue(notifications.activeNotifications.none { it.id == 3822 })
+        }
+        assertEquals("stored-session-b", handler.currentSessionId.value)
+        assertTrue(handler.isStreaming.value)
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
+        if (successful && foreground) {
+            assertTrue(notifications.activeNotifications.isEmpty())
+            // Rendering B must not clear A. Reopening exactly A does.
+            viewModel.clearVisibleConversationNotifications()
+            assertTrue(viewModel.completionReceipts.value.any { it.sessionId == STORED_SESSION_ID && it.unread })
+            viewModel.switchSession(STORED_SESSION_ID)
+            awaitCondition { !viewModel.isLoadingHistory.value }
+            viewModel.clearVisibleConversationNotifications()
+            awaitCondition { viewModel.completionReceipts.value.none { it.sessionId == STORED_SESSION_ID && it.unread } }
+        }
+        notifications.cancelAll()
+        } finally {
+            appForeground.value = previousForeground
+        }
+    }
+
+    @Test
+    fun replyDeliveryKeepsProtectionUntilLocalReceiptAndNotificationFinish() {
+        val app = org.robolectric.RuntimeEnvironment.getApplication()
+        shadowOf(app).grantPermissions(android.Manifest.permission.POST_NOTIFICATIONS)
+        val notifications = app.getSystemService(android.app.NotificationManager::class.java)
+        notifications.cancelAll()
+        val writeStarted = CompletableDeferred<Unit>()
+        val releaseWrite = CompletableDeferred<Unit>()
+        val prefs = kotlinx.coroutines.flow.MutableStateFlow<androidx.datastore.preferences.core.Preferences>(
+            androidx.datastore.preferences.core.emptyPreferences())
+        val dataStore = object : androidx.datastore.core.DataStore<androidx.datastore.preferences.core.Preferences> {
+            override val data = prefs
+            override suspend fun updateData(transform: suspend (androidx.datastore.preferences.core.Preferences) -> androidx.datastore.preferences.core.Preferences): androidx.datastore.preferences.core.Preferences {
+                writeStarted.complete(Unit)
+                releaseWrite.await()
+                return transform(prefs.value).also { prefs.value = it }
+            }
+        }
+        val leasesBefore = com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry.snapshot.value.activeTurnCount
+        viewModel.initializeGatewayOnly(app)
+        viewModel.setChatTurnCheckpointStore(MemoryCheckpointStore())
+        viewModel.javaClass.getDeclaredField("chatUnreadStore").apply { isAccessible = true }
+            .set(viewModel, com.hermesandroid.relay.data.ChatUnreadStore(dataStore))
+        viewModel.switchProfileContext(AgentDisplay.profileContextKey("delivery-test-connection", null), STORED_SESSION_ID)
+        viewModel.sendMessage("Complete safely")
+        gatewayHarness.awaitRpc("prompt.submit")
+        serverWs.send(gatewayHarness.eventFrame("message.complete", buildJsonObject { put("text", "Done") }, "live-resumed"))
+        awaitCondition { writeStarted.isCompleted && !handler.isStreaming.value }
+        assertEquals(leasesBefore + 1, com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry.snapshot.value.activeTurnCount)
+        assertTrue(notifications.activeNotifications.isEmpty())
+        releaseWrite.complete(Unit)
+        awaitCondition { notifications.activeNotifications.any { it.id == 3822 } }
+        awaitCondition { com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry.snapshot.value.activeTurnCount == leasesBefore }
+        notifications.cancelAll()
+    }
+
+    @Test
+    fun openingNotificationForCurrentConversationPreservesNewRunningTurn() {
+        val contextKey = AgentDisplay.profileContextKey("connection-a", null)
+        viewModel.switchProfileContext(contextKey, STORED_SESSION_ID)
+        viewModel.sendMessage("Keep working")
+        gatewayHarness.awaitRpc("prompt.submit")
+        assertTrue(viewModel.openProfileSession(null, null, contextKey, STORED_SESSION_ID))
+        assertTrue(handler.isStreaming.value)
+        assertTrue(gatewayClient.hasActiveTurnForSession(STORED_SESSION_ID))
+        serverWs.send(gatewayHarness.eventFrame("message.complete", buildJsonObject { put("text", "Done") }, "live-resumed"))
+        awaitCondition { !handler.isStreaming.value }
+        assertTrue(gatewayHarness.rpcLog.none { it.first == "session.interrupt" })
     }
 
     @Test

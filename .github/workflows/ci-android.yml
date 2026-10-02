@@ -196,6 +196,18 @@ jobs:
             --tests com.hermesandroid.relay.data.AppLanguageTest \
             --tests com.hermesandroid.relay.viewmodel.ChatStreamRecoveryTest \
             --tests com.hermesandroid.relay.viewmodel.ChatViewModelGatewayInboundTurnTest \
+            --tests com.hermesandroid.relay.data.ChatUnreadStoreTest \
+            --tests com.hermesandroid.relay.data.ChatTurnCheckpointStoreTest \
+            --tests com.hermesandroid.relay.notifications.ChatNotificationIntentTest \
+            --tests com.hermesandroid.relay.notifications.ReplyNotificationIdentityTest \
+            --tests com.hermesandroid.relay.notifications.TurnCompleteNotifierTest \
+            --tests com.hermesandroid.relay.notifications.InteractionRequestNotifierTest \
+            --tests com.hermesandroid.relay.ui.ChatNotificationNavigationTest \
+            --tests com.hermesandroid.relay.ui.ChatNotificationNavigationUiTest \
+            --tests com.hermesandroid.relay.viewmodel.ConnectionViewModelChatAlertsTest \
+            --tests com.hermesandroid.relay.screenshots.ChatComposerProgressScreenshotTest \
+            --tests com.hermesandroid.relay.screenshots.UnreadConversationsScreenshotTest \
+            --tests com.hermesandroid.relay.ui.components.ProfileShelfPolicyTest \
             --tests com.hermesandroid.relay.viewmodel.VoiceInboundCompletionTest \
             --tests com.hermesandroid.relay.voice.VoiceViewModelBargeInTest \
             --tests com.hermesandroid.relay.voice.VoiceOutputFallbackTest \

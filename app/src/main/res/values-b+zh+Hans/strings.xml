@@ -4546,4 +4546,6 @@
     <string name="voice_streaming_stopped_basic_next">流式语音已停止。剩余内容将使用基础语音。请检查语音提供商设置。</string>
     <string name="stats_tts_queue_wait">音频队列等待时间</string>
     <string name="stats_tts_player_start">播放器启动延迟</string>
+    <string name="chat_unread_reply">未读回复</string>
+    <string name="chat_unread_conversations">未读对话：%1$d</string>
 </resources>

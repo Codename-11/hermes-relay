@@ -845,9 +845,13 @@ class ProfileController(
             expectedContextKey != null &&
             AgentDisplay.profileContextKey(connectionId, profileName) != expectedContextKey
         ) return false
-        return dashboardClientFactory(connectionId, dashboardUrl)
-            .deleteSession(sessionId, profileName)
-            .isSuccess
+        val deleted = dashboardClientFactory(connectionId, dashboardUrl)
+            .deleteSession(sessionId, profileName).isSuccess
+        if (deleted) runCatching {
+            com.hermesandroid.relay.data.ChatUnreadStore(context)
+                .markRead(AgentDisplay.profileContextKey(connectionId, profileName), sessionId)
+        }
+        return deleted
     }
 
     suspend fun renameSession(
@@ -929,9 +933,14 @@ class ProfileController(
     suspend fun deleteProfileScopedSession(sessionId: String): Boolean {
         val connectionId = activeConnectionId.value ?: return false
         val dashboardUrl = activeDashboardUrlProvider() ?: return false
-        return dashboardClientFactory(connectionId, dashboardUrl)
-            .deleteSession(sessionId, resolveSessionProfileName())
-            .isSuccess
+        val profileName = resolveSessionProfileName()
+        val deleted = dashboardClientFactory(connectionId, dashboardUrl)
+            .deleteSession(sessionId, profileName).isSuccess
+        if (deleted) runCatching {
+            com.hermesandroid.relay.data.ChatUnreadStore(context)
+                .markRead(AgentDisplay.profileContextKey(connectionId, profileName), sessionId)
+        }
+        return deleted
     }
 
     suspend fun renameProfileScopedSession(sessionId: String, title: String): Boolean {

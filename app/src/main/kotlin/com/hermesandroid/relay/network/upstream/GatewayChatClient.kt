@@ -4245,6 +4245,9 @@ class GatewayChatClient(
                             liveSessionId = eventSessionId,
                             profile = backgroundTurn.profile,
                             expectedAssistantText = expectedText,
+                            successful = type == "message.complete" &&
+                                payload?.stringField("status")?.lowercase() !in
+                                    setOf("error", "interrupted", "cancelled", "canceled"),
                         ),
                     )
                 }
@@ -4334,6 +4337,9 @@ class GatewayChatClient(
                             liveSessionId = eventSessionId,
                             profile = liveSessionProfile,
                             expectedAssistantText = expectedText,
+                            successful = type == "message.complete" &&
+                                payload?.stringField("status")?.lowercase() !in
+                                    setOf("error", "interrupted", "cancelled", "canceled"),
                         ),
                     )
                 }

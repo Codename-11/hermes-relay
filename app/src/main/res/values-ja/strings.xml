@@ -4617,4 +4617,6 @@
     <string name="voice_streaming_stopped_basic_next">ストリーミング音声が停止しました。残りは基本音声を使用します。音声プロバイダーの設定を確認してください。</string>
     <string name="stats_tts_queue_wait">音声キューの待機時間</string>
     <string name="stats_tts_player_start">プレーヤーの開始遅延</string>
+    <string name="chat_unread_reply">未読の返信</string>
+    <string name="chat_unread_conversations">未読の会話: %1$d</string>
 </resources>

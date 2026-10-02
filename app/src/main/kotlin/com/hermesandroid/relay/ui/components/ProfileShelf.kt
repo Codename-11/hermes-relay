@@ -84,6 +84,7 @@ object ProfileShelfPolicy {
         presentation: ProfilePresentation,
         selectedProfileName: String?,
         serverDefaultProfileName: String? = null,
+        unreadProfileKeys: Set<String> = emptySet(),
     ): List<ProfileChoice> {
         val selectedKey = AgentDisplay.profileSessionKey(selectedProfileName)
         val choices = ProfilePresentationPolicy
@@ -105,7 +106,7 @@ object ProfileShelfPolicy {
         } else {
             serverDefaultProfileName
         }
-        return choices.filterNot { it.key == omittedKey }
+        return if (omittedKey in unreadProfileKeys) choices else choices.filterNot { it.key == omittedKey }
     }
 
     fun canSwitch(isStreaming: Boolean, streamingEndpoint: String): Boolean =
@@ -138,10 +139,11 @@ fun ProfileShelf(
     onUnlock: () -> Unit,
     onHide: (String?) -> Unit,
     modifier: Modifier = Modifier,
+    unreadCounts: Map<String, Int> = emptyMap(),
 ) {
     val serverDefaultProfile by connectionViewModel.serverDefaultDisplayProfile.collectAsState()
-    val choices = remember(profiles, presentation, selectedProfile?.name, serverDefaultProfile) {
-        ProfileShelfPolicy.choices(profiles, presentation, selectedProfile?.name, serverDefaultProfile?.name)
+    val choices = remember(profiles, presentation, selectedProfile?.name, serverDefaultProfile, unreadCounts) {
+        ProfileShelfPolicy.choices(profiles, presentation, selectedProfile?.name, serverDefaultProfile?.name, unreadCounts.keys)
     }
     if (choices.size <= 1) return
 
@@ -170,7 +172,9 @@ fun ProfileShelf(
                 ) {
                     choices.forEach { choice ->
                         val selected = ProfileShelfPolicy.isSelected(choice, selectedProfile?.name)
-                        val label = if (selected) {
+                        val label = if (choice.isServerDefault && serverDefaultProfile != null && choices.any { it.profile?.name == serverDefaultProfile?.name }) {
+                            stringResource(R.string.conn_info_server_default)
+                        } else if (selected) {
                             activeDisplayName
                         } else {
                             profileChoiceLabel(choice, serverDefaultProfile)
@@ -219,6 +223,7 @@ fun ProfileShelf(
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                         )
+                                        UnreadConversationBadge(unreadCounts[choice.key] ?: 0)
                                         Icon(
                                             Icons.AutoMirrored.Filled.KeyboardArrowRight,
                                             contentDescription = null,
@@ -234,7 +239,6 @@ fun ProfileShelf(
                             Box(
                                 modifier = Modifier
                                     .size(48.dp)
-                                    .clip(CircleShape)
                                     .combinedClickable(
                                         enabled = true,
                                         role = Role.Button,
@@ -258,6 +262,8 @@ fun ProfileShelf(
                                     label,
                                     36,
                                 )
+                                UnreadConversationBadge(unreadCounts[choice.key] ?: 0,
+                                    Modifier.align(Alignment.TopEnd))
                             }
                         }
                     }
@@ -334,10 +340,11 @@ fun ProfileSwitcherSheet(
     onSelect: (Profile?) -> Unit,
     onManageDisplay: () -> Unit,
     onDismiss: () -> Unit,
+    unreadCounts: Map<String, Int> = emptyMap(),
 ) {
     val serverDefaultProfile by connectionViewModel.serverDefaultDisplayProfile.collectAsState()
-    val choices = remember(profiles, presentation, selectedProfile?.name, serverDefaultProfile) {
-        ProfileShelfPolicy.choices(profiles, presentation, selectedProfile?.name, serverDefaultProfile?.name)
+    val choices = remember(profiles, presentation, selectedProfile?.name, serverDefaultProfile, unreadCounts) {
+        ProfileShelfPolicy.choices(profiles, presentation, selectedProfile?.name, serverDefaultProfile?.name, unreadCounts.keys)
     }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -366,7 +373,9 @@ fun ProfileSwitcherSheet(
             }
             choices.forEach { choice ->
                 val selected = ProfileShelfPolicy.isSelected(choice, selectedProfile?.name)
-                val label = profileChoiceLabel(choice, serverDefaultProfile)
+                val label = if (choice.isServerDefault && serverDefaultProfile != null &&
+                    choices.any { it.profile?.name == serverDefaultProfile?.name }
+                ) stringResource(R.string.conn_info_server_default) else profileChoiceLabel(choice, serverDefaultProfile)
                 val target = if (choice.isServerDefault) serverDefaultProfile else choice.profile
                 val defaultGroup = serverDefaultProfile != null &&
                     (choice.isServerDefault || choice.key == serverDefaultProfile?.name)
@@ -396,11 +405,14 @@ fun ProfileSwitcherSheet(
                     leadingContent = {
                         ProfileChoiceAvatar(connectionViewModel, choice, serverDefaultProfile, label, 42)
                     },
-                    trailingContent = if (selected) {
-                        { Icon(Icons.Filled.Check, contentDescription = null) }
-                    } else {
-                        null
-                    },
+                    trailingContent = if (selected || (unreadCounts[choice.key] ?: 0) > 0) {
+                        {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                UnreadConversationBadge(unreadCounts[choice.key] ?: 0)
+                                if (selected) Icon(Icons.Filled.Check, contentDescription = null)
+                            }
+                        }
+                    } else null,
                 )
                 if (defaultGroup && selected) {
                     Row(
