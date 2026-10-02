@@ -124,6 +124,23 @@ class GatewayEventMapper(
      */
     private val generatingIdsByName = mutableMapOf<String, ArrayDeque<String>>()
 
+    /**
+     * Tool calls that have emitted `tool.start` but not yet `tool.complete`,
+     * id -> name. The gateway is silent while a single tool runs, so the
+     * client's idle watchdog consults this to avoid interrupting a healthy
+     * long-running tool.
+     */
+    private val openToolNames = LinkedHashMap<String, String>()
+
+    /** True while at least one tool call is running server-side. */
+    val hasOpenTools: Boolean
+        @Synchronized get() = openToolNames.isNotEmpty()
+
+    /** Forget in-flight tools whose completion can no longer be observed (reconnect). */
+    @Synchronized fun clearOpenTools() {
+        openToolNames.clear()
+    }
+
     @Synchronized fun onEvent(type: String, payload: JsonObject?) {
         if (turnEnded) return
 
@@ -264,6 +281,7 @@ class GatewayEventMapper(
                     ?: payload.string("args_text")
                     ?.takeIf { it.isNotBlank() }
                     ?: payload.string("context")?.takeIf { it.isNotBlank() }
+                openToolNames[toolId] = name
                 callbacks.onToolCallStart(toolId, name, argsPreview)
             }
 
@@ -272,7 +290,14 @@ class GatewayEventMapper(
                 val name = payload.effectiveToolIdentity().name
                 val toolId = payload.string("tool_id")
                     ?: openSyntheticIdsByName[name]?.removeFirstOrNull()
-                    ?: return
+                if (toolId != null) {
+                    openToolNames.remove(toolId)
+                } else {
+                    // Unmatched complete: still retire the oldest open call of that name.
+                    openToolNames.entries.firstOrNull { it.value == name }
+                        ?.let { openToolNames.remove(it.key) }
+                    return
+                }
                 val error = payload.string("error")
                 if (!error.isNullOrEmpty()) {
                     callbacks.onToolCallFailed(toolId, error)

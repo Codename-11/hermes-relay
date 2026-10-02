@@ -1108,6 +1108,7 @@ class GatewayChatClientTest {
         turnIdleTimeoutMs: Long = 180_000L,
         sessionReadyTimeoutMs: Long = 300_000L,
         compactingTimeoutMs: Long = 600_000L,
+        toolInFlightTimeoutMs: Long = 1_800_000L,
         callbackDispatcher: (block: () -> Unit) -> Unit = { it() },
         ticketTimeoutMs: Long = 8_000L,
     ) = GatewayChatClient(
@@ -1131,6 +1132,7 @@ class GatewayChatClientTest {
         turnIdleTimeoutMs = turnIdleTimeoutMs,
         sessionReadyTimeoutMs = sessionReadyTimeoutMs,
         compactingTimeoutMs = compactingTimeoutMs,
+        toolInFlightTimeoutMs = toolInFlightTimeoutMs,
     )
 
     private fun awaitCondition(
@@ -1170,6 +1172,7 @@ class GatewayChatClientTest {
         turnIdleTimeoutMs: Long = 180_000L,
         sessionReadyTimeoutMs: Long = 300_000L,
         compactingTimeoutMs: Long = 600_000L,
+        toolInFlightTimeoutMs: Long = 1_800_000L,
         ticketTimeoutMs: Long = 8_000L,
     ) {
         client.shutdown()
@@ -1180,6 +1183,7 @@ class GatewayChatClientTest {
             turnIdleTimeoutMs = turnIdleTimeoutMs,
             sessionReadyTimeoutMs = sessionReadyTimeoutMs,
             compactingTimeoutMs = compactingTimeoutMs,
+            toolInFlightTimeoutMs = toolInFlightTimeoutMs,
             ticketTimeoutMs = ticketTimeoutMs,
         )
     }
@@ -5634,6 +5638,116 @@ class GatewayChatClientTest {
         )
 
         assertTrue("ordinary watchdog never fired", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue("expected a stream error from the watchdog", r.errors.isNotEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+        harness.awaitRpc("session.interrupt")
+    }
+
+    @Test
+    fun `silent in-flight tool call is not interrupted by the idle watchdog`() {
+        rebuildClient(turnIdleTimeoutMs = 250L, toolInFlightTimeoutMs = 5_000L)
+        val r = Recorder()
+        client.sendTurn(null, "long tool", null, r.callbacks) { r.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        serverWs.send(
+            harness.eventFrame(
+                "tool.start",
+                buildJsonObject { put("tool_id", "t1"); put("name", "terminal") },
+                "live-1",
+            ),
+        )
+        // Silence well past the ordinary idle window while the tool runs.
+        Thread.sleep(800)
+
+        assertTrue("idle watchdog fired during a running tool: ${r.errors}", r.errors.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+
+        serverWs.send(
+            harness.eventFrame(
+                "tool.complete",
+                buildJsonObject { put("tool_id", "t1"); put("name", "terminal") },
+                "live-1",
+            ),
+        )
+        serverWs.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "done") }, "live-1"))
+        assertTrue("turn never completed", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(r.errors.isEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun `ordinary idle watchdog applies again after the tool completes`() {
+        rebuildClient(turnIdleTimeoutMs = 300L, toolInFlightTimeoutMs = 30_000L)
+        val r = Recorder()
+        client.sendTurn(null, "tool then stall", null, r.callbacks) { r.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        serverWs.send(
+            harness.eventFrame(
+                "tool.start",
+                buildJsonObject { put("tool_id", "t1"); put("name", "terminal") },
+                "live-1",
+            ),
+        )
+        Thread.sleep(600)
+        assertTrue("fired while tool in flight: ${r.errors}", r.errors.isEmpty())
+
+        serverWs.send(
+            harness.eventFrame(
+                "tool.complete",
+                buildJsonObject { put("tool_id", "t1"); put("name", "terminal") },
+                "live-1",
+            ),
+        )
+        // No further events: the normal idle window must now fail the turn.
+        assertTrue("ordinary watchdog never fired after tool.complete", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue("expected a stream error from the watchdog", r.errors.isNotEmpty())
+        harness.awaitRpc("session.interrupt")
+    }
+
+    @Test
+    fun `watchdog stays armed until every parallel tool call completes`() {
+        rebuildClient(turnIdleTimeoutMs = 300L, toolInFlightTimeoutMs = 30_000L)
+        val r = Recorder()
+        client.sendTurn(null, "two tools", null, r.callbacks) { r.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        for (id in listOf("t1", "t2")) {
+            serverWs.send(
+                harness.eventFrame(
+                    "tool.start",
+                    buildJsonObject { put("tool_id", id); put("name", "terminal") },
+                    "live-1",
+                ),
+            )
+        }
+        serverWs.send(
+            harness.eventFrame(
+                "tool.complete",
+                buildJsonObject { put("tool_id", "t1"); put("name", "terminal") },
+                "live-1",
+            ),
+        )
+        Thread.sleep(700)
+        assertTrue("fired with t2 still running: ${r.errors}", r.errors.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun `dead turn with no tool in flight still times out despite a long tool lease`() {
+        rebuildClient(turnIdleTimeoutMs = 300L, toolInFlightTimeoutMs = 30_000L)
+        val r = Recorder()
+        client.sendTurn(null, "dead turn", null, r.callbacks) { r.preflightFailures += it }
+        val serverWs = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        serverWs.send(harness.eventFrame("message.delta", buildJsonObject { put("text", "partial") }, "live-1"))
+
+        assertTrue("watchdog never fired", r.completeLatch.await(5, TimeUnit.SECONDS))
         assertTrue("expected a stream error from the watchdog", r.errors.isNotEmpty())
         assertTrue(r.preflightFailures.isEmpty())
         harness.awaitRpc("session.interrupt")
