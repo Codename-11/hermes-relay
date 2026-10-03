@@ -207,6 +207,10 @@
     <string name="cd_remove">Remove</string>
     <string name="cd_cancel_editing">Cancel editing</string>
     <string name="cd_select_model">Select model</string>
+    <string name="chat_text_scale_description" translatable="false">Chat messages. Pinch to resize assistant text.</string>
+    <string name="chat_text_scale_increase" translatable="false">Increase assistant text size</string>
+    <string name="chat_text_scale_decrease" translatable="false">Decrease assistant text size</string>
+    <string name="chat_text_scale_reset" translatable="false">Reset assistant text size</string>
     <string name="chat_camera_perm_needed">Camera permission needed to take a photo</string>
 
     <!-- ConnectionViewModel status -->
