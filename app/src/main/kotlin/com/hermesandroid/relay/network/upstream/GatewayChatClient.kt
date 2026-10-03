@@ -251,16 +251,6 @@ class GatewayChatClient(
          */
         private const val MAX_MIDTURN_REJOIN_MS = 20_000L
 
-        /**
-         * After a route RETARGET (LAN⇄Tailscale mid-turn), the fresh socket
-         * can't pick up the in-flight turn's events — upstream `session.resume`
-         * doesn't reattach to a running turn. So arm a SHORT settle on the
-         * reconnect: if nothing flows we fail fast and the post-turn reconcile
-         * recovers the server's answer, instead of waiting the full turn
-         * watchdog. Any live event resets it back to the normal timeout.
-         */
-        private const val POST_RETARGET_SETTLE_MS = 30_000L
-
         private const val DEFAULT_COLS = 80
 
         private object MainThreadDispatcher : (() -> Unit) -> Unit {
@@ -1032,7 +1022,7 @@ class GatewayChatClient(
         }
     }
 
-    /** Set by [retarget] so the rejoin arms the short post-retarget settle once. */
+    /** Set by [retarget] so mid-turn rejoin can log that the reconnect followed a route change. */
     @Volatile
     private var retargetedThisTurn = false
 
@@ -4601,23 +4591,21 @@ class GatewayChatClient(
                 // Keep the in-flight session id so the running turn's events
                 // (tagged with the OLD id) keep matching. No session.resume.
                 if (preservedLiveId != null) liveSessionId = preservedLiveId
+                val afterRetarget = retargetedThisTurn
+                if (afterRetarget) retargetedThisTurn = false
                 Log.i(
                     TAG,
                     "Gateway socket rejoined mid-turn (session=$storedSessionId) — " +
-                        "rebound live session, awaiting tail",
+                        "rebound live session, awaiting tail" +
+                        if (afterRetarget) " (post-retarget; full idle watchdog, no server interrupt)" else "",
                 )
-                // A reconnect that followed a route RETARGET gets a short settle
-                // (the fresh socket won't replay the in-flight turn); a normal
-                // blip-rejoin keeps the full turn watchdog. A live event resets
-                // either back to the per-event timeout.
-                turn.armWatchdog(
-                    if (retargetedThisTurn) {
-                        retargetedThisTurn = false
-                        POST_RETARGET_SETTLE_MS
-                    } else {
-                        turnIdleTimeoutMs
-                    },
-                )
+                // Always the full idle watchdog after rejoin — including route
+                // retarget (LAN⇄Tailscale). A short post-retarget settle that
+                // called session.interrupt killed live model waits and the host
+                // mislabeled them as user_stop. Agent owns run/retry; client
+                // only fails the local stream if silence exceeds the idle cap.
+                // Any live event rearms via onEvent.
+                turn.armWatchdog(turnIdleTimeoutMs)
                 return
             }
             delay(fullJitterDelayMs(backoffMs, reconnectJitterUnit()))
@@ -5123,8 +5111,15 @@ class GatewayChatClient(
             watchdog = scope.launch {
                 delay(timeoutMs)
                 if (!ended) {
-                    Log.w(TAG, "Gateway turn timed out after ${timeoutMs}ms")
-                    interruptServerSide()
+                    // Client-local only: do NOT session.interrupt. Idle silence
+                    // (or post-retarget quiet) is not a user Stop — killing the
+                    // server turn aborted live provider waits and host-logged
+                    // them as user_stop / "explicit stop requested".
+                    Log.w(
+                        TAG,
+                        "Gateway turn idle watchdog fired after ${timeoutMs}ms " +
+                            "(reason=idle_watchdog; server interrupt=false)",
+                    )
                     failFromTransport("Gateway turn timed out")
                 }
             }
@@ -5158,7 +5153,9 @@ class GatewayChatClient(
                 armCancelledTurnDrain(terminalRequired = started)
                 activeTurn = null
             }
-            interruptServerSide()
+            // Real user Stop (or explicit cancelStream) — this is the only
+            // path that should ask the gateway to abort the running turn.
+            interruptServerSide(reason = "user_stop")
         }
 
         override fun detach() {
@@ -5169,11 +5166,18 @@ class GatewayChatClient(
             if (activeTurn === this) activeTurn = null
         }
 
-        private fun interruptServerSide() {
+        private fun interruptServerSide(reason: String) {
             val sid = liveSessionId ?: return
+            Log.i(
+                TAG,
+                "session.interrupt requested reason=$reason session_id=$sid",
+            )
             scope.launch {
                 // Best-effort: unblocks the server (also releases blocked
                 // interactive asks). Failure is fine — socket may be gone.
+                // Wire contract currently forbids extra keys on
+                // session.interrupt — reason is log-only until the host
+                // accepts a reason/source field.
                 rpc("session.interrupt", buildJsonObject { put("session_id", sid) })
             }
         }
