@@ -43,6 +43,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.net.URI
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 
@@ -301,10 +302,24 @@ class ConnectionManager(
     private var networkLossJob: kotlinx.coroutines.Job? = null
 
     /**
+     * Deferred demotion when re-resolve preferred a lower-priority winner but
+     * hysteresis kept the higher-priority [activeEndpoint]. VPN/cell
+     * `onAvailable` often cancels [networkLossJob] before
+     * [sustainedLossDeclared] flips (Tailscale tun churn on leave-home), so
+     * without this latch a dead LAN Secure Link stays published forever while
+     * Tailscale already probed healthy — relay stays at `clients: 0` even
+     * though chat later recovers via [refreshActiveEndpoint] (no hysteresis).
+     * Cancelled when a same/higher-priority route publishes or on teardown.
+     */
+    private var activeRouteDemotionJob: kotlinx.coroutines.Job? = null
+
+    /**
      * Set when a network loss outlives [NETWORK_LOSS_GRACE_MS] — only then may
      * a re-resolve switch DOWN to a lower-priority endpoint. Prevents a
      * transient probe miss (Wi-Fi settling) from switching routes and
      * cancelling an in-flight turn. Cleared once a resolution is published.
+     * Also set by [scheduleActiveRouteDemotionIfNeeded] after the same grace
+     * when a lower-priority winner stayed available.
      */
     @Volatile
     private var sustainedLossDeclared = false
@@ -357,6 +372,36 @@ class ConnectionManager(
         // successful onOpen, so recovery is never gated on the slow interval.
         private const val SLOW_POLL_AFTER_ATTEMPTS = 20
         private const val SLOW_POLL_BACKOFF_MS = 300_000L
+
+        /**
+         * Plain `ws://` is allowed without the insecure-mode toggle when the
+         * host is loopback, RFC1918/link-local, Tailscale CGNAT (100.64/10),
+         * or MagicDNS (`.ts.net`). Matches [ConnectionSecurity]'s overlay
+         * model: tailnet/LAN plaintext is WireGuard- or physically-local
+         * encrypted, not a public cleartext hop.
+         */
+        internal fun isTrustedOverlayPlainWebSocketUrl(url: String): Boolean {
+            val host = runCatching { URI(url.trim()).host }
+                .getOrNull()
+                ?.lowercase()
+                ?.removePrefix("[")
+                ?.removeSuffix("]")
+                ?.takeIf { it.isNotBlank() }
+                ?: return false
+            if (host == "localhost" || host == "127.0.0.1" || host == "::1") return true
+            if (host.endsWith(".ts.net") || host.endsWith(".local") || host.endsWith(".lan")) return true
+            val parts = host.split('.').mapNotNull { it.toIntOrNull() }
+            if (parts.size != 4) return false
+            val (a, b) = parts[0] to parts[1]
+            return when {
+                a == 100 && b in 64..127 -> true // Tailscale CGNAT
+                a == 10 -> true
+                a == 172 && b in 16..31 -> true
+                a == 192 && b == 168 -> true
+                a == 169 && b == 254 -> true
+                else -> false
+            }
+        }
     }
 
     fun setInsecureMode(enabled: Boolean) {
@@ -534,7 +579,12 @@ class ConnectionManager(
         }
         val normalized = endpoints.webSocketUrl
         val isInsecure = normalized.startsWith("ws://", ignoreCase = true)
-        if (isInsecure && !_insecureMode.value) {
+        // ConnectionSecurity treats Tailscale/LAN plain sockets as overlay-
+        // encrypted, not "insecure". Require the Settings toggle only for
+        // public-Internet ws:// — otherwise leave-home failover to the
+        // paired Tailscale candidate (ws://100.x:8767) is blocked forever
+        // while Secure Link (wss) is preferred at home.
+        if (isInsecure && !_insecureMode.value && !isTrustedOverlayPlainWebSocketUrl(normalized)) {
             Log.e(TAG, "Blocked ws:// connection — insecure mode is disabled. Use wss:// or enable insecure mode in Settings.")
             DiagnosticsLog.record(
                 category = DiagnosticCategory.Relay,
@@ -566,26 +616,42 @@ class ConnectionManager(
         }
         val previousSocket = webSocket
 
-        _isInsecureConnection.value = isInsecure
-        if (isInsecure) {
-            Log.w(TAG, "⚠ Connecting over INSECURE ws:// to: $normalized")
-            DiagnosticsLog.record(
-                category = DiagnosticCategory.Relay,
-                severity = DiagnosticSeverity.Warning,
-                title = context?.getString(R.string.conn_diag_opening_insecure) ?: "Opening insecure relay socket",
-                operation = "Open Relay WebSocket",
-                configuredUrl = url,
-                requestUrl = normalized,
-            )
-        } else {
-            DiagnosticsLog.record(
-                category = DiagnosticCategory.Relay,
-                severity = DiagnosticSeverity.Info,
-                title = context?.getString(R.string.conn_diag_opening_socket) ?: "Opening relay socket",
-                operation = "Open Relay WebSocket",
-                configuredUrl = url,
-                requestUrl = normalized,
-            )
+        val trustedOverlayPlain = isInsecure && isTrustedOverlayPlainWebSocketUrl(normalized)
+        // UI "insecure" badge is for public cleartext only; Tailscale/LAN plain is overlay-encrypted.
+        _isInsecureConnection.value = isInsecure && !trustedOverlayPlain
+        when {
+            trustedOverlayPlain -> {
+                Log.i(TAG, "Connecting over overlay plain ws:// to: $normalized")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Info,
+                    title = context?.getString(R.string.conn_diag_opening_socket) ?: "Opening relay socket",
+                    operation = "Open Relay WebSocket",
+                    configuredUrl = url,
+                    requestUrl = normalized,
+                )
+            }
+            isInsecure -> {
+                Log.w(TAG, "⚠ Connecting over INSECURE ws:// to: $normalized")
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Warning,
+                    title = context?.getString(R.string.conn_diag_opening_insecure) ?: "Opening insecure relay socket",
+                    operation = "Open Relay WebSocket",
+                    configuredUrl = url,
+                    requestUrl = normalized,
+                )
+            }
+            else -> {
+                DiagnosticsLog.record(
+                    category = DiagnosticCategory.Relay,
+                    severity = DiagnosticSeverity.Info,
+                    title = context?.getString(R.string.conn_diag_opening_socket) ?: "Opening relay socket",
+                    operation = "Open Relay WebSocket",
+                    configuredUrl = url,
+                    requestUrl = normalized,
+                )
+            }
         }
 
         serverUrl = normalized
@@ -826,6 +892,47 @@ class ConnectionManager(
         Log.i(TAG, "marked endpoint role=${active.role} unreachable ($reason)")
     }
 
+    /** Poison every surface cache key so preferred + automatic resolve both skip [candidate]. */
+    private fun markEndpointUnreachableOnAllSurfaces(candidate: EndpointCandidate) {
+        val resolver = endpointResolver ?: return
+        resolver.markUnreachable(candidate, EndpointSurface.Standard)
+        resolver.markUnreachable(candidate, EndpointSurface.Dashboard)
+        resolver.markUnreachable(candidate, EndpointSurface.Api)
+        resolver.markUnreachable(candidate, EndpointSurface.Relay)
+    }
+
+    /**
+     * After hysteresis keeps a higher-priority [active] despite a healthy
+     * lower-priority resolve winner, wait [NETWORK_LOSS_GRACE_MS] and demote if
+     * that active role is still published. Mirrors [networkLossJob] so leave-
+     * home (Wi-Fi lost + VPN onAvailable cancelling onLost) still fails over
+     * LAN Secure Link → Tailscale without a manual Prefer tap.
+     */
+    private fun scheduleActiveRouteDemotionIfNeeded(active: EndpointCandidate, closeReason: String) {
+        if (endpointResolver == null) return
+        if (activeRouteDemotionJob?.isActive == true) return
+        val role = active.role
+        activeRouteDemotionJob = scope.launch {
+            delay(NETWORK_LOSS_GRACE_MS)
+            val held = _activeEndpoint.value
+            if (held == null || !held.role.equals(role, ignoreCase = true)) {
+                return@launch
+            }
+            Log.i(
+                TAG,
+                "active route $role still held after ${NETWORK_LOSS_GRACE_MS}ms demotion grace — " +
+                    "marking unreachable and accepting lower-priority fallback",
+            )
+            sustainedLossDeclared = true
+            endpointResolver?.clearCache()
+            markEndpointUnreachableOnAllSurfaces(held)
+            scheduleNetworkReResolve(
+                closeReason = "$closeReason — active route demoted after grace",
+                wipeCache = false,
+            )
+        }
+    }
+
     /** Admission is stronger evidence than `/transport/health`: reject this ingress and retain direct fallback. */
     private suspend fun fallbackFromBrokenDashboardIngress(
         url: String,
@@ -913,8 +1020,8 @@ class ConnectionManager(
             // falls through to a LOWER-priority fallback. Switching on that
             // transient miss rebuilds the chat client and CANCELS an in-flight
             // turn. Don't switch DOWN in priority unless a sustained loss was
-            // actually declared (the onLost grace elapsed). Same/upgrade
-            // winners always publish.
+            // actually declared (the onLost grace elapsed OR the active-route
+            // demotion grace below). Same/upgrade winners always publish.
             val active = _activeEndpoint.value
             if (active != null && resolved.priority > active.priority && !sustainedLossDeclared) {
                 Log.i(
@@ -922,8 +1029,16 @@ class ConnectionManager(
                     "re-resolve picked lower-priority ${resolved.role}(p${resolved.priority}) over " +
                         "active ${active.role}(p${active.priority}) not confirmed dead — keeping active",
                 )
+                // Leave-home handoff: onAvailable (cell/VPN) cancels onLost's
+                // grace, so sustainedLossDeclared never flips — arm the same
+                // grace here. If the higher-priority active route is still
+                // held after the window while a lower-priority winner exists,
+                // demote automatically (LAN Secure Link → Tailscale).
+                scheduleActiveRouteDemotionIfNeeded(active, closeReason)
                 return@launch
             }
+            activeRouteDemotionJob?.cancel()
+            activeRouteDemotionJob = null
             sustainedLossDeclared = false
             _activeEndpoint.value = resolved
             if (current == null) return@launch
@@ -1002,9 +1117,12 @@ class ConnectionManager(
                     delay(NETWORK_LOSS_GRACE_MS)
                     Log.i(TAG, "network loss sustained past grace — marking active endpoint unreachable and resolving fallback")
                     sustainedLossDeclared = true
+                    // onLost path owns demotion now — drop the parallel latch.
+                    activeRouteDemotionJob?.cancel()
+                    activeRouteDemotionJob = null
                     endpointResolver?.clearCache()
                     _activeEndpoint.value?.let { active ->
-                        endpointResolver?.markUnreachable(active, EndpointSurface.Standard)
+                        markEndpointUnreachableOnAllSurfaces(active)
                     }
                     // wipeCache=false: we just cleared + poisoned the dead route
                     // above; re-wiping inside the job would drop that negative
@@ -1029,6 +1147,8 @@ class ConnectionManager(
     private fun unregisterNetworkCallback() {
         networkLossJob?.cancel()
         networkLossJob = null
+        activeRouteDemotionJob?.cancel()
+        activeRouteDemotionJob = null
         val ctx = context ?: return
         val cb = networkCallback ?: return
         try {
@@ -1051,6 +1171,8 @@ class ConnectionManager(
         reconnectBackoffWaiting = false
         rateLimitBackoffUntilMs = 0L
         lastUpgradeResponseCode = null
+        activeRouteDemotionJob?.cancel()
+        activeRouteDemotionJob = null
         DiagnosticsLog.record(
             category = DiagnosticCategory.Relay,
             severity = DiagnosticSeverity.Info,
