@@ -11212,6 +11212,13 @@ class ChatViewModel : ViewModel() {
 
     fun cancelStream() {
         intentionallyCancelled = true
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Session,
+            severity = DiagnosticSeverity.Info,
+            title = "User pressed Stop",
+            detail = "reason=user_stop; activeStream=${activeStream != null}",
+            operation = "chat_user_stop",
+        )
         if (activeStream != null) {
             subagentActivityController.interrupt()
             chatActivityController.captureSubagents(subagentActivities.value)

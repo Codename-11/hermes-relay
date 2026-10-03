@@ -5636,7 +5636,12 @@ class GatewayChatClientTest {
         assertTrue("ordinary watchdog never fired", r.completeLatch.await(5, TimeUnit.SECONDS))
         assertTrue("expected a stream error from the watchdog", r.errors.isNotEmpty())
         assertTrue(r.preflightFailures.isEmpty())
-        harness.awaitRpc("session.interrupt")
+        // Idle/UI give-up must not kill the server turn (would look like user_stop).
+        Thread.sleep(200)
+        assertTrue(
+            "idle watchdog must not session.interrupt",
+            harness.rpcLog.none { it.first == "session.interrupt" },
+        )
     }
 
     @Test
@@ -5649,10 +5654,15 @@ class GatewayChatClientTest {
         serverWs.send(harness.eventFrame("message.delta", buildJsonObject { put("text", "partial") }, "live-1"))
         // …then silence: the idle watchdog must fail the turn as a STREAM
         // error (never a preflight fallback — the turn started server-side)
-        // and interrupt the server so it stops generating.
+        // without session.interrupt — agent owns run/retry; only user Stop
+        // should abort the gateway turn.
         assertTrue("watchdog never fired", r.completeLatch.await(5, TimeUnit.SECONDS))
         assertTrue("expected a stream error from the watchdog", r.errors.isNotEmpty())
         assertTrue(r.preflightFailures.isEmpty())
-        harness.awaitRpc("session.interrupt")
+        Thread.sleep(200)
+        assertTrue(
+            "idle watchdog must not session.interrupt",
+            harness.rpcLog.none { it.first == "session.interrupt" },
+        )
     }
 }
