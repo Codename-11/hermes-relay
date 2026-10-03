@@ -123,7 +123,9 @@ if ($version -eq 'latest') {
     $releases = @()
     $page = 1
     do {
-      $releasePage = @(Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$repo/releases?per_page=100&page=$page")
+      # Invoke-RestMethod emits a JSON array as one pipeline object. Enumerate
+      # its releases before filtering tags or counting a full API page.
+      $releasePage = @(Invoke-RestMethod -UseBasicParsing "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" | ForEach-Object { $_ })
       $releases += $releasePage
       $page += 1
     } while ($releasePage.Count -eq 100)
