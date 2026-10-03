@@ -1,8 +1,8 @@
 # Hermes-Relay CLI+UI v__VERSION__
 
-**Release Date:** 2026-09-02
+**Release Date:** 2026-10-02
 
-This beta fixes Windows updates so the installed CLI and management UI advance together. Explicit CLI-only installations keep their standalone update path.
+This patch beta fixes Windows CLI+UI installation failing while resolving the latest release. It also restores reusable management windows and image attachments for desktop screenshots.
 
 **Beta phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64/arm64, and macOS x64/arm64; the management UI is Windows-only.
 
@@ -10,9 +10,9 @@ This beta fixes Windows updates so the installed CLI and management UI advance t
 
 ### Fixed
 
-- `hermes-relay update` detects an installed management UI beside the CLI and reports both installed versions.
-- Bundle installations use the checksum-verified Windows installer to update and restart the affected CLI and UI together.
-- Explicit CLI-only installations continue to use the standalone binary updater.
+- The Windows bootstrap installer correctly selects CLI+UI releases from GitHub pages containing Android and Plugin releases and continues discovery across full pages.
+- Tray notices, screenshot evidence, and grant prompts remain reusable after dismissal; screenshot evidence retains the selected image.
+- Desktop computer screenshots attach validated image bytes to host tool results instead of returning base64 as plain text.
 
 ## Install
 
