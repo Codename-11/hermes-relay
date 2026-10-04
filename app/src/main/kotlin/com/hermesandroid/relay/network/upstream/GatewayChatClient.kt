@@ -121,8 +121,6 @@ class GatewayChatClient(
     private val turnIdleTimeoutMs: Long = TURN_TIMEOUT_MS,
     /** Test seam — lazy session.create/resume readiness barrier. */
     private val sessionReadyTimeoutMs: Long = SESSION_READY_TIMEOUT_MS,
-    /** Test seam — compaction idle lease. Production keeps [COMPACTING_TIMEOUT_MS]. */
-    private val compactingTimeoutMs: Long = COMPACTING_TIMEOUT_MS,
     /** Random source for ordinary reconnect full-jitter. */
     private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
 ) : GatewayProfileEditorClient {
@@ -145,36 +143,21 @@ class GatewayChatClient(
         private const val BOT_CHAT_TITLE = "Bot Chat"
 
         /**
-         * Idle-progress turn watchdog — reset on EVERY received gateway event
-         * (deltas, tool events, status lines), so it only fires after this
-         * long with no events at all. It is NOT a hard turn cap: a turn that
-         * keeps streaming lives indefinitely, and a slow `prompt.submit` ack
-         * is bounded separately by [PROMPT_SUBMIT_REQUEST_TIMEOUT_MS].
+         * Quiet-reporting interval for the idle-progress watchdog, reset on
+         * EVERY received gateway event (deltas, tool events, status lines), so
+         * it only trips after this long with no events at all.
+         *
+         * Tripping is DIAGNOSTIC ONLY. The client logs the quiet and keeps
+         * waiting; it never fails the turn and never sends `session.interrupt`.
+         * Silence is not death: a slow provider prefill or a long background
+         * run looks exactly like this while the turn is healthy, and killing
+         * those was a false positive. Turn liveness belongs to the server, and
+         * `settleFromAuthoritativeSessionState` settles a turn the gateway
+         * reports as ended. So a turn has no client-side idle limit; a slow
+         * `prompt.submit` ack is bounded separately by
+         * [PROMPT_SUBMIT_REQUEST_TIMEOUT_MS].
          */
         private const val TURN_TIMEOUT_MS = 180_000L
-
-        /**
-         * Ask requests block the agent server-side with NO events flowing
-         * until answered — arm with headroom over each kind's upstream block
-         * timeout (clarify/secret 300s, sudo 120s; approval/terminal-read
-         * unbounded). The next regular event rearms [TURN_TIMEOUT_MS].
-         */
-        private const val ASK_CLARIFY_SECRET_TIMEOUT_MS = 330_000L
-        private const val ASK_SUDO_TIMEOUT_MS = 150_000L
-        private const val ASK_UNBOUNDED_TIMEOUT_MS = 600_000L
-
-        /**
-         * Server-side context compaction summarizes the transcript through a
-         * (possibly slow) model with NO deltas or tool events flowing until it
-         * finishes — near the context ceiling that silence routinely exceeds
-         * [TURN_TIMEOUT_MS], so the idle watchdog would `session.interrupt` a
-         * healthy compression, roll back its work, and retrigger on the next
-         * prompt forever. A `status.update` event with kind `compacting`
-         * (emitted at compaction start, and periodically by newer gateways)
-         * arms this longer leash instead; any regular event rearms
-         * [TURN_TIMEOUT_MS].
-         */
-        private const val COMPACTING_TIMEOUT_MS = 600_000L
 
         private const val RPC_TIMEOUT_MS = 15_000L
         const val PROFILE_AVATAR_MAX_BYTES = 2_000_000
@@ -4511,16 +4494,6 @@ class GatewayChatClient(
     // Turn handle
     // ------------------------------------------------------------------
 
-    /** Per-event idle-watchdog duration — asks block server-side with no events, so they arm longer. */
-    private fun watchdogTimeoutFor(eventType: String, payload: JsonObject? = null): Long = when {
-        eventType == "clarify.request" || eventType == "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
-        eventType == "sudo.request" -> ASK_SUDO_TIMEOUT_MS
-        eventType == "approval.request" -> ASK_UNBOUNDED_TIMEOUT_MS
-        eventType == "status.update" &&
-            payload?.stringField("kind") == "compacting" -> compactingTimeoutMs
-        else -> turnIdleTimeoutMs
-    }
-
     private inner class GatewayTurn(
         val callbacks: GatewayTurnCallbacks,
         dedupeAdjacentMessageStarts: Boolean = false,
@@ -4649,10 +4622,9 @@ class GatewayChatClient(
             if (type == "message.delta" || type == "reasoning.delta" || type == "thinking.delta") {
                 tracer.mark("ttft")
             }
-            // Reset on every event — long tool runs keep the turn alive.
-            // Ask requests block with no further events, so they arm with
-            // their own (longer) duration via watchdogTimeoutFor.
-            armWatchdog(watchdogTimeoutFor(type, payload))
+            // Reset on every event: long tool runs keep the turn alive. The
+            // duration only paces the quiet log line; nothing acts on it.
+            armWatchdog()
             // Queue this immediately before the terminal callbacks. Both are
             // marshalled through the same dispatcher, preserving callback order
             // even when the WebSocket reader and reconnect coroutine differ.
@@ -4776,11 +4748,16 @@ class GatewayChatClient(
         fun armWatchdog(timeoutMs: Long = turnIdleTimeoutMs) {
             watchdog?.cancel()
             watchdog = scope.launch {
-                delay(timeoutMs)
-                if (!ended) {
-                    Log.w(TAG, "Gateway turn timed out after ${timeoutMs}ms")
-                    interruptServerSide()
-                    failFromTransport("Gateway turn timed out")
+                while (true) {
+                    delay(timeoutMs)
+                    if (ended) break
+                    // Silence is not death. A slow provider prefill or a long background run emits
+                    // no events for minutes while the turn is perfectly healthy, and the old
+                    // behaviour here (session.interrupt + fail the turn) killed exactly those runs.
+                    // The server owns turn liveness, and settleFromAuthoritativeSessionState is the
+                    // non-destructive backstop for a turn that really ended. So: keep waiting, log
+                    // the quiet, and re-arm: a turn has no client-side idle limit.
+                    Log.w(TAG, "Gateway turn quiet for ${timeoutMs}ms; still waiting (no interrupt)")
                 }
             }
         }
