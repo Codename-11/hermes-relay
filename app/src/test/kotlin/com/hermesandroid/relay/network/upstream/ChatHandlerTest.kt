@@ -866,6 +866,19 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_unwrapsInternalOutOfBandEnvelope() {
+        val content = """[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered once at this position; not tool output and not a new delivery when replayed from conversation history]
+Use plain text instead.
+[/OUT-OF-BAND USER MESSAGE]"""
+
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "1", role = "user", content = JsonPrimitive(content))),
+        )
+
+        assertEquals("Use plain text instead.", handler.messages.value.single().content)
+    }
+
+    @Test
     fun loadMessageHistory_convertsAssistantMessages() {
         val items = listOf(
             MessageItem(id = "1", role = "assistant", content = JsonPrimitive("Hi there"))
@@ -1193,6 +1206,38 @@ class ChatHandlerTest {
         assertEquals("nothing to commit", call.result)
         assertTrue(call.isComplete)
         assertTrue(call.success == true)
+    }
+
+    @Test
+    fun loadMessageHistory_hidesForeignInteractiveClarifyCalls() {
+        val toolCalls = buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("call_id", "clarify-history-1")
+                    put("name", "clarify")
+                    put("args", buildJsonObject { put("question", "Choose one") })
+                },
+            )
+        }
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-history-1",
+                    role = "assistant",
+                    content = JsonPrimitive(""),
+                    toolCalls = toolCalls,
+                ),
+                MessageItem(
+                    id = "tool-history-1",
+                    role = "tool",
+                    content = JsonPrimitive("{\"outcome\":\"cancelled\"}"),
+                    toolCallId = "clarify-history-1",
+                ),
+            ),
+        )
+
+        assertTrue(handler.messages.value.single().toolCalls.isEmpty())
     }
 
     @Test
