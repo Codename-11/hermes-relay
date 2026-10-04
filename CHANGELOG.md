@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Chat progress stays above the composer while scrolling and disappears when the turn finishes or waits for input.
 
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
+- Android keeps a quiet turn alive instead of interrupting it: the idle watchdog now only logs the quiet and waits for the Gateway's own session state, so a slow provider prefill or a long background run is not mistaken for a dead turn.
 
 ## [Plugin 1.13.0] - 2026-10-07
 
