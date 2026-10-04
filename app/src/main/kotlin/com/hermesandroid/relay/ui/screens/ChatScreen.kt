@@ -2530,17 +2530,20 @@ fun ChatScreen(
             val hiddenSources by connectionViewModel.hiddenSources.collectAsState()
             val proactiveInboxEntries by connectionViewModel.inboxMessages.collectAsState()
             val phoneThreadChatIds by connectionViewModel.phoneThreadChatIds.collectAsState()
-            val provisionalThreadEntries = buildProvisionalThreadRows(
-                entries = proactiveInboxEntries,
-                activeConnectionId = activeConnection?.id,
-                realThreadChatIds = phoneThreadChatIds.values,
-            )
             val realPhoneSessionIds = remember(sessions) {
                 sessions.asSequence()
                     .filter { it.source.equals("phone", ignoreCase = true) }
                     .map { it.sessionId }
                     .toSet()
             }
+            val provisionalThreadEntries = buildProvisionalThreadRows(
+                entries = proactiveInboxEntries,
+                activeConnectionId = activeConnection?.id,
+                realThreadChatIds = livePhoneThreadChatIds(
+                    phoneThreadChatIds = phoneThreadChatIds,
+                    realPhoneSessionIds = realPhoneSessionIds,
+                ),
+            )
             val provisionalThreadChatIds = provisionalThreadEntries.keys
             LaunchedEffect(
                 activeConnection?.id,
@@ -5142,6 +5145,13 @@ internal fun buildProvisionalThreadRows(
     .filter { it.connectionId == null || it.connectionId == activeConnectionId }
     .groupBy { it.chatId ?: "phone" }
     .filterKeys { it !in realThreadChatIds }
+
+internal fun livePhoneThreadChatIds(
+    phoneThreadChatIds: Map<String, String>,
+    realPhoneSessionIds: Set<String>,
+): Collection<String> = phoneThreadChatIds
+    .filterKeys { it in realPhoneSessionIds }
+    .values
 
 // --- Helper functions ---
 
