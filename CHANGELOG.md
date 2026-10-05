@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Android Appearance offers a Clean layout: assistant replies read as open text, message details appear on tap, each turn shows one tool summary, header shortcuts move into the menu, and the status bar appears only when the connection needs attention.
+- Android Clean and Material You themes; Material You follows wallpaper colors on Android 12 and later.
+
+### Changed
+
+- Android Appearance shows theme, mode, accent, and layout first; language, text, font, animation, background, and pet settings sit under More appearance options.
+
 ### Fixed
 
 - Windows CLI+UI installation correctly selects its latest release when GitHub returns Android and Plugin releases on the same page, including when discovery needs multiple pages.

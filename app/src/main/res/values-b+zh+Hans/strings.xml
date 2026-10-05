@@ -1260,6 +1260,13 @@
     <string name="appearance_cancel">取消</string>
     <string name="appearance_theme">主题</string>
     <string name="appearance_theme_desc">选择外观。品牌界面、强调色和聊天背景都会跟随你的选择。</string>
+    <string name="appearance_layout">布局</string>
+    <string name="appearance_layout_classic">经典</string>
+    <string name="appearance_layout_clean">简洁</string>
+    <string name="appearance_layout_classic_summary">在屏幕上显示所有细节：气泡、发送者标签、时间和状态栏。</string>
+    <string name="appearance_layout_clean_summary">屏幕更简洁。回复以开放文本显示，点按消息时显示详细信息，状态栏仅在连接需要关注时显示。</string>
+    <string name="appearance_more_options">更多外观选项</string>
+    <string name="appearance_more_options_summary">语言、文字大小、字体、动画、背景和宠物</string>
     <string name="appearance_language">语言</string>
     <string name="appearance_language_desc">选择 Hermes-Relay 使用的语言。跟随系统会使用设备的语言设置。</string>
     <string name="appearance_language_system">跟随系统</string>

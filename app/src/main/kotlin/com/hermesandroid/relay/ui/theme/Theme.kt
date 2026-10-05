@@ -2,7 +2,10 @@ package com.hermesandroid.relay.ui.theme
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
+import android.os.Build
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
@@ -34,6 +37,8 @@ import com.hermesandroid.relay.data.PersistedAppearance
  * @param appFontId id from [AppFont]; selects the body typeface for the whole
  *   app. Defaults to Inter. Code/metadata styles stay monospaced regardless.
  * @param accentHex optional locally persisted RGB override for brand accents.
+ * @param layoutStyleId id from [LayoutStyle]; selects the Classic or Clean
+ *   information-density overlay, published on [LocalLayoutStyle].
  */
 @Composable
 fun HermesRelayTheme(
@@ -44,12 +49,20 @@ fun HermesRelayTheme(
     accentHex: String? = null,
     shapeId: String = AppearanceShape.DEFAULT.id,
     customTheme: CustomThemePreset? = null,
+    layoutStyleId: String = LayoutStyle.DEFAULT.id,
     content: @Composable () -> Unit
 ) {
+    val layoutStyle = LayoutStyle.fromId(layoutStyleId)
     val appTheme = customTheme?.toAppTheme() ?: AppThemes.byId(appThemeId)
     val useDarkTheme = appTheme.resolveDark(themePreference, isSystemInDarkTheme())
+    val context = LocalContext.current
     val palette = if (customTheme != null) {
         customTheme.toBrandPalette()
+    } else if (appTheme.id == AppThemes.MaterialYou.id && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        remember(context, useDarkTheme) {
+            val scheme = if (useDarkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            scheme.toBrandPalette(useDarkTheme)
+        }.withAccent(accentHex)
     } else {
         appTheme.paletteFor(useDarkTheme).withAccent(accentHex)
     }
@@ -60,7 +73,14 @@ fun HermesRelayTheme(
     // Build the Material typography from the selected font. Remembered per id so
     // a recomposition (e.g. theme/mode change) doesn't rebuild the FontFamily
     // graph; a font-pick changes appFontId, which re-themes every Text live.
-    val typography = remember(appFontId) { appTypography(AppFont.byId(appFontId).fontFamily()) }
+    // Clean layout keeps metadata labels in the body face; Classic keeps the
+    // monospaced metadata voice.
+    val typography = remember(appFontId, layoutStyle) {
+        appTypography(
+            body = AppFont.byId(appFontId).fontFamily(),
+            monospaceMetadata = layoutStyle == LayoutStyle.CLASSIC,
+        )
+    }
 
     // Mirror into the legacy façade after commit so snapshot reads in existing
     // call sites observe the active palette. SideEffect runs post-composition,
@@ -87,6 +107,7 @@ fun HermesRelayTheme(
     CompositionLocalProvider(
         LocalBrand provides palette,
         LocalAppearanceShapeScale provides shapeScale,
+        LocalLayoutStyle provides layoutStyle,
     ) {
         // Compose-wide font scaling. We multiply the user's chosen scale into the
         // current LocalDensity.fontScale (which already reflects the system font
@@ -133,6 +154,7 @@ fun PersistedHermesRelayTheme(content: @Composable () -> Unit) {
         accentHex = appearance.accentHex,
         shapeId = appearance.shapeId,
         customTheme = appearance.customTheme,
+        layoutStyleId = appearance.layoutStyleId,
         content = content,
     )
 }

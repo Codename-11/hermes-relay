@@ -19,6 +19,7 @@ import androidx.compose.foundation.combinedClickable
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import com.hermesandroid.relay.ui.theme.LocalAppearanceShapeScale
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
+import com.hermesandroid.relay.ui.theme.isCleanLayout
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -211,10 +212,16 @@ fun MessageBubble(
             message.id.startsWith("voice-intent-")
     )
 
+    // Clean layout renders ordinary assistant replies as open prose on the
+    // page (no filled bubble), the convention of current assistant apps.
+    val cleanLayout = isCleanLayout
+    val openAssistantProse = cleanLayout && !isUser && !isSystem && !isActionBubble
+
     val backgroundColor = when {
         message.role == MessageRole.USER -> MaterialTheme.colorScheme.primary
         message.role == MessageRole.SYSTEM -> MaterialTheme.colorScheme.tertiaryContainer
         isActionBubble -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.45f)
+        openAssistantProse -> Color.Transparent
         else -> MaterialTheme.colorScheme.surfaceContainerLow
     }
 
@@ -329,7 +336,12 @@ fun MessageBubble(
         // Keep sender identity in the first-message label rather than a
         // persistent leading column. Long responses and every follow-up in the
         // group therefore retain the full bubble-width allowance.
-        if (showAgentIdentity && !isUser && !isSystem && isFirstInGroup && !message.agentName.isNullOrBlank()) {
+        // Clean layout drops the per-turn label for the conversation's own
+        // agent (the header already names it); action origins stay labelled.
+        if (
+            showAgentIdentity && !isUser && !isSystem && isFirstInGroup &&
+            !message.agentName.isNullOrBlank() && (!cleanLayout || isActionBubble)
+        ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -608,7 +620,7 @@ fun MessageBubble(
             color = if (standaloneCards) Color.Transparent else backgroundColor,
             modifier = Modifier
                 .then(
-                    if (!isUser && !isSystem && isDarkTheme && !standaloneCards) {
+                    if (!isUser && !isSystem && isDarkTheme && !standaloneCards && !openAssistantProse) {
                         Modifier.leftEdgeGlow(
                             alpha = 0.12f,
                             width = 28.dp,
@@ -656,8 +668,11 @@ fun MessageBubble(
                 )
         ) {
             Column(
-                modifier = if (standaloneCards) Modifier
-                    else Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                modifier = when {
+                    standaloneCards -> Modifier
+                    openAssistantProse -> Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                    else -> Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
+                },
             ) {
                 quoteEnvelope?.let { envelope ->
                     ChatQuoteReferenceChip(
@@ -827,9 +842,19 @@ fun MessageBubble(
                         }
                 }
 
+                // Clean layout discloses metadata progressively: time and token
+                // usage appear when the message is tapped, and delivery state
+                // only while it still needs attention.
+                val metadataRevealed = cleanLayout && showInlineActions
+                val showMetadataTail = if (cleanLayout) metadataRevealed else isLastInGroup
                 val hasTokenUsage = showUsage && !isUser &&
+                    (!cleanLayout || metadataRevealed) &&
                     (message.inputTokens != null || message.outputTokens != null)
-                val deliveryStatus = message.deliveryStatus?.takeIf { isUser }
+                val deliveryStatus = message.deliveryStatus?.takeIf {
+                    isUser && (
+                        !cleanLayout || metadataRevealed || it != MessageDeliveryStatus.DELIVERED
+                    )
+                }
 
                 // Timestamp — only on the LAST bubble of a same-author run so a
                 // burst of fragments doesn't stack three near-touching time labels.
@@ -838,14 +863,14 @@ fun MessageBubble(
                 // This row is reserved from the first streaming frame. Completion
                 // can reveal both timestamp and token usage without adding a new
                 // footer line or changing the bubble's measured height.
-                if ((isLastInGroup && (showTimestamps || hasTokenUsage)) || deliveryStatus != null) {
+                if ((showMetadataTail && (showTimestamps || hasTokenUsage)) || deliveryStatus != null) {
                     Spacer(modifier = Modifier.height(2.dp))
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = if (standaloneCards) Modifier.padding(horizontal = 4.dp) else Modifier,
                     ) {
-                        if (isLastInGroup && showTimestamps) Text(
+                        if (showMetadataTail && showTimestamps) Text(
                             text = timeFormat.format(Date(message.timestamp)),
                             style = MaterialTheme.typography.labelSmall,
                             color = textColor.copy(alpha = if (message.isStreaming) 0f else 0.6f),
@@ -855,7 +880,7 @@ fun MessageBubble(
                                 Modifier
                             },
                         )
-                        if (isLastInGroup && hasTokenUsage) {
+                        if (showMetadataTail && hasTokenUsage) {
                             TokenDisplay(
                                 inputTokens = message.inputTokens,
                                 outputTokens = message.outputTokens,
@@ -881,7 +906,7 @@ fun MessageBubble(
 
                 // Non-tail historical fragments have no reserved timestamp row.
                 // Preserve their existing standalone token metadata layout.
-                if (!isLastInGroup && hasTokenUsage) {
+                if (!showMetadataTail && hasTokenUsage) {
                     Spacer(modifier = Modifier.height(2.dp))
                     TokenDisplay(
                         inputTokens = message.inputTokens,

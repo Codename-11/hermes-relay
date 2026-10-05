@@ -19,6 +19,7 @@ import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.theme.AppearanceNightMode
 import com.hermesandroid.relay.ui.theme.normalizeAccentHex
 import com.hermesandroid.relay.ui.theme.AppearanceShape
+import com.hermesandroid.relay.ui.theme.LayoutStyle
 import com.hermesandroid.relay.ui.components.avatar.PetImporter
 import com.hermesandroid.relay.ui.components.avatar.PetImportResult
 import com.hermesandroid.relay.ui.components.avatar.PetLoader
@@ -2235,6 +2236,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     val appearanceAccent: StateFlow<String?> = application.relayDataStore.data
         .map { preferences -> normalizeAccentHex(preferences[AppearancePreferences.accentKey]) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val layoutStyle: StateFlow<String> = application.relayDataStore.data
+        .map { preferences -> LayoutStyle.fromId(preferences[AppearancePreferences.layoutStyleKey]).id }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, LayoutStyle.DEFAULT.id)
 
     val appearanceShape: StateFlow<String> = application.relayDataStore.data
         .map { preferences -> AppearanceShape.fromId(preferences[AppearancePreferences.shapeKey]).id }
@@ -8590,6 +8595,14 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 val normalized = normalizeAccentHex(accentHex)
                 if (normalized == null) preferences.remove(AppearancePreferences.accentKey)
                 else preferences[AppearancePreferences.accentKey] = normalized
+            }
+        }
+    }
+
+    fun setLayoutStyle(styleId: String) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { preferences ->
+                preferences[AppearancePreferences.layoutStyleKey] = LayoutStyle.fromId(styleId).id
             }
         }
     }

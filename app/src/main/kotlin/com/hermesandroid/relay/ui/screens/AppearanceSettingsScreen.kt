@@ -3,6 +3,7 @@ package com.hermesandroid.relay.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import com.hermesandroid.relay.ui.theme.LayoutStyle
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -85,6 +86,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -184,7 +186,13 @@ fun AppearanceSettingsScreen(
     val appliedAccent by connectionViewModel.appearanceAccent.collectAsState()
     val appliedShape by connectionViewModel.appearanceShape.collectAsState()
     var customizeExpanded by remember { mutableStateOf(initialCustomizerExpanded) }
+    val layoutStyleId by connectionViewModel.layoutStyle.collectAsState()
+    var showMoreOptions by rememberSaveable { mutableStateOf(false) }
+    // Material You resolves from the wallpaper at the theme root, so preview
+    // the live palette rather than the static fallback.
+    val livePalette = LocalBrand.current
     val previewPalette = activeCustomTheme?.toBrandPalette()
+        ?: livePalette.takeIf { selectedTheme.id == AppThemes.MaterialYou.id }
         ?: selectedTheme.paletteFor(isDarkTheme).withAccent(appliedAccent)
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -386,474 +394,441 @@ fun AppearanceSettingsScreen(
                 }
             }
 
-            // Language section — AppCompat keeps this synchronized with the
-            // Android 13+ per-app language setting and persists it on older OSes.
-            Text(
-                text = stringResource(R.string.appearance_language),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
+            AppearanceLayoutControl(
+                selected = LayoutStyle.fromId(layoutStyleId),
+                onSelected = { connectionViewModel.setLayoutStyle(it.id) },
             )
 
-            Card(
-                modifier = Modifier
-                    .appearancePetSurface("language")
-                    .fillMaxWidth()
-                    .gradientBorder(
-                        shape = appearanceRoundedCornerShape(12.dp),
-                        isDarkTheme = isDarkTheme,
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.appearance_language_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-
-                    val selectedLanguage = AppLanguage.fromLanguageTags(
-                        AppCompatDelegate.getApplicationLocales().toLanguageTags(),
-                    )
-                    val languageLabels = mapOf(
-                        AppLanguage.SYSTEM_DEFAULT to stringResource(R.string.appearance_language_system),
-                        AppLanguage.ENGLISH to stringResource(R.string.appearance_language_english),
-                        AppLanguage.GERMAN to stringResource(R.string.appearance_language_german),
-                        AppLanguage.BRAZILIAN_PORTUGUESE to stringResource(R.string.appearance_language_brazilian_portuguese),
-                        AppLanguage.JAPANESE to stringResource(R.string.appearance_language_japanese),
-                        AppLanguage.SIMPLIFIED_CHINESE to stringResource(R.string.appearance_language_simplified_chinese),
-                        AppLanguage.SPANISH to stringResource(R.string.appearance_language_spanish),
-                        AppLanguage.RUSSIAN to stringResource(R.string.appearance_language_russian),
-                    )
-
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        AppLanguage.entries.forEach { language ->
-                            FilterChip(
-                                selected = language == selectedLanguage,
-                                onClick = {
-                                    AppCompatDelegate.setApplicationLocales(language.toLocaleList())
-                                },
-                                label = { Text(languageLabels.getValue(language)) },
-                                leadingIcon = if (language == selectedLanguage) {
-                                    {
-                                        Icon(
-                                            imageVector = Icons.Filled.Check,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    }
-                                } else {
-                                    null
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Readability section. Theme mode and accent customization live
-            // directly under the preset gallery above.
-            Text(
-                text = stringResource(R.string.appearance_appearance),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
+            // Progressive disclosure: theme, mode, accent, and layout cover the
+            // common choices; language, type, motion, background, and pets sit
+            // behind one toggle.
+            AppearanceMoreToggle(
+                expanded = showMoreOptions,
+                onToggle = { showMoreOptions = !showMoreOptions },
             )
 
-            Card(
-                modifier = Modifier
-                    .appearancePetSurface("display")
-                    .fillMaxWidth()
-                    .gradientBorder(
-                        shape = appearanceRoundedCornerShape(12.dp),
-                        isDarkTheme = isDarkTheme
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+            AnimatedVisibility(visible = showMoreOptions) {
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                // Language section — AppCompat keeps this synchronized with the
+                // Android 13+ per-app language setting and persists it on older OSes.
+                Text(
+                    text = stringResource(R.string.appearance_language),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
                 )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = stringResource(R.string.appearance_readability_summary),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
 
-                    // ── Font size ──────────────────────────────────────────
-                    //
-                    // Discrete stops applied globally via LocalDensity.fontScale
-                    // at the Compose theme root, plus pushed to xterm via
-                    // window.setFontSize through TerminalWebView.
-                    val fontScale by connectionViewModel.fontScale.collectAsState()
-                    val fontScaleOptions = listOf(0.85f, 1.0f, 1.15f, 1.3f)
-                    val fontScaleLabels = listOf(stringResource(R.string.appearance_font_small), stringResource(R.string.appearance_font_normal), stringResource(R.string.appearance_font_large), stringResource(R.string.appearance_font_larger))
-                    // Match the closest stop — float equality is fragile.
-                    val selectedFontScaleIndex = fontScaleOptions
-                        .withIndex()
-                        .minByOrNull { kotlin.math.abs(it.value - fontScale) }
-                        ?.index
-                        ?: 1
-
-                    Text(
-                        text = stringResource(R.string.appearance_font_size),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                        fontScaleOptions.forEachIndexed { index, option ->
-                            SegmentedButton(
-                                shape = SegmentedButtonDefaults.itemShape(
-                                    index = index,
-                                    count = fontScaleOptions.size
-                                ),
-                                onClick = { connectionViewModel.setFontScale(option) },
-                                selected = index == selectedFontScaleIndex
-                            ) {
-                                Text(fontScaleLabels[index])
-                            }
-                        }
-                    }
-
-                    // Subtle preview at the chosen scale. We multiply the
-                    // current bodyMedium fontSize by the selected stop so the
-                    // preview reflects the user's choice immediately, even
-                    // though everything else in the app already scales via
-                    // LocalDensity once they tap a stop.
-                    val previewBase = MaterialTheme.typography.bodyMedium
-                    Text(
-                        text = stringResource(R.string.appearance_font_preview),
-                        style = previewBase.copy(
-                            fontSize = previewBase.fontSize * fontScaleOptions[selectedFontScaleIndex]
+                Card(
+                    modifier = Modifier
+                        .appearancePetSurface("language")
+                        .fillMaxWidth()
+                        .gradientBorder(
+                            shape = appearanceRoundedCornerShape(12.dp),
+                            isDarkTheme = isDarkTheme,
                         ),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            // Font section — pick the app-wide body typeface. Each option renders
-            // its own label + sample line IN that font so the choice is legible
-            // before tapping; the selection re-themes every screen live.
-            Text(
-                text = stringResource(R.string.appearance_font),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Card(
-                modifier = Modifier
-                    .appearancePetSurface("font")
-                    .fillMaxWidth()
-                    .gradientBorder(
-                        shape = appearanceRoundedCornerShape(12.dp),
-                        isDarkTheme = isDarkTheme
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
                     ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                val appFontId by connectionViewModel.appFont.collectAsState()
-                val selectedFont = AppFont.byId(appFontId)
-
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(
-                        text = stringResource(R.string.appearance_font_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    AppFont.entries.forEach { font ->
-                        FontOptionRow(
-                            font = font,
-                            selected = font.id == selectedFont.id,
-                            onClick = { connectionViewModel.setAppFont(font.id) },
-                        )
-                    }
-                }
-            }
-
-            // Animation section
-            Text(
-                text = stringResource(R.string.appearance_animation),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Card(
-                modifier = Modifier
-                    .appearancePetSurface("animation")
-                    .fillMaxWidth()
-                    .gradientBorder(
-                        shape = appearanceRoundedCornerShape(12.dp),
-                        isDarkTheme = isDarkTheme
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                val animEnabled by connectionViewModel.animationEnabled.collectAsState()
-                val animBehindChat by connectionViewModel.animationBehindChat.collectAsState()
-                val imageGenerationStyle by connectionViewModel.imageGenerationStyle.collectAsState()
-
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    // Animation enabled toggle
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = stringResource(R.string.appearance_ascii_sphere),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = stringResource(R.string.appearance_ascii_sphere_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = animEnabled,
-                            onCheckedChange = { connectionViewModel.setAnimationEnabled(it) }
-                        )
-                    }
-
-                    HorizontalDivider()
-
-                    // Behind chat toggle
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .then(if (!animEnabled) Modifier.alpha(0.5f) else Modifier),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = stringResource(R.string.appearance_behind_messages),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                text = stringResource(R.string.appearance_behind_messages_desc),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = animBehindChat && animEnabled,
-                            onCheckedChange = { connectionViewModel.setAnimationBehindChat(it) },
-                            enabled = animEnabled
-                        )
-                    }
-
-                    // The ambient-mode entry is a gesture with no visible
-                    // control — this line is its discoverable documentation
-                    // (including for screen-reader users browsing settings).
-                    if (animEnabled) {
                         Text(
-                            text = stringResource(R.string.appearance_ambient_tip),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    HorizontalDivider()
-
-                    Text(
-                        text = stringResource(R.string.appearance_image_generation_style),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        text = stringResource(R.string.appearance_image_generation_style_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    val imageStyleOptions = listOf(
-                        "rotate" to stringResource(R.string.appearance_image_generation_rotate),
-                        "grid" to stringResource(R.string.appearance_image_generation_grid),
-                        "sphere" to stringResource(R.string.appearance_image_generation_sphere),
-                        "nodes" to stringResource(R.string.appearance_image_generation_nodes),
-                    )
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        imageStyleOptions.forEach { (id, label) ->
-                            FilterChip(
-                                selected = imageGenerationStyle == id,
-                                onClick = { connectionViewModel.setImageGenerationStyle(id) },
-                                label = { Text(label) },
-                                leadingIcon = if (imageGenerationStyle == id) {
-                                    {
-                                        Icon(
-                                            imageVector = Icons.Filled.Check,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    }
-                                } else {
-                                    null
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-
-            Text(
-                text = stringResource(R.string.appearance_background_visualization),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary,
-            )
-
-            Card(
-                modifier = Modifier
-                    .appearancePetSurface("background")
-                    .fillMaxWidth()
-                    .gradientBorder(
-                        shape = appearanceRoundedCornerShape(12.dp),
-                        isDarkTheme = isDarkTheme,
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-            ) {
-                val backgroundVisualizationEnabled by
-                    connectionViewModel.backgroundVisualizationEnabled.collectAsState()
-                val backgroundAvatarId by connectionViewModel.backgroundAvatar.collectAsState()
-                val availableBackgroundAnimations = LocalAvailablePets.current
-                val effectiveBackgroundAvatarId = backgroundAvatarId.takeIf { selectedId ->
-                    selectedId == SphereAvatar.id || availableBackgroundAnimations.any { it.id == selectedId }
-                } ?: SphereAvatar.id
-                val availableSkins = LocalAvailableSphereSkins.current
-                val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
-                val effectiveSkinId = SphereRegistry.resolve(
-                    selectedId = sphereSkinId,
-                    themeDefaultSkinId = selectedTheme.defaultSphereSkinId,
-                    available = availableSkins,
-                ).id
-                val brand = LocalBrand.current
-
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.appearance_background_visualization_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        FilterChip(
-                            selected = !backgroundVisualizationEnabled,
-                            onClick = { connectionViewModel.setBackgroundVisualizationEnabled(false) },
-                            label = { Text(stringResource(R.string.appearance_background_off)) },
-                        )
-                        FilterChip(
-                            selected = backgroundVisualizationEnabled && effectiveBackgroundAvatarId == SphereAvatar.id,
-                            onClick = { connectionViewModel.setBackgroundAvatar(SphereAvatar.id) },
-                            label = { Text(stringResource(R.string.appearance_background_sphere)) },
-                        )
-                    }
-
-                    if (availableBackgroundAnimations.isNotEmpty()) {
-                        Text(
-                            text = stringResource(R.string.appearance_background_installed),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            availableBackgroundAnimations.forEach { avatar ->
-                                AgentAvatarChip(
-                                    avatar = avatar,
-                                    brand = brand,
-                                    selected = backgroundVisualizationEnabled && avatar.id == effectiveBackgroundAvatarId,
-                                    onClick = { connectionViewModel.setBackgroundAvatar(avatar.id) },
-                                )
-                            }
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = {
-                            backgroundImportLauncher.launch(
-                                arrayOf("application/zip", "image/*", "application/octet-stream", "*/*")
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Add,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Text(
-                            text = stringResource(R.string.appearance_import_background),
-                            modifier = Modifier.padding(start = 6.dp),
-                        )
-                    }
-                    Text(
-                        text = stringResource(R.string.appearance_import_background_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-
-                    if (backgroundVisualizationEnabled && effectiveBackgroundAvatarId == SphereAvatar.id) {
-                        HorizontalDivider()
-                        Text(
-                            text = stringResource(R.string.appearance_sphere_skin),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            availableSkins.forEach { skin ->
-                                SphereSkinChip(
-                                    skin = skin,
-                                    brand = brand,
-                                    selected = skin.id == effectiveSkinId,
-                                    onClick = { connectionViewModel.setSphereSkin(skin.id) },
-                                )
-                            }
-                        }
-                        Text(
-                            text = stringResource(R.string.appearance_sphere_custom_desc),
+                            text = stringResource(R.string.appearance_language_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+
+                        val selectedLanguage = AppLanguage.fromLanguageTags(
+                            AppCompatDelegate.getApplicationLocales().toLanguageTags(),
+                        )
+                        val languageLabels = mapOf(
+                            AppLanguage.SYSTEM_DEFAULT to stringResource(R.string.appearance_language_system),
+                            AppLanguage.ENGLISH to stringResource(R.string.appearance_language_english),
+                            AppLanguage.GERMAN to stringResource(R.string.appearance_language_german),
+                            AppLanguage.BRAZILIAN_PORTUGUESE to stringResource(R.string.appearance_language_brazilian_portuguese),
+                            AppLanguage.JAPANESE to stringResource(R.string.appearance_language_japanese),
+                            AppLanguage.SIMPLIFIED_CHINESE to stringResource(R.string.appearance_language_simplified_chinese),
+                            AppLanguage.SPANISH to stringResource(R.string.appearance_language_spanish),
+                            AppLanguage.RUSSIAN to stringResource(R.string.appearance_language_russian),
+                        )
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            AppLanguage.entries.forEach { language ->
+                                FilterChip(
+                                    selected = language == selectedLanguage,
+                                    onClick = {
+                                        AppCompatDelegate.setApplicationLocales(language.toLocaleList())
+                                    },
+                                    label = { Text(languageLabels.getValue(language)) },
+                                    leadingIcon = if (language == selectedLanguage) {
+                                        {
+                                            Icon(
+                                                imageVector = Icons.Filled.Check,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Readability section. Theme mode and accent customization live
+                // directly under the preset gallery above.
+                Text(
+                    text = stringResource(R.string.appearance_appearance),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Card(
+                    modifier = Modifier
+                        .appearancePetSurface("display")
+                        .fillMaxWidth()
+                        .gradientBorder(
+                            shape = appearanceRoundedCornerShape(12.dp),
+                            isDarkTheme = isDarkTheme
+                        ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.appearance_readability_summary),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        // ── Font size ──────────────────────────────────────────
+                        //
+                        // Discrete stops applied globally via LocalDensity.fontScale
+                        // at the Compose theme root, plus pushed to xterm via
+                        // window.setFontSize through TerminalWebView.
+                        val fontScale by connectionViewModel.fontScale.collectAsState()
+                        val fontScaleOptions = listOf(0.85f, 1.0f, 1.15f, 1.3f)
+                        val fontScaleLabels = listOf(stringResource(R.string.appearance_font_small), stringResource(R.string.appearance_font_normal), stringResource(R.string.appearance_font_large), stringResource(R.string.appearance_font_larger))
+                        // Match the closest stop — float equality is fragile.
+                        val selectedFontScaleIndex = fontScaleOptions
+                            .withIndex()
+                            .minByOrNull { kotlin.math.abs(it.value - fontScale) }
+                            ?.index
+                            ?: 1
+
+                        Text(
+                            text = stringResource(R.string.appearance_font_size),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            fontScaleOptions.forEachIndexed { index, option ->
+                                SegmentedButton(
+                                    shape = SegmentedButtonDefaults.itemShape(
+                                        index = index,
+                                        count = fontScaleOptions.size
+                                    ),
+                                    onClick = { connectionViewModel.setFontScale(option) },
+                                    selected = index == selectedFontScaleIndex
+                                ) {
+                                    Text(fontScaleLabels[index])
+                                }
+                            }
+                        }
+
+                        // Subtle preview at the chosen scale. We multiply the
+                        // current bodyMedium fontSize by the selected stop so the
+                        // preview reflects the user's choice immediately, even
+                        // though everything else in the app already scales via
+                        // LocalDensity once they tap a stop.
+                        val previewBase = MaterialTheme.typography.bodyMedium
+                        Text(
+                            text = stringResource(R.string.appearance_font_preview),
+                            style = previewBase.copy(
+                                fontSize = previewBase.fontSize * fontScaleOptions[selectedFontScaleIndex]
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                // Font section — pick the app-wide body typeface. Each option renders
+                // its own label + sample line IN that font so the choice is legible
+                // before tapping; the selection re-themes every screen live.
+                Text(
+                    text = stringResource(R.string.appearance_font),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Card(
+                    modifier = Modifier
+                        .appearancePetSurface("font")
+                        .fillMaxWidth()
+                        .gradientBorder(
+                            shape = appearanceRoundedCornerShape(12.dp),
+                            isDarkTheme = isDarkTheme
+                        ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    val appFontId by connectionViewModel.appFont.collectAsState()
+                    val selectedFont = AppFont.byId(appFontId)
+
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = stringResource(R.string.appearance_font_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        AppFont.entries.forEach { font ->
+                            FontOptionRow(
+                                font = font,
+                                selected = font.id == selectedFont.id,
+                                onClick = { connectionViewModel.setAppFont(font.id) },
+                            )
+                        }
+                    }
+                }
+
+                // Animation section
+                Text(
+                    text = stringResource(R.string.appearance_animation),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Card(
+                    modifier = Modifier
+                        .appearancePetSurface("animation")
+                        .fillMaxWidth()
+                        .gradientBorder(
+                            shape = appearanceRoundedCornerShape(12.dp),
+                            isDarkTheme = isDarkTheme
+                        ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    val animEnabled by connectionViewModel.animationEnabled.collectAsState()
+                    val animBehindChat by connectionViewModel.animationBehindChat.collectAsState()
+                    val imageGenerationStyle by connectionViewModel.imageGenerationStyle.collectAsState()
+
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Animation enabled toggle
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.appearance_ascii_sphere),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = stringResource(R.string.appearance_ascii_sphere_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = animEnabled,
+                                onCheckedChange = { connectionViewModel.setAnimationEnabled(it) }
+                            )
+                        }
+
+                        HorizontalDivider()
+
+                        // Behind chat toggle
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(if (!animEnabled) Modifier.alpha(0.5f) else Modifier),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.appearance_behind_messages),
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                                Text(
+                                    text = stringResource(R.string.appearance_behind_messages_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = animBehindChat && animEnabled,
+                                onCheckedChange = { connectionViewModel.setAnimationBehindChat(it) },
+                                enabled = animEnabled
+                            )
+                        }
+
+                        // The ambient-mode entry is a gesture with no visible
+                        // control — this line is its discoverable documentation
+                        // (including for screen-reader users browsing settings).
+                        if (animEnabled) {
+                            Text(
+                                text = stringResource(R.string.appearance_ambient_tip),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        HorizontalDivider()
+
+                        Text(
+                            text = stringResource(R.string.appearance_image_generation_style),
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = stringResource(R.string.appearance_image_generation_style_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        val imageStyleOptions = listOf(
+                            "rotate" to stringResource(R.string.appearance_image_generation_rotate),
+                            "grid" to stringResource(R.string.appearance_image_generation_grid),
+                            "sphere" to stringResource(R.string.appearance_image_generation_sphere),
+                            "nodes" to stringResource(R.string.appearance_image_generation_nodes),
+                        )
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            imageStyleOptions.forEach { (id, label) ->
+                                FilterChip(
+                                    selected = imageGenerationStyle == id,
+                                    onClick = { connectionViewModel.setImageGenerationStyle(id) },
+                                    label = { Text(label) },
+                                    leadingIcon = if (imageGenerationStyle == id) {
+                                        {
+                                            Icon(
+                                                imageVector = Icons.Filled.Check,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(18.dp),
+                                            )
+                                        }
+                                    } else {
+                                        null
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Text(
+                    text = stringResource(R.string.appearance_background_visualization),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+
+                Card(
+                    modifier = Modifier
+                        .appearancePetSurface("background")
+                        .fillMaxWidth()
+                        .gradientBorder(
+                            shape = appearanceRoundedCornerShape(12.dp),
+                            isDarkTheme = isDarkTheme,
+                        ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    ),
+                ) {
+                    val backgroundVisualizationEnabled by
+                        connectionViewModel.backgroundVisualizationEnabled.collectAsState()
+                    val backgroundAvatarId by connectionViewModel.backgroundAvatar.collectAsState()
+                    val availableBackgroundAnimations = LocalAvailablePets.current
+                    val effectiveBackgroundAvatarId = backgroundAvatarId.takeIf { selectedId ->
+                        selectedId == SphereAvatar.id || availableBackgroundAnimations.any { it.id == selectedId }
+                    } ?: SphereAvatar.id
+                    val availableSkins = LocalAvailableSphereSkins.current
+                    val sphereSkinId by connectionViewModel.sphereSkin.collectAsState()
+                    val effectiveSkinId = SphereRegistry.resolve(
+                        selectedId = sphereSkinId,
+                        themeDefaultSkinId = selectedTheme.defaultSphereSkinId,
+                        available = availableSkins,
+                    ).id
+                    val brand = LocalBrand.current
+
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.appearance_background_visualization_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            FilterChip(
+                                selected = !backgroundVisualizationEnabled,
+                                onClick = { connectionViewModel.setBackgroundVisualizationEnabled(false) },
+                                label = { Text(stringResource(R.string.appearance_background_off)) },
+                            )
+                            FilterChip(
+                                selected = backgroundVisualizationEnabled && effectiveBackgroundAvatarId == SphereAvatar.id,
+                                onClick = { connectionViewModel.setBackgroundAvatar(SphereAvatar.id) },
+                                label = { Text(stringResource(R.string.appearance_background_sphere)) },
+                            )
+                        }
+
+                        if (availableBackgroundAnimations.isNotEmpty()) {
+                            Text(
+                                text = stringResource(R.string.appearance_background_installed),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                availableBackgroundAnimations.forEach { avatar ->
+                                    AgentAvatarChip(
+                                        avatar = avatar,
+                                        brand = brand,
+                                        selected = backgroundVisualizationEnabled && avatar.id == effectiveBackgroundAvatarId,
+                                        onClick = { connectionViewModel.setBackgroundAvatar(avatar.id) },
+                                    )
+                                }
+                            }
+                        }
+
                         OutlinedButton(
                             onClick = {
-                                sphereImportLauncher.launch(arrayOf("application/json", "text/json", "text/plain", "*/*"))
+                                backgroundImportLauncher.launch(
+                                    arrayOf("application/zip", "image/*", "application/octet-stream", "*/*")
+                                )
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
@@ -863,374 +838,424 @@ fun AppearanceSettingsScreen(
                                 modifier = Modifier.size(18.dp),
                             )
                             Text(
-                                text = stringResource(R.string.appearance_import_sphere),
+                                text = stringResource(R.string.appearance_import_background),
                                 modifier = Modifier.padding(start = 6.dp),
                             )
+                        }
+                        Text(
+                            text = stringResource(R.string.appearance_import_background_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+
+                        if (backgroundVisualizationEnabled && effectiveBackgroundAvatarId == SphereAvatar.id) {
+                            HorizontalDivider()
+                            Text(
+                                text = stringResource(R.string.appearance_sphere_skin),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                availableSkins.forEach { skin ->
+                                    SphereSkinChip(
+                                        skin = skin,
+                                        brand = brand,
+                                        selected = skin.id == effectiveSkinId,
+                                        onClick = { connectionViewModel.setSphereSkin(skin.id) },
+                                    )
+                                }
+                            }
+                            Text(
+                                text = stringResource(R.string.appearance_sphere_custom_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    sphereImportLauncher.launch(arrayOf("application/json", "text/json", "text/plain", "*/*"))
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    text = stringResource(R.string.appearance_import_sphere),
+                                    modifier = Modifier.padding(start = 6.dp),
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            // Floating pets are companions, not agent identity or background art.
-            Text(
-                text = stringResource(R.string.appearance_floating_pet),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Card(
-                modifier = Modifier
-                    .appearancePetSurface("floating-pet")
-                    .fillMaxWidth()
-                    .gradientBorder(
-                        shape = appearanceRoundedCornerShape(12.dp),
-                        isDarkTheme = isDarkTheme
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                // Floating pets are companions, not agent identity or background art.
+                Text(
+                    text = stringResource(R.string.appearance_floating_pet),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
                 )
-            ) {
-                val brand = LocalBrand.current
-                val availablePets = LocalAvailablePets.current
-                val activePet = LocalFloatingPet.current
 
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                Card(
+                    modifier = Modifier
+                        .appearancePetSurface("floating-pet")
+                        .fillMaxWidth()
+                        .gradientBorder(
+                            shape = appearanceRoundedCornerShape(12.dp),
+                            isDarkTheme = isDarkTheme
+                        ),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
                 ) {
-                    Text(
-                        text = stringResource(R.string.appearance_floating_pet_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    val brand = LocalBrand.current
+                    val availablePets = LocalAvailablePets.current
+                    val activePet = LocalFloatingPet.current
 
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        FilterChip(
-                            selected = activePet == null,
-                            onClick = { connectionViewModel.setFloatingPet(null) },
-                            label = { Text(stringResource(R.string.appearance_floating_pet_none)) },
-                        )
-                        availablePets.forEach { pet ->
-                            AgentAvatarChip(
-                                avatar = pet,
-                                brand = brand,
-                                selected = pet.id == activePet?.id,
-                                onClick = { connectionViewModel.setFloatingPet(pet.id) },
-                            )
-                        }
-                    }
-
-                    // Add / manage user pets in-app — the reliable alternative to
-                    // adb push (scoped storage blocks or stalls it on many devices).
-                    val userAvatars = availablePets.filter { it.source == AvatarSource.USER }
-
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                importLauncher.launch(
-                                    arrayOf("application/zip", "image/*", "application/octet-stream", "*/*")
-                                )
-                            },
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Add,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Text(
-                                text = stringResource(R.string.appearance_add_pet),
-                                modifier = Modifier.padding(start = 6.dp),
-                            )
-                        }
-                        TextButton(onClick = { connectionViewModel.refreshAgentAvatars() }) {
-                            Text(stringResource(R.string.appearance_rescan))
-                        }
-                        TextButton(onClick = onBrowsePetdex) {
-                            Text(stringResource(R.string.appearance_browse_petdex))
-                        }
-                        TextButton(onClick = onCreatePet) {
-                            Icon(
-                                imageVector = Icons.Filled.AutoAwesome,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Text(
-                                text = stringResource(R.string.appearance_create_pet),
-                                modifier = Modifier.padding(start = 6.dp),
-                            )
-                        }
-                    }
-
-                    Text(
-                        text = stringResource(R.string.appearance_add_pet_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    // Installed-pet management: a labeled list with per-pet remove.
-                    if (userAvatars.isNotEmpty()) {
                         Text(
-                            text = stringResource(R.string.appearance_installed_pets),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            text = stringResource(R.string.appearance_floating_pet_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        userAvatars.forEach { pet ->
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            FilterChip(
+                                selected = activePet == null,
+                                onClick = { connectionViewModel.setFloatingPet(null) },
+                                label = { Text(stringResource(R.string.appearance_floating_pet_none)) },
+                            )
+                            availablePets.forEach { pet ->
+                                AgentAvatarChip(
+                                    avatar = pet,
+                                    brand = brand,
+                                    selected = pet.id == activePet?.id,
+                                    onClick = { connectionViewModel.setFloatingPet(pet.id) },
+                                )
+                            }
+                        }
+
+                        // Add / manage user pets in-app — the reliable alternative to
+                        // adb push (scoped storage blocks or stalls it on many devices).
+                        val userAvatars = availablePets.filter { it.source == AvatarSource.USER }
+
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    importLauncher.launch(
+                                        arrayOf("application/zip", "image/*", "application/octet-stream", "*/*")
+                                    )
+                                },
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    text = stringResource(R.string.appearance_add_pet),
+                                    modifier = Modifier.padding(start = 6.dp),
+                                )
+                            }
+                            TextButton(onClick = { connectionViewModel.refreshAgentAvatars() }) {
+                                Text(stringResource(R.string.appearance_rescan))
+                            }
+                            TextButton(onClick = onBrowsePetdex) {
+                                Text(stringResource(R.string.appearance_browse_petdex))
+                            }
+                            TextButton(onClick = onCreatePet) {
+                                Icon(
+                                    imageVector = Icons.Filled.AutoAwesome,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Text(
+                                    text = stringResource(R.string.appearance_create_pet),
+                                    modifier = Modifier.padding(start = 6.dp),
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = stringResource(R.string.appearance_add_pet_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        // Installed-pet management: a labeled list with per-pet remove.
+                        if (userAvatars.isNotEmpty()) {
+                            Text(
+                                text = stringResource(R.string.appearance_installed_pets),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            userAvatars.forEach { pet ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = pet.label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                    IconButton(onClick = { pendingDelete = pet }) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Delete,
+                                            contentDescription = stringResource(R.string.appearance_remove_pet_cd, pet.label),
+                                            tint = MaterialTheme.colorScheme.error,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Pet playback-speed tuning (selected pet only) — scales the
+                        // authored fps live, no re-authoring or re-importing needed.
+                        if (activePet?.source == AvatarSource.USER) {
+                            HorizontalDivider()
+
+                            val petSpeed by connectionViewModel.petSpeed.collectAsState()
+                            val petSizeScale by connectionViewModel.petSizeScale.collectAsState()
+                            val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
+                            val petTemperament by connectionViewModel.petTemperament.collectAsState()
+                            Text(
+                                text = stringResource(R.string.appearance_playback_speed, "%.1f".format(java.util.Locale.US, petSpeed)),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Slider(
+                                value = petSpeed,
+                                onValueChange = { connectionViewModel.setPetSpeed(it) },
+                                valueRange = 0.5f..1.5f,
+                                steps = 9,
+                            )
+                            Text(
+                                text = stringResource(R.string.appearance_playback_speed_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+
+                            Text(
+                                text = stringResource(
+                                    R.string.appearance_pet_size,
+                                    (petSizeScale * 100f).roundToInt(),
+                                ),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Slider(
+                                value = petSizeScale,
+                                onValueChange = connectionViewModel::setPetSizeScale,
+                                valueRange = MIN_PET_SIZE_SCALE..MAX_PET_SIZE_SCALE,
+                                steps = 5,
+                            )
+                            Text(
+                                text = stringResource(R.string.appearance_pet_size_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(
-                                    text = pet.label,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                IconButton(onClick = { pendingDelete = pet }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Delete,
-                                        contentDescription = stringResource(R.string.appearance_remove_pet_cd, pet.label),
-                                        tint = MaterialTheme.colorScheme.error,
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = stringResource(R.string.appearance_stabilize),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.appearance_stabilize_desc),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                            }
-                        }
-                    }
-
-                    // Pet playback-speed tuning (selected pet only) — scales the
-                    // authored fps live, no re-authoring or re-importing needed.
-                    if (activePet?.source == AvatarSource.USER) {
-                        HorizontalDivider()
-
-                        val petSpeed by connectionViewModel.petSpeed.collectAsState()
-                        val petSizeScale by connectionViewModel.petSizeScale.collectAsState()
-                        val petRoamingEnabled by connectionViewModel.petRoamingEnabled.collectAsState()
-                        val petTemperament by connectionViewModel.petTemperament.collectAsState()
-                        Text(
-                            text = stringResource(R.string.appearance_playback_speed, "%.1f".format(java.util.Locale.US, petSpeed)),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Slider(
-                            value = petSpeed,
-                            onValueChange = { connectionViewModel.setPetSpeed(it) },
-                            valueRange = 0.5f..1.5f,
-                            steps = 9,
-                        )
-                        Text(
-                            text = stringResource(R.string.appearance_playback_speed_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-
-                        Text(
-                            text = stringResource(
-                                R.string.appearance_pet_size,
-                                (petSizeScale * 100f).roundToInt(),
-                            ),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Slider(
-                            value = petSizeScale,
-                            onValueChange = connectionViewModel::setPetSizeScale,
-                            valueRange = MIN_PET_SIZE_SCALE..MAX_PET_SIZE_SCALE,
-                            steps = 5,
-                        )
-                        Text(
-                            text = stringResource(R.string.appearance_pet_size_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = stringResource(R.string.appearance_stabilize),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                                Text(
-                                    text = stringResource(R.string.appearance_stabilize_desc),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                val petStabilize by connectionViewModel.petStabilize.collectAsState()
+                                Switch(
+                                    checked = petStabilize,
+                                    onCheckedChange = { connectionViewModel.setPetStabilize(it) },
                                 )
                             }
-                            val petStabilize by connectionViewModel.petStabilize.collectAsState()
-                            Switch(
-                                checked = petStabilize,
-                                onCheckedChange = { connectionViewModel.setPetStabilize(it) },
-                            )
-                        }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = stringResource(R.string.appearance_pet_roaming),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                                Text(
-                                    text = stringResource(R.string.appearance_pet_roaming_desc),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Switch(
-                                checked = petRoamingEnabled,
-                                onCheckedChange = { connectionViewModel.setPetRoamingEnabled(it) },
-                            )
-                        }
-
-                        Text(
-                            text = stringResource(R.string.appearance_pet_temperament),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = stringResource(R.string.appearance_pet_temperament_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        FlowRow(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .alpha(if (petRoamingEnabled) 1f else 0.6f),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            petTemperamentOptions.forEach { option ->
-                                FilterChip(
-                                    selected = option.temperament == petTemperament,
-                                    onClick = {
-                                        connectionViewModel.setPetTemperament(option.temperament)
-                                    },
-                                    enabled = petRoamingEnabled,
-                                    label = { Text(stringResource(option.labelRes)) },
-                                )
-                            }
-                        }
-                        Text(
-                            text = stringResource(
-                                petTemperamentOption(petTemperament).descriptionRes,
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.alpha(if (petRoamingEnabled) 1f else 0.6f),
-                        )
-                        TextButton(onClick = connectionViewModel::resetPetPlacement) {
-                            Text(stringResource(R.string.floating_pet_action_reset))
-                        }
-
-                        // Live state preview — drive the pet through each state to
-                        // verify look/speed/stabilization without running the agent.
-                        HorizontalDivider()
-                        Text(
-                            text = stringResource(R.string.appearance_preview),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-
-                        val previewStates = listOf(
-                            Triple(stringResource(R.string.appearance_state_idle), SphereState.Idle, 0f),
-                            Triple(stringResource(R.string.appearance_state_thinking), SphereState.Thinking, 0f),
-                            Triple(stringResource(R.string.appearance_state_working), SphereState.Thinking, 1f),
-                            Triple(stringResource(R.string.appearance_state_writing), SphereState.Streaming, 0f),
-                            Triple(stringResource(R.string.appearance_state_speaking), SphereState.Speaking, 0f),
-                            Triple(stringResource(R.string.appearance_state_listening), SphereState.Listening, 0f),
-                            Triple(stringResource(R.string.appearance_state_error), SphereState.Error, 0f),
-                        )
-                        var previewIdx by remember { mutableIntStateOf(0) }
-                        var greetKey by remember { mutableIntStateOf(0) }
-                        var overrideState by remember { mutableStateOf<SphereState?>(null) }
-                        val previewScope = rememberCoroutineScope()
-                        val sel = previewStates[previewIdx.coerceIn(0, previewStates.lastIndex)]
-                        val previewSphereState = overrideState ?: sel.second
-                        val previewBurst = if (overrideState != null) 0f else sel.third
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(160.dp)
-                                .clip(appearanceRoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.surface),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Box(
-                                modifier = Modifier.size(
-                                    floatingPetDimensions(
-                                        compact = false,
-                                        sizeScale = petSizeScale,
-                                    ).visualSizeDp.dp,
-                                ),
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                key(greetKey) {
-                                    activePet.Render(
-                                        state = AvatarRenderState(
-                                            state = previewSphereState,
-                                            toolCallBurst = previewBurst,
-                                        ),
-                                        modifier = Modifier.fillMaxSize(),
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = stringResource(R.string.appearance_pet_roaming),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.appearance_pet_roaming_desc),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = petRoamingEnabled,
+                                    onCheckedChange = { connectionViewModel.setPetRoamingEnabled(it) },
+                                )
+                            }
+
+                            Text(
+                                text = stringResource(R.string.appearance_pet_temperament),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                            Text(
+                                text = stringResource(R.string.appearance_pet_temperament_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            FlowRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .alpha(if (petRoamingEnabled) 1f else 0.6f),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                petTemperamentOptions.forEach { option ->
+                                    FilterChip(
+                                        selected = option.temperament == petTemperament,
+                                        onClick = {
+                                            connectionViewModel.setPetTemperament(option.temperament)
+                                        },
+                                        enabled = petRoamingEnabled,
+                                        label = { Text(stringResource(option.labelRes)) },
                                     )
                                 }
                             }
-                        }
-
-                        FlowRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            previewStates.forEachIndexed { i, s ->
-                                FilterChip(
-                                    selected = overrideState == null && previewIdx == i,
-                                    onClick = {
-                                        overrideState = null
-                                        previewIdx = i
-                                    },
-                                    label = { Text(s.first) },
-                                )
+                            Text(
+                                text = stringResource(
+                                    petTemperamentOption(petTemperament).descriptionRes,
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.alpha(if (petRoamingEnabled) 1f else 0.6f),
+                            )
+                            TextButton(onClick = connectionViewModel::resetPetPlacement) {
+                                Text(stringResource(R.string.floating_pet_action_reset))
                             }
-                        }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            OutlinedButton(onClick = { greetKey++ }) { Text(stringResource(R.string.appearance_greet)) }
-                            OutlinedButton(onClick = {
-                                // Replay celebrate by driving Speaking → Idle on the
-                                // live instance (the transition fires the one-shot).
-                                previewScope.launch {
-                                    overrideState = SphereState.Speaking
-                                    delay(150)
-                                    overrideState = SphereState.Idle
-                                    delay(2500)
-                                    overrideState = null
+                            // Live state preview — drive the pet through each state to
+                            // verify look/speed/stabilization without running the agent.
+                            HorizontalDivider()
+                            Text(
+                                text = stringResource(R.string.appearance_preview),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+
+                            val previewStates = listOf(
+                                Triple(stringResource(R.string.appearance_state_idle), SphereState.Idle, 0f),
+                                Triple(stringResource(R.string.appearance_state_thinking), SphereState.Thinking, 0f),
+                                Triple(stringResource(R.string.appearance_state_working), SphereState.Thinking, 1f),
+                                Triple(stringResource(R.string.appearance_state_writing), SphereState.Streaming, 0f),
+                                Triple(stringResource(R.string.appearance_state_speaking), SphereState.Speaking, 0f),
+                                Triple(stringResource(R.string.appearance_state_listening), SphereState.Listening, 0f),
+                                Triple(stringResource(R.string.appearance_state_error), SphereState.Error, 0f),
+                            )
+                            var previewIdx by remember { mutableIntStateOf(0) }
+                            var greetKey by remember { mutableIntStateOf(0) }
+                            var overrideState by remember { mutableStateOf<SphereState?>(null) }
+                            val previewScope = rememberCoroutineScope()
+                            val sel = previewStates[previewIdx.coerceIn(0, previewStates.lastIndex)]
+                            val previewSphereState = overrideState ?: sel.second
+                            val previewBurst = if (overrideState != null) 0f else sel.third
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(160.dp)
+                                    .clip(appearanceRoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surface),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Box(
+                                    modifier = Modifier.size(
+                                        floatingPetDimensions(
+                                            compact = false,
+                                            sizeScale = petSizeScale,
+                                        ).visualSizeDp.dp,
+                                    ),
+                                ) {
+                                    key(greetKey) {
+                                        activePet.Render(
+                                            state = AvatarRenderState(
+                                                state = previewSphereState,
+                                                toolCallBurst = previewBurst,
+                                            ),
+                                            modifier = Modifier.fillMaxSize(),
+                                        )
+                                    }
                                 }
-                            }) { Text(stringResource(R.string.appearance_done)) }
+                            }
+
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                previewStates.forEachIndexed { i, s ->
+                                    FilterChip(
+                                        selected = overrideState == null && previewIdx == i,
+                                        onClick = {
+                                            overrideState = null
+                                            previewIdx = i
+                                        },
+                                        label = { Text(s.first) },
+                                    )
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                OutlinedButton(onClick = { greetKey++ }) { Text(stringResource(R.string.appearance_greet)) }
+                                OutlinedButton(onClick = {
+                                    // Replay celebrate by driving Speaking → Idle on the
+                                    // live instance (the transition fires the one-shot).
+                                    previewScope.launch {
+                                        overrideState = SphereState.Speaking
+                                        delay(150)
+                                        overrideState = SphereState.Idle
+                                        delay(2500)
+                                        overrideState = null
+                                    }
+                                }) { Text(stringResource(R.string.appearance_done)) }
+                            }
+
+                            Text(
+                                text = stringResource(R.string.appearance_preview_tip),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
 
-                        Text(
-                            text = stringResource(R.string.appearance_preview_tip),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
                     }
-
+                }
                 }
             }
         }
@@ -1303,6 +1328,100 @@ private fun AppearanceModeControl(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+    }
+}
+
+/** Classic / Clean information-density picker, styled like the mode control. */
+@Composable
+private fun AppearanceLayoutControl(
+    selected: LayoutStyle,
+    onSelected: (LayoutStyle) -> Unit,
+) {
+    val labels = mapOf(
+        LayoutStyle.CLASSIC to stringResource(R.string.appearance_layout_classic),
+        LayoutStyle.CLEAN to stringResource(R.string.appearance_layout_clean),
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = stringResource(R.string.appearance_layout),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(40.dp),
+            shape = appearanceRoundedCornerShape(22.dp),
+            color = Color.Transparent,
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                LayoutStyle.entries.forEachIndexed { index, style ->
+                    if (index > 0) {
+                        VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
+                    }
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .background(
+                                if (style == selected) MaterialTheme.colorScheme.surfaceContainerHigh
+                                else Color.Transparent,
+                            )
+                            .clickable { onSelected(style) },
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (style == selected) {
+                            Icon(Icons.Filled.Check, null, Modifier.size(15.dp))
+                            Spacer(Modifier.width(5.dp))
+                        }
+                        Text(labels.getValue(style), style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+        }
+        Text(
+            text = stringResource(
+                if (selected == LayoutStyle.CLEAN) {
+                    R.string.appearance_layout_clean_summary
+                } else {
+                    R.string.appearance_layout_classic_summary
+                },
+            ),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Disclosure row that reveals the less frequently changed Appearance sections. */
+@Composable
+private fun AppearanceMoreToggle(
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(appearanceRoundedCornerShape(12.dp))
+            .clickable(onClick = onToggle)
+            .padding(vertical = 12.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.appearance_more_options),
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                text = stringResource(R.string.appearance_more_options_summary),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Icon(
+            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = null,
+        )
     }
 }
 

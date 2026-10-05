@@ -279,6 +279,7 @@ import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.SubagentLane
 import com.hermesandroid.relay.ui.components.ToolActivityRun
+import com.hermesandroid.relay.ui.components.cleanTurnToolItems
 import com.hermesandroid.relay.ui.components.ToolProgressCard
 import com.hermesandroid.relay.ui.components.ToolTranscriptItem
 import com.hermesandroid.relay.ui.components.groupTranscriptTools
@@ -292,6 +293,7 @@ import com.hermesandroid.relay.util.HumanErrorAction
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import kotlin.math.abs
+import com.hermesandroid.relay.ui.theme.isCleanLayout
 import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -2817,13 +2819,14 @@ fun ChatScreen(
                 },
     ) {
         val isDarkTheme = LocalBrand.current.isDark
+        val cleanLayout = isCleanLayout
 
         Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(RelayRefresh.Background)
-                .relayGridTexture(alpha = 0.14f)
+                .then(if (cleanLayout) Modifier else Modifier.relayGridTexture(alpha = 0.14f))
                 .imePadding()
                 .alpha(chatAlpha)
         ) {
@@ -3130,19 +3133,25 @@ fun ChatScreen(
                                 modifier = Modifier.padding(end = 4.dp),
                             )
                         }
+                        if (!cleanLayout) {
+                            RelayChromeIconButton(
+                                icon = Icons.Filled.Code,
+                                contentDescription = stringResource(R.string.cd_terminal),
+                                onClick = onNavigateToTerminal,
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                        }
+                    }
+                    // Clean layout folds Terminal + Settings into the ⋮ menu so
+                    // the header carries only identity plus one action.
+                    if (!cleanLayout) {
                         RelayChromeIconButton(
-                            icon = Icons.Filled.Code,
-                            contentDescription = stringResource(R.string.cd_terminal),
-                            onClick = onNavigateToTerminal,
+                            icon = Icons.Filled.Tune,
+                            contentDescription = stringResource(R.string.cd_settings),
+                            onClick = onNavigateToSettings,
                             modifier = Modifier.padding(end = 4.dp),
                         )
                     }
-                    RelayChromeIconButton(
-                        icon = Icons.Filled.Tune,
-                        contentDescription = stringResource(R.string.cd_settings),
-                        onClick = onNavigateToSettings,
-                        modifier = Modifier.padding(end = 4.dp),
-                    )
                     // Share is the least-used trailing action (and only valid
                     // once there's a conversation), so it folds into a ⋮
                     // overflow instead of competing for width with Terminal +
@@ -3150,22 +3159,56 @@ fun ChatScreen(
                     // Session identity is useful before the first message; sharing only appears
                     // once the conversation has content.
                     if (
+                        cleanLayout ||
                         (!supervised && (messages.isNotEmpty() || !currentSessionId.isNullOrBlank())) ||
                         (supervised && messages.isNotEmpty() &&
                             supervisedPolicy.allowsSessionAction(SupervisedSessionAction.ShareTranscript))
                     ) {
                         var showOverflowMenu by remember { mutableStateOf(false) }
                         Box {
-                            RelayChromeIconButton(
-                                icon = Icons.Filled.MoreVert,
-                                contentDescription = stringResource(R.string.chat_more_actions_a11y),
-                                onClick = { showOverflowMenu = true },
-                                modifier = Modifier.padding(end = 4.dp),
-                            )
+                            if (cleanLayout) {
+                                IconButton(onClick = { showOverflowMenu = true }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.MoreVert,
+                                        contentDescription = stringResource(R.string.chat_more_actions_a11y),
+                                    )
+                                }
+                            } else {
+                                RelayChromeIconButton(
+                                    icon = Icons.Filled.MoreVert,
+                                    contentDescription = stringResource(R.string.chat_more_actions_a11y),
+                                    onClick = { showOverflowMenu = true },
+                                    modifier = Modifier.padding(end = 4.dp),
+                                )
+                            }
                             DropdownMenu(
                                 expanded = showOverflowMenu,
                                 onDismissRequest = { showOverflowMenu = false },
                             ) {
+                                if (cleanLayout) {
+                                    if (!supervised) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.cd_terminal)) },
+                                            leadingIcon = {
+                                                Icon(Icons.Filled.Code, contentDescription = null)
+                                            },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                onNavigateToTerminal()
+                                            },
+                                        )
+                                    }
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.cd_settings)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Tune, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            onNavigateToSettings()
+                                        },
+                                    )
+                                }
                                 currentSessionId?.takeIf { !supervised && it.isNotBlank() }?.let { sessionId ->
                                     DropdownMenuItem(
                                         text = { Text(copySessionIdLabel) },
@@ -3669,6 +3712,15 @@ fun ChatScreen(
                     val petJourneyPerchUiKeys = remember(messages) {
                         petPerchUiKeys(messages)
                     }
+                    // Clean layout: assistant prose spans the transcript column.
+                    val cleanAssistantWidth = (
+                        responsiveLayout.transcriptMaxWidth
+                            ?: LocalConfiguration.current.screenWidthDp.dp
+                        ) - 24.dp
+                    // Clean layout: one routine-tool summary per assistant turn.
+                    val cleanTurnTools = remember(messages, cleanLayout) {
+                        if (cleanLayout) cleanTurnToolItems(messages) else null
+                    }
                     val visibleMessageKeys by remember(listState) {
                         derivedStateOf {
                             listState.layoutInfo.visibleItemsInfo
@@ -3805,7 +3857,11 @@ fun ChatScreen(
                                     } else {
                                         null
                                     },
-                                    maxBubbleWidth = maxBubbleWidth,
+                                    maxBubbleWidth = if (cleanLayout && message.role == MessageRole.ASSISTANT) {
+                                        cleanAssistantWidth
+                                    } else {
+                                        maxBubbleWidth
+                                    },
                                     showThinking = showThinking,
                                     showAgentIdentity = !supervised || supervisedVisibility.showAgentIdentity,
                                     showTimestamps = !supervised || supervisedVisibility.showTimestamps,
@@ -3959,7 +4015,8 @@ fun ChatScreen(
                                 // activity; the null group retains source order
                                 // while routine calls collapse into runs.
                                 val laneGroups = message.toolCalls.groupBy { it.taskIndex }
-                                val transcriptTools = groupTranscriptTools(laneGroups[null].orEmpty())
+                                val transcriptTools = cleanTurnTools?.get(message.uiKey)
+                                    ?: groupTranscriptTools(laneGroups[null].orEmpty())
                                 transcriptTools.forEachIndexed { itemIndex, item ->
                                     when (item) {
                                         is ToolTranscriptItem.ActivityRun -> {

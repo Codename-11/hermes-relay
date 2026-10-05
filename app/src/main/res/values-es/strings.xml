@@ -3173,6 +3173,13 @@
     <string name="tool_output_risk_a11y">, riesgo de salida %1$s</string>
     <string name="tool_output_risk_findings">Hallazgos de riesgo en la salida</string>
     <string name="tool_output_risk_redacted">Los fragmentos confidenciales se ocultaron en el servidor.</string>
+    <string name="appearance_layout">Diseño</string>
+    <string name="appearance_layout_classic">Clásico</string>
+    <string name="appearance_layout_clean">Limpio</string>
+    <string name="appearance_layout_classic_summary">Todos los detalles en pantalla: burbujas, etiquetas de remitente, horas y la barra de estado.</string>
+    <string name="appearance_layout_clean_summary">Menos en pantalla. Las respuestas se leen como texto abierto, los detalles aparecen al tocar un mensaje y la barra de estado solo se muestra cuando la conexión necesita atención.</string>
+    <string name="appearance_more_options">Más opciones de apariencia</string>
+    <string name="appearance_more_options_summary">Idioma, tamaño de texto, fuente, animación, fondo y mascotas</string>
     <string name="appearance_language">Idioma</string>
     <string name="appearance_language_desc">Elige el idioma de Hermes-Relay. La opción predeterminada del sistema sigue la configuración del dispositivo.</string>
     <string name="appearance_language_system">Predeterminado del sistema</string>

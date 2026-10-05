@@ -1267,6 +1267,12 @@ The gateway-platform model is the *correct + sufficient architecture* (the phone
 - **`silenceThresholdMs` default change (3000 → 1250 ms) is user-facing.** Confirm on-device that 1.25 s end-of-speech doesn't clip slow speakers in real use, and that the new 12 s idle/no-speech auto-close (which now also applies to Tap-to-talk — previously "wait forever") feels right. Easy to revert the default if too aggressive.
 - **Standard voice config targets the launch-profile config (`profile = null`).** Standard voice is host-global, so the editor writes the base `config.yaml`. If a user runs a non-default *launch* profile, revisit whether to scope the config write to the active profile (the dashboard `/api/config?profile=` supports it).
 - **CLI `voice.*` config not surfaced.** The editor covers `tts.*`/`stt.*`; the separate `voice.*` block (record_key, beep_enabled, the CLI's own silence_threshold/duration) is intentionally out of scope — surface it only if a phone use-case appears.
+## Clean layout + Clean/Material You themes — follow-ups
+
+- **On-device verification.** Clean layout: assistant prose spans the column with no bubble, tap reveals time/tokens/"Delivered", failed/sending states stay visible, one routine-tool summary per assistant turn, Terminal/Settings in the chat ⋮ menu, and the footer strip appears only offline or reconnecting. Material You: wallpaper colors apply on Android 12+ and the Clean fallback below that.
+- **Material 3 Expressive motion.** Clean layout should opt into `MotionScheme.expressive()`, which is internal in the pinned material3 1.4.0. Wire it through `HermesRelayTheme` once the BOM ships a material3 release that exposes it.
+- **Composer pickers in Clean.** Model and reasoning pickers render as quiet text buttons. A further step is to hide the reasoning picker while it is on the server default and surface it from the model sheet instead.
+
 ## Chat UI refresh — follow-ups
 
 - **`/font <name>` slash command (optional, deferred).** The chat-UX brief floated a chat slash command mirroring the Appearance Font picker. Deferred to keep the work inside the chat-UI/theme lane: it needs the command intercepted in the chat send path (`ChatViewModel`) before it forwards to the server, plus a `SlashCommand` palette entry. The settings picker is the primary, shipped surface. Add `/font` later as a thin wrapper over `ConnectionViewModel.setAppFont`, discoverable via the slash palette.

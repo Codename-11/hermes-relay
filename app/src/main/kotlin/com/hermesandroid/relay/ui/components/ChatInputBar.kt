@@ -57,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,6 +77,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.isCleanLayout
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.appearanceComposerShape
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
@@ -708,11 +710,21 @@ private fun ChatInputPickerChip(
         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
     }
 
+    // Clean layout renders pickers as quiet text buttons rather than outlined chips.
+    val cleanLayout = isCleanLayout
     Box(modifier = modifier) {
         Surface(
             shape = appearanceRoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.32f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)),
+            color = if (cleanLayout) {
+                Color.Transparent
+            } else {
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.32f)
+            },
+            border = if (cleanLayout) {
+                null
+            } else {
+                BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+            },
             modifier = Modifier
                 .heightIn(min = 32.dp)
                 .clip(appearanceRoundedCornerShape(12.dp))
