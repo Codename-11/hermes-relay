@@ -12,6 +12,22 @@ independent of the Hermes-Relay service. It renders a tokenless setup QR contain
 standard Dashboard/Gateway connection. Hermes-Relay pairing remains a separate,
 explicit **Pair new device** flow.
 
+Pairing receipts show the advertised Dashboard and Relay surfaces. The dialog
+distinguishes Android Dashboard ingress from routes the current CLI+UI can use.
+Direct URL-and-code pairing and signed Secure Link invite import have separate
+instructions. Choose **Hermes-Relay CLI+UI** in the pairing dialog, then paste
+the copied invite in the management UI's **Pair host → Paste invite** form or
+use `hermes-relay pair --pair-qr`. This explicit client choice requests existing
+direct Relay compatibility candidates; it does not publish a listener. Older
+mint responses cannot overwrite a newly selected client or connection mode.
+
+Upstream requires user plugins to be explicitly enabled. A newly installed
+backend needs a Dashboard process restart after activation; a discovery rescan
+alone does not mount its Python routes.
+The optional upstream `plugins.isolation: host` forwarder supports buffered
+HTTP, not plugin WebSockets; Dashboard Relay transport currently requires the
+default `in_process` mode.
+
 **Remote Access → Hermes Secure Link → Set up Secure Link** runs the host's
 read-only preflight, displays blockers and restart impact, and supplies settings
 for the existing Relay owner. **Check again** must confirm the active selected

@@ -148,6 +148,25 @@ export function pairingSurfaceProbes(receipt) {
   );
 }
 
+/** Routes the current CLI can dial without Dashboard WebSocket ticket auth. */
+export function desktopPairingRoutes(receipt) {
+  if (!receipt || receipt.blockingIssues.length) return [];
+  return receipt.routes.filter((route) => route.surfaces.some((surface) =>
+    surface.surface === "relay" && !isDashboardRelayIngressUrl(surface.url),
+  ));
+}
+
+export function pairingAddressProtocol(raw) {
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:", "ws:", "wss:"].includes(url.protocol)) return "";
+    const port = url.port || (["https:", "wss:"].includes(url.protocol) ? "443" : "80");
+    return `${url.protocol.slice(0, -1).toUpperCase()} · port ${port}`;
+  } catch (_err) {
+    return "";
+  }
+}
+
 export function pairingProbeKey(entry) {
   return [entry.role, entry.priority, entry.surface, entry.url].join("|");
 }

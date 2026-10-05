@@ -19,13 +19,34 @@ use the [recommended Tailscale or TLS setup](../guide/remote-access.md).
 
 ## Recommended — paste the complete invite
 
-Create the invite from whichever Hermes surface is already open:
+In the Web Dashboard, open **Relay → Pair new device**, choose
+**Hermes-Relay CLI+UI** under **Pairing client**, then click **Copy invite**.
+This includes the existing direct Relay compatibility routes; it does not
+publish a listener. Verify a direct or Secure Link route is reachable from the
+computer. Default Android invites use authenticated Dashboard Relay ingress,
+which CLI+UI does not yet support.
 
-1. **Web Dashboard:** open **Relay → Pair new device → Copy invite**.
-2. **Official Hermes Desktop:** open the **Relay** pane, click **Pair new
-   device**, then **Copy**.
-3. **Host terminal:** run `hermes pair` and copy the printed
-   `hermes-relay://pair?...` invite URL.
+On Windows, open **CLI+UI → Hosts → Pair host → Paste invite**, paste the full
+snippet using **Paste** (or Ctrl+V), then click **Import and pair**. The management
+UI invokes the installed
+CLI to validate and pair, preserving alternative routes and certificate trust.
+It keeps the invite only in the form while it is open. **URL + code** remains
+available for direct Relay pairing.
+
+Alternatively, on the host run `hermes pair --legacy-direct-relay` and copy the
+printed `hermes-relay://pair?...` invite URL. An official Hermes Desktop invite
+works only when it includes a direct Relay or pinned Secure Link route.
+
+Host terminal output lists advertised internal/LAN, Tailscale, and configured
+public addresses with their HTTP(S) or WebSocket protocol and effective port.
+Use the **Relay WebSocket** address for CLI+UI, rather than the Dashboard or
+optional API address. A loopback address such as `127.0.0.1` is host-only.
+The `/relay pair` chat command also shows an address receipt.
+
+Direct Relay routes must be deliberately reachable. A public Dashboard address
+does not publish Relay port `8767`. Pinned Secure Link invites require the full
+invite flow; use **Paste invite** in the management UI or `--pair-qr` in the CLI.
+The management UI's **URL + code** form does not import pins.
 
 On the computer you are pairing:
 
@@ -51,14 +72,13 @@ Use this only when the full invite cannot be copied.
 SSH into your Hermes host (or use any terminal already on it):
 
 ```bash
-hermes pair --ttl 600
+hermes pair --ttl 600 --legacy-direct-relay
 ```
 
 Output:
 ```
-  Code         : F3W7EY
-  Relay        : ws://127.0.0.1:8767
-  Session TTL  : 600 seconds
+  Direct Relay / LAN
+    Relay WebSocket: ws://192.168.1.50:8767 (WS, port 8767)
 ```
 
 The code is valid for **10 minutes** (the default) and **single-use**. After first successful pair it's consumed. Adjust TTL (how long the minted session token stays valid) with `--ttl 86400` (1 day), `--ttl 2592000` (30 days), etc. — `0` means never expire (not recommended outside LAN).
@@ -169,19 +189,21 @@ Probing 3 endpoint(s)…
 On the server:
 
 ```bash
-# All three routes
-hermes pair --mode auto --public-url https://hermes.example.com
+# Advertised routes plus the explicit direct Relay compatibility listener
+hermes pair --mode auto --legacy-direct-relay
 
-# Or specific:
-hermes pair --mode lan
-hermes pair --mode tailscale
-hermes pair --mode public --public-url https://hermes.example.com
+# Trusted LAN fallback
+hermes pair --mode lan --legacy-direct-relay
 ```
 
-The output is a JSON blob (printed alongside the QR). Copy it verbatim and paste to the CLI:
+For public direct Relay access, configure a deliberate TLS reverse-proxy route
+first. A Dashboard origin alone is insufficient. Secure Link invites carry
+their own paired certificate trust and can use the CLI invite flow.
+
+Copy the printed invite URL and paste it to the CLI:
 
 ```bash
-hermes-relay pair --pair-qr '{"hermes":3,"host":"192.168.1.10","port":8642,"key":"ABC123","endpoints":[...]}'
+hermes-relay pair --pair-qr 'hermes-relay://pair?payload=…'
 ```
 
 Or via env:

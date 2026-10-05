@@ -24,6 +24,16 @@ Link trust. The tray and CLI use the same saved host trust; neither enables the
 server, rotates its certificate, or treats transport reachability as Dashboard
 sign-in. Generate a fresh invite and explicitly re-pair after identity changes.
 
+The Windows management UI also accepts the complete snippet under **Hosts →
+Pair host → Paste invite**. In the Dashboard's **Pair new device** dialog, choose
+**Hermes-Relay CLI+UI**, then **Copy invite**. The UI delegates import to the
+installed CLI through a child-process environment variable, keeps the invite
+out of command arguments and activity records, and does not save the form
+contents. The **Paste** button reads the local Windows clipboard only when
+clicked; Ctrl+V remains available. Manual **URL + code** pairing remains available. A compatible direct
+Relay or Secure Link route must be reachable; copying an invite does not create
+network reachability or grant desktop-tool permissions automatically.
+
 > **What this is not:** A local Hermes install. Point it at an existing Hermes-Relay server (`ws://host:8767`). For the full TUI with Ink, see the sibling package [`ui-tui`](../../hermes-agent-tui-smoke/ui-tui) in the hermes-agent fork.
 
 ## Desktop surfaces

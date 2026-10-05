@@ -10,6 +10,8 @@ import {
   pairingEndpointReceipt,
   pairingProbeStatus,
   pairingSurfaceProbes,
+  desktopPairingRoutes,
+  pairingAddressProtocol,
 } from "../src/lib/pairing-receipt.mjs";
 
 test("pairing QR keeps integer modules and a four-module quiet zone", () => {
@@ -271,4 +273,29 @@ test("public route input distinguishes dashboard origins from legacy Relay paths
   );
   assert.equal(classifyPublicRouteInput("https://user:secret@agent.example").kind, "invalid");
   assert.equal(classifyPublicRouteInput("https://agent.example?token=secret").kind, "invalid");
+});
+
+test("CLI compatibility distinguishes Dashboard ingress from direct and pinned routes", () => {
+  const ingress = { role: "public", dashboard: { url: "https://hermes.example" },
+    relay: { url: "wss://hermes.example/api/plugins/hermes-relay/transport" } };
+  assert.equal(desktopPairingRoutes(pairingEndpointReceipt({endpoints:[ingress]})).length, 0);
+  const receipt = pairingEndpointReceipt({endpoints:[ingress,
+    {role:"legacy_direct", relay:{url:"ws://192.168.1.50:8767"}},
+  ]});
+  assert.deepEqual(desktopPairingRoutes(receipt).map(route=>route.role), ["legacy_direct"]);
+  assert.equal(desktopPairingRoutes(pairingEndpointReceipt({endpoints:[{
+    role:"public_legacy", relay:{url:"ws://hermes.example:8767"},
+  }]})).length, 0);
+  const pinned = pairingEndpointReceipt({endpoints:[{role:"secure_link", proxy:{
+    url:"https://secure.example:9443", surfaces:["relay"],
+    pin_sha256:"sha256/"+"A".repeat(43)+"=", cert_der:"test-cert",
+  }}]});
+  assert.equal(desktopPairingRoutes(pinned).length, 1);
+});
+
+test("address protocol makes default and non-default ports explicit", () => {
+  assert.equal(pairingAddressProtocol("wss://hermes.example/relay"), "WSS · port 443");
+  assert.equal(pairingAddressProtocol("http://192.168.1.50:9119"), "HTTP · port 9119");
+  assert.equal(pairingAddressProtocol("ws://[fd00::5]:8767"), "WS · port 8767");
+  assert.equal(pairingAddressProtocol("invalid"), "");
 });

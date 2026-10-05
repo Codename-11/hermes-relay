@@ -11,6 +11,8 @@ import {
   pairingProbeKey,
   pairingProbeStatus,
   pairingSurfaceProbes,
+  desktopPairingRoutes,
+  pairingAddressProtocol,
 } from "../lib/pairing-receipt.mjs";
 import { Button, Badge } from "../lib/ui-shims.jsx";
 
@@ -32,6 +34,7 @@ const LS_PREFER = "hermes-relay-pair-prefer";
 const LS_HOST   = "hermes-relay-pair-host";
 const LS_PORT   = "hermes-relay-pair-port";
 const LS_TLS    = "hermes-relay-pair-tls";
+const LS_CLIENT = "hermes-relay-pair-client";
 
 const MODES = [
   { value: "auto",      label: "Auto (all reachable candidates)" },
@@ -58,6 +61,7 @@ function writeString(key, value) {
 function loadSettings() {
   const rawPort = parseInt(readString(LS_PORT, ""), 10);
   return {
+    client: readString(LS_CLIENT, "android") === "desktop" ? "desktop" : "android",
     mode:   readString(LS_MODE, "auto") || "auto",
     prefer: readString(LS_PREFER, "") || "",
     // Advanced overrides — usually unused since `mode=auto` derives
@@ -70,6 +74,7 @@ function loadSettings() {
   };
 }
 function saveSettings(s) {
+  writeString(LS_CLIENT, s.client || "android");
   writeString(LS_MODE, s.mode || "auto");
   writeString(LS_PREFER, s.prefer || "");
   writeString(LS_HOST, s.host || "");
@@ -81,6 +86,7 @@ function useCountdown(expiresAt) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   useEffect(() => {
     if (!expiresAt) return undefined;
+    setNow(Math.floor(Date.now() / 1000));
     const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(id);
   }, [expiresAt]);
@@ -122,6 +128,7 @@ export default function PairDialog({ open, onClose }) {
   // operator tabs through hostnames and silently reuses old consent.
   const [proxyConfirmed, setProxyConfirmed] = useState(false);
   const canvasRef = useRef(null);
+  const mintGeneration = useRef(0);
   const countdown = useCountdown(state.data ? state.data.expires_at : null);
 
   const receipt = useMemo(
@@ -129,6 +136,7 @@ export default function PairDialog({ open, onClose }) {
     [state.data],
   );
   const probes = useMemo(() => pairingSurfaceProbes(receipt), [receipt]);
+  const cliRoutes = desktopPairingRoutes(receipt);
   const probeByKey = useMemo(() => {
     const byKey = new Map();
     (probeState.results || []).forEach((result) => byKey.set(pairingProbeKey(result), result));
@@ -142,6 +150,7 @@ export default function PairDialog({ open, onClose }) {
 
   const mint = useCallback(async (s) => {
     const use = s || settings;
+    const generation = ++mintGeneration.current;
     setState({ status: "loading" });
     try {
       const dashboardUrl = canonicalDashboardOrigin(window.location);
@@ -160,11 +169,14 @@ export default function PairDialog({ open, onClose }) {
         mode: use.mode || "auto",
         prefer: use.prefer || undefined,
         dashboard_url: dashboardUrl,
+        legacy_direct_relay: use.client === "desktop" ? true : undefined,
         ...overrides,
       });
+      if (generation !== mintGeneration.current) return;
       setCopyStatus("");
       setState({ status: "ok", data });
     } catch (err) {
+      if (generation !== mintGeneration.current) return;
       setState({ status: "error", error: err && err.message ? err.message : String(err) });
     }
   }, [settings]);
@@ -215,6 +227,7 @@ export default function PairDialog({ open, onClose }) {
 
   useEffect(() => {
     if (open) return;
+    mintGeneration.current += 1;
     setState({ status: "idle" });
     setCopyStatus("");
     setProbeState({ status: "idle", results: [] });
@@ -235,10 +248,14 @@ export default function PairDialog({ open, onClose }) {
     }
     // Re-mint with the new settings. Debouncing isn't worth it — the
     // dropdowns only fire on user action, not typing.
-    if (remint) setState({ status: "idle" });
+    if (remint) {
+      mintGeneration.current += 1;
+      setState({ status: "idle" });
+    }
   }, []);
 
   const regenerate = useCallback(() => {
+    mintGeneration.current += 1;
     setState({ status: "idle" });
     // Re-enter the auto-mint path; if the host is proxy-fronted, the
     // confirm block will render instead of an actual mint.
@@ -279,7 +296,7 @@ export default function PairDialog({ open, onClose }) {
             <Badge variant="outline" className="text-xs">Hermes-Relay Plugin</Badge>
           </div>
           <DialogDescription>
-            Scan with Hermes-Relay Android or copy the invite for Desktop CLI.
+            Scan with Android or copy a CLI+UI invite for another computer.
           </DialogDescription>
         </DialogHeader>
 
@@ -353,6 +370,31 @@ export default function PairDialog({ open, onClose }) {
 
           <section className="hr-pair-options-column">
             <div className="hr-pair-panel">
+              <Label htmlFor="pair-client">Pairing client</Label>
+              <select id="pair-client" className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm" value={settings.client} onChange={(event) => updateSetting({ client: event.target.value })}>
+                <option value="android">Hermes-Relay Android</option>
+                <option value="desktop">Hermes-Relay CLI+UI</option>
+              </select>
+              {settings.client === "desktop" && <p className="text-xs text-muted-foreground">Includes direct Relay compatibility routes. This does not publish a listener; verify a direct or Secure Link route is reachable from the computer.</p>}
+            </div>
+            <div className="hr-pair-panel">
+              <div className="hr-pair-panel-title">Pairing another computer</div>
+              {state.status === "ok" && cliRoutes.length > 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Copy this invite, then open CLI+UI → Pair host → Paste invite.
+                  The CLI also accepts <code>hermes-relay pair --pair-qr '&lt;invite&gt;'</code>.
+                  Import the full invite to preserve Secure Link certificate trust.
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Choose CLI+UI above to mint an invite with direct Relay routes, or on the host run{' '}
+                  <code>hermes pair --legacy-direct-relay</code> and use a deliberately reachable
+                  direct Relay address, including its <code>ws://</code> or <code>wss://</code> protocol and port.
+                  A public Dashboard address does not expose the direct Relay port.
+                </p>
+              )}
+            </div>
+            <div className="hr-pair-panel">
               <div className="hr-pair-panel-title">What this adds</div>
               <div className="hr-grant-list">
                 {['Terminal', 'Bridge', 'Media', 'Voice'].map((label) => (
@@ -407,9 +449,12 @@ export default function PairDialog({ open, onClose }) {
                           return (
                             <div key={`${surface.surface}-${surface.url}`} className="hr-endpoint-surface">
                               <span className="text-xs font-medium">{surface.label}</span>
-                              <span className="font-mono text-xs hr-endpoint-address" title={surface.url}>
-                                {surface.url}
-                              </span>
+                              <div className="min-w-0">
+                                <span className="block font-mono text-xs hr-endpoint-address" title={surface.url}>
+                                  {surface.url}
+                                </span>
+                                <div className="text-xs text-muted-foreground">{pairingAddressProtocol(surface.url)}</div>
+                              </div>
                               <Badge variant="outline" className="text-xs">{probeText}</Badge>
                             </div>
                           );
