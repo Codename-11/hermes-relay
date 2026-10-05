@@ -1391,6 +1391,24 @@
     <string name="proactive_about">Sobre</string>
     <string name="proactive_about_desc">Quando ativado, seu celular informa ao relay que aceita mensagens iniciadas pelo agente. O agente as entrega pela mesma conexão pareada já usada pelo relay — sem novas permissões além das notificações.</string>
     <string name="proactive_about_server_note">Seu servidor também precisa ativar a plataforma do celular (defina PHONE_ENABLED no servidor). Enquanto os dois lados não estiverem ativados e o celular não estiver pareado, nada será enviado.</string>
+
+    <string name="proactive_fcm_title">Despertar push (BYO FCM)</string>
+    <string name="proactive_fcm_desc">Opcional. Use seu próprio projeto Firebase para o Hermes acordar este telefone quando a conexão ao vivo cair. O texto completo ainda chega pelo Relay após reconectar. Somente sideload; precisa do Google Play Services.</string>
+    <string name="proactive_fcm_enable">Ativar despertar FCM</string>
+    <string name="proactive_fcm_paste_json">Colar google-services.json</string>
+    <string name="proactive_fcm_import_json">Importar campos JSON</string>
+    <string name="proactive_fcm_project_id">ID do projeto</string>
+    <string name="proactive_fcm_application_id">ID do app Mobile SDK</string>
+    <string name="proactive_fcm_api_key">Chave de API</string>
+    <string name="proactive_fcm_sender_id">ID do remetente GCM / messaging</string>
+    <string name="proactive_fcm_save">Salvar configurações FCM</string>
+    <string name="proactive_fcm_clear">Limpar configurações FCM</string>
+    <string name="proactive_fcm_token_status">Token do dispositivo: %1$s</string>
+    <string name="proactive_fcm_not_paired">Pareie o Relay para registrar o token do dispositivo no host.</string>
+    <string name="proactive_fcm_mac_note">No Mac, defina RELAY_FCM_SERVICE_ACCOUNT_JSON com o caminho (ou JSON) da service account do Firebase. Nunca coloque a service account no app.</string>
+    <string name="proactive_fcm_wake_title">Hermes</string>
+    <string name="proactive_fcm_wake_body">O Hermes tem uma mensagem — abra para reconectar e entregar.</string>
+    <string name="proactive_fcm_wake_channel">Despertar push</string>
     <!-- ProfileInspectorScreen -->
     <string name="profile_inspector_back">Voltar</string>
     <string name="profile_inspector_refresh_all">Atualizar tudo</string>
