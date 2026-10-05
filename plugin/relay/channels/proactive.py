@@ -175,6 +175,9 @@ class ProactiveChannel:
         # Bounded + drop-oldest; stale entries pruned on flush.
         self._outbound: deque[dict[str, Any]] = deque(maxlen=MAX_BUFFERED_OUTBOUND)
         self.queued_count: int = 0
+        # Optional BYO FCM (or other) wake when a message is queued offline.
+        # Callable may be sync or async; signature (message_id, title) -> None.
+        self.on_queued_wake: Any | None = None
 
     # ── Envelope dispatch (inbound from phone) ───────────────────────────
 
@@ -309,6 +312,10 @@ class ProactiveChannel:
                 message_id,
                 out_payload["chat_id"],
                 len(self._outbound),
+            )
+            await self._maybe_wake_offline_phone(
+                message_id=message_id,
+                title=out_payload.get("title"),
             )
             return {
                 "delivered": False,
@@ -499,6 +506,23 @@ class ProactiveChannel:
     def buffered_outbound_count(self) -> int:
         """Number of agent→phone messages queued for the next subscribe."""
         return len(self._outbound)
+
+    async def _maybe_wake_offline_phone(
+        self,
+        *,
+        message_id: str,
+        title: Any = None,
+    ) -> None:
+        """Best-effort offline wake (BYO FCM). Never raises into push()."""
+        hook = self.on_queued_wake
+        if hook is None:
+            return
+        try:
+            result = hook(message_id, title if isinstance(title, str) else None)
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("proactive: on_queued_wake failed: %s", exc)
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
