@@ -20,6 +20,7 @@ on:
     branches: [main, dev]
     paths:
       - "scripts/check-upstream-route-contract.py"
+      - "scripts/tests/check_upstream_route_contract_test.py"
       - ".github/workflows/ci-contract.yml"
       - "app/src/main/kotlin/com/hermesandroid/relay/network/upstream/**"
   schedule:
@@ -88,13 +89,19 @@ jobs:
           git -C "$UPSTREAM_GIT" fetch --no-tags --depth=1 origin -- "$UPSTREAM_REF"
           UPSTREAM_COMMIT="$(git -C "$UPSTREAM_GIT" rev-parse 'FETCH_HEAD^{commit}')"
 
-          mkdir -p _upstream/gateway/platforms _upstream/hermes_cli
-          git -C "$UPSTREAM_GIT" show \
-            "$UPSTREAM_COMMIT:gateway/platforms/api_server.py" \
-            > _upstream/gateway/platforms/api_server.py
-          git -C "$UPSTREAM_GIT" show \
-            "$UPSTREAM_COMMIT:hermes_cli/web_server.py" \
-            > _upstream/hermes_cli/web_server.py
+          # Keep both monolithic entry points and their route module families.
+          # Enumerate the exact tree so optional modules absent at older refs
+          # are harmless. Source blobs are read only, never checked out/run.
+          git -C "$UPSTREAM_GIT" ls-tree -r --name-only "$UPSTREAM_COMMIT" \
+            -- gateway/platforms hermes_cli |
+          while IFS= read -r path; do
+            case "$path" in
+              gateway/platforms/api_server*.py|hermes_cli/web_server.py|hermes_cli/web_routers/*.py)
+                mkdir -p "_upstream/$(dirname "$path")"
+                git -C "$UPSTREAM_GIT" show "$UPSTREAM_COMMIT:$path" > "_upstream/$path"
+                ;;
+            esac
+          done
           echo "Extracted contract sources from upstream commit: $UPSTREAM_COMMIT"
 
       - name: Set up Python 3.11
@@ -104,3 +111,6 @@ jobs:
 
       - name: Run route-surface contract
         run: python scripts/check-upstream-route-contract.py "_upstream"
+
+      - name: Run route-checker regressions
+        run: python -m unittest discover -s scripts/tests -p check_upstream_route_contract_test.py -v
