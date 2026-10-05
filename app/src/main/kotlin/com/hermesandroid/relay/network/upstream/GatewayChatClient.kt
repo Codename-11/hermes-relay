@@ -143,19 +143,9 @@ class GatewayChatClient(
         private const val BOT_CHAT_TITLE = "Bot Chat"
 
         /**
-         * Quiet-reporting interval for the idle-progress watchdog, reset on
-         * EVERY received gateway event (deltas, tool events, status lines), so
-         * it only trips after this long with no events at all.
-         *
-         * Tripping is DIAGNOSTIC ONLY. The client logs the quiet and keeps
-         * waiting; it never fails the turn and never sends `session.interrupt`.
-         * Silence is not death: a slow provider prefill or a long background
-         * run looks exactly like this while the turn is healthy, and killing
-         * those was a false positive. Turn liveness belongs to the server, and
-         * `settleFromAuthoritativeSessionState` settles a turn the gateway
-         * reports as ended. So a turn has no client-side idle limit; a slow
-         * `prompt.submit` ack is bounded separately by
-         * [PROMPT_SUBMIT_REQUEST_TIMEOUT_MS].
+         * Quiet-reporting interval for the idle-progress watchdog. Reset on
+         * every received gateway event, so it only trips after this long with
+         * no events at all. Tripping only logs the quiet; nothing acts on it.
          */
         private const val TURN_TIMEOUT_MS = 180_000L
 
@@ -4574,10 +4564,8 @@ class GatewayChatClient(
                     "Gateway socket rejoined mid-turn (session=$storedSessionId) — " +
                         "rebound live session, awaiting tail",
                 )
-                // The fresh socket won't replay the in-flight turn, so a rejoin
-                // may stay quiet until the tail arrives. The watchdog only logs
-                // that quiet; it never interrupts, so a retarget needs no
-                // special short lease.
+                // The fresh socket won't replay the in-flight turn; the watchdog
+                // only logs the quiet, so no shorter lease is needed.
                 turn.armWatchdog()
                 return
             }
@@ -4958,8 +4946,7 @@ class GatewayChatClient(
                 handoffQueuedSuccessor()
             } else {
                 // Map first: native asks own their deadline, including across unrelated events.
-                // Rearm on every event so long tool runs keep the turn alive. The duration only
-                // paces the quiet log line; nothing acts on it.
+                // Rearm on every event; the duration only paces the log line.
                 armWatchdog()
             }
         }
@@ -5077,12 +5064,8 @@ class GatewayChatClient(
                 while (true) {
                     delay(turnIdleTimeoutMs)
                     if (ended) break
-                    // Silence is not death. A slow provider prefill or a long background run emits
-                    // no events for minutes while the turn is perfectly healthy, and the old
-                    // behaviour here (session.interrupt + fail the turn) killed exactly those runs.
-                    // The server owns turn liveness, and settleFromAuthoritativeSessionState is the
-                    // non-destructive backstop for a turn that really ended. So: keep waiting, log
-                    // the quiet, and re-arm: a turn has no client-side idle limit.
+                    // A healthy turn can be quiet for minutes (slow prefill, long
+                    // tool); log it and keep waiting. The server owns liveness.
                     Log.w(TAG, "Gateway turn quiet for ${turnIdleTimeoutMs}ms; still waiting (no interrupt)")
                 }
             }

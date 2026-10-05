@@ -5563,9 +5563,8 @@ class GatewayChatClientTest {
         client.sendTurn(null, "ordinary status", null, r.callbacks) { r.preflightFailures += it }
         val serverWs = harness.awaitServerSocket()
         harness.awaitRpc("prompt.submit")
-        // Compaction is the longest silence a healthy turn produces, so it is the case that used to
-        // need a longer leash than the base one. With no kill at all it needs none: the client logs
-        // the quiet and keeps waiting for either a terminal frame or the gateway's own settle.
+        // Compaction is the longest healthy silence; nothing kills on silence
+        // now, so it needs no special lease.
         listOf("compacting", "process").forEach { kind ->
             serverWs.send(
                 harness.eventFrame(
@@ -5594,9 +5593,8 @@ class GatewayChatClientTest {
         val serverWs = harness.awaitServerSocket()
         harness.awaitRpc("prompt.submit")
         serverWs.send(harness.eventFrame("message.delta", buildJsonObject { put("text", "partial") }, "live-1"))
-        // ...then silence across several idle windows. A slow provider prefill or a long background
-        // run looks exactly like this while the turn is healthy, so the client must NOT fail the
-        // turn and must NOT interrupt the server. The stream stays attached so a late answer lands.
+        // Then silence across several idle windows: no error, no interrupt,
+        // and a late completion still lands.
         Thread.sleep(2_000)
         assertTrue("quiet turn was failed: ${r.errors}", r.errors.isEmpty())
         assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
