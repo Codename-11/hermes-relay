@@ -15,7 +15,11 @@ an endpoint — is declared as literal strings:
                             ("GET", "/v1/capabilities", handler)
     dashboard  (FastAPI):   @app.post("/api/audio/transcribe")  /  @app.websocket("/api/ws")
 
-so parsing them is deterministic, dependency-free, framework-agnostic, and
+Follow mounted FastAPI routers and aiohttp route-table helpers as well as the
+original monolithic entry points. Unregistered sibling modules do not establish
+the public surface. Source is parsed, never imported or executed.
+
+Parsing them is deterministic, dependency-free, framework-agnostic, and
 needs no model keys. The tradeoff (documented): this catches renamed/removed
 routes but not runtime-auth regressions. A live-HTTP existence probe
 (404 = fail; 401/400/405 = pass) is the richer future variant.
@@ -29,6 +33,7 @@ a source file/structure check failed.
 """
 from __future__ import annotations
 
+import ast
 import os
 import re
 import sys
@@ -47,10 +52,7 @@ _AIOHTTP_RE = re.compile(
 _AIOHTTP_TABLE_RE = re.compile(
     r"""\(\s*["'](GET|POST|PATCH|DELETE|PUT|HEAD)["']\s*,\s*["']([^"']+)["']\s*,"""
 )
-# FastAPI/Starlette decorators:  @app.get("/path")  @app.websocket("/path")
-_FASTAPI_RE = re.compile(
-    r"""@\w+\.(get|post|patch|delete|put|head|websocket)\(\s*["']([^"']+)["']"""
-)
+_FASTAPI_METHODS = {"get", "post", "patch", "delete", "put", "head", "websocket"}
 
 # Routes the standard (no-plugin) path hard-depends on. Missing => build fails.
 REQUIRED = {
@@ -90,49 +92,158 @@ ADVISORY = {
 FORK_MARKERS = ("hermes_relay", "/pairing/register", "RelayPlugin", "hermes-relay")
 
 
-def extract_routes(path: Path, pattern: re.Pattern) -> set[str]:
-    text = path.read_text(encoding="utf-8", errors="replace")
-    return {m.group(2) for m in pattern.finditer(text)}
+def imported_names(tree: ast.Module) -> dict[str, str]:
+    """Resolve aliases without loading any upstream code or dependencies."""
+    names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            for alias in node.names:
+                names[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names[alias.asname or alias.name.split(".")[0]] = (
+                    alias.name if alias.asname else alias.name.split(".")[0]
+                )
+    return names
+
+
+def qualified_name(node: ast.AST, names: dict[str, str], module: str) -> str:
+    if isinstance(node, ast.Name):
+        return names.get(node.id, f"{module}.{node.id}")
+    if isinstance(node, ast.Attribute):
+        parent = qualified_name(node.value, names, module)
+        return f"{parent}.{node.attr}" if parent else ""
+    return ""
+
+
+def literal_prefix(call: ast.Call) -> str:
+    for keyword in call.keywords:
+        if keyword.arg == "prefix":
+            if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+                return keyword.value.value
+            raise ValueError("UNSUPPORTED REGISTRATION: non-literal router prefix")
+    return ""
+
+
+def discover_routes(root: Path) -> tuple[set[str], set[Path]]:
+    """Read only entry points and statically registered route source modules."""
+    sources: dict[str, tuple[str, ast.Module]] = {}
+
+    def read(module: str) -> tuple[str, ast.Module]:
+        if module not in sources:
+            path = root / (module.replace(".", "/") + ".py")
+            if not path.is_file():
+                raise ValueError(f"MISSING SOURCE FILE: {path.relative_to(root)}")
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if module.startswith("gateway.platforms.api_server"):
+                hits = [marker for marker in FORK_MARKERS if marker in text]
+                if hits:
+                    raise ValueError(f"FORK MARKERS in {path.relative_to(root)}: {hits}")
+            sources[module] = (text, ast.parse(text, filename=str(path)))
+        return sources[module]
+
+    api_seen: set[tuple[str, str]] = set()
+
+    def api_routes(module: str, function: str = "") -> set[str]:
+        key = (module, function)
+        if key in api_seen:
+            return set()
+        api_seen.add(key)
+        text, tree = read(module)
+        scope: ast.AST = tree
+        if function:
+            definitions = [node for node in tree.body
+                           if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                           and node.name == function]
+            if not definitions:
+                raise ValueError(f"MISSING ROUTE HELPER: {module}.{function}")
+            scope = definitions[0]
+            text = ast.get_source_segment(text, scope) or ""
+        found = {match.group(2) for pattern in (_AIOHTTP_RE, _AIOHTTP_TABLE_RE)
+                 for match in pattern.finditer(text)}
+        names = imported_names(tree)
+        # Modular tables are consumed via routes.extend(helper(self)).
+        # An import or a standalone helper call is not registration evidence.
+        for node in ast.walk(scope):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "extend" and node.args
+                    and isinstance(node.args[0], ast.Call)):
+                target = qualified_name(node.args[0].func, names, module)
+                owner, _, member = target.rpartition(".")
+                if owner.startswith("gateway.platforms.api_server_"):
+                    found |= api_routes(owner, member)
+        return found
+
+    router_stack: set[tuple[str, str]] = set()
+
+    def web_routes(module: str, router: str, prefix: str = "") -> set[str]:
+        key = (module, router)
+        if key in router_stack:
+            raise ValueError(f"CYCLIC ROUTER REGISTRATION: {module}.{router}")
+        router_stack.add(key)
+        _, tree = read(module)
+        names = imported_names(tree)
+        target = f"{module}.{router}"
+        if router != "app":
+            declarations = [node.value for node in tree.body
+                            if isinstance(node, ast.Assign)
+                            and any(isinstance(item, ast.Name) and item.id == router
+                                    for item in node.targets)
+                            and isinstance(node.value, ast.Call)]
+            if not declarations:
+                raise ValueError(f"MISSING ROUTER: {target}")
+            prefix += literal_prefix(declarations[0])
+        found: set[str] = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if qualified_name(node.func.value, names, module) != target or not node.args:
+                continue
+            if node.func.attr in _FASTAPI_METHODS:
+                path = node.args[0]
+                if isinstance(path, ast.Constant) and isinstance(path.value, str):
+                    found.add(prefix + path.value)
+            elif node.func.attr == "include_router":
+                child = qualified_name(node.args[0], names, module)
+                owner, _, member = child.rpartition(".")
+                # Dynamic plugin mounts are outside the vanilla surface. A
+                # local router must have a static declaration in this module.
+                local_router = owner == module and any(
+                    isinstance(item, ast.Assign) and isinstance(item.value, ast.Call)
+                    and qualified_name(item.value.func, names, module).endswith(".APIRouter")
+                    and any(isinstance(name, ast.Name) and name.id == member
+                            for name in item.targets)
+                    for item in tree.body
+                )
+                if local_router or owner.startswith("hermes_cli.web_routers."):
+                    found |= web_routes(owner, member, prefix + literal_prefix(node))
+        router_stack.remove(key)
+        return found
+
+    found = api_routes(API_SERVER.removesuffix(".py").replace("/", "."))
+    found |= web_routes(WEB_SERVER.removesuffix(".py").replace("/", "."), "app")
+    paths = {Path(module.replace(".", "/") + ".py") for module in sources}
+    return found, paths
 
 
 def main() -> int:
     root = Path(sys.argv[1] if len(sys.argv) > 1 else os.environ.get("UPSTREAM_DIR", ".")).resolve()
-    api_path = root / API_SERVER
-    web_path = root / WEB_SERVER
-
-    problems: list[str] = []
-    for p in (api_path, web_path):
-        if not p.is_file():
-            problems.append(f"MISSING SOURCE FILE: {p.relative_to(root) if p.is_relative_to(root) else p}")
-    if problems:
-        print("\n".join(f"  x {x}" for x in problems))
-        print("\nFAIL: expected upstream source files not found — upstream layout changed "
-              "or wrong --upstream_dir.")
+    try:
+        found, sources = discover_routes(root)
+    except (OSError, SyntaxError, ValueError) as error:
+        print(f"  x {error}")
+        print("\nFAIL: expected vanilla upstream source/registration not found. "
+              "Check the source layout and upstream root; relay/fork sources must not be used.")
         return 1
-
-    # Vanilla sanity: refuse to 'pass' against our own fork.
-    api_text = api_path.read_text(encoding="utf-8", errors="replace")
-    fork_hits = [m for m in FORK_MARKERS if m in api_text]
-    if fork_hits:
-        print(f"  ✗ FORK MARKERS in {API_SERVER}: {fork_hits}")
-        print("\nFAIL: api_server.py contains relay/fork markers — this is NOT vanilla "
-              "upstream. The contract must run against unmodified NousResearch/hermes-agent "
-              "with no bootstrap .pth loaded.")
-        return 1
-
-    found = (
-        extract_routes(api_path, _AIOHTTP_RE)
-        | extract_routes(api_path, _AIOHTTP_TABLE_RE)
-        | extract_routes(web_path, _FASTAPI_RE)
-    )
 
     missing_required = sorted(REQUIRED - found)
     missing_advisory = sorted(ADVISORY - found)
     present_required = sorted(REQUIRED & found)
 
     print(f"upstream root : {root}")
-    print(f"routes parsed : {len(found)} declared route paths "
-          f"({API_SERVER} + {WEB_SERVER})")
+    print(f"routes parsed : {len(found)} declared route paths ({len(sources)} registered source files)")
+    for source in sorted(sources):
+        print(f"  source: {source.as_posix()}")
     print()
     print("REQUIRED standard-path routes:")
     for r in sorted(REQUIRED):
