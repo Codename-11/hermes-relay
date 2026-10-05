@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.MoreVert
@@ -2989,7 +2990,9 @@ fun ChatScreen(
                         // Avatar — a plain 40dp circle whose letter swaps to the
                         // active agent (profile or personality). No overlay ring:
                         // the letter itself is the indicator.
-                        if (!supervised || supervisedVisibility.showAgentIdentity) Box(modifier = Modifier.size(40.dp)) {
+                        // Clean drops the avatar: the title carries identity
+                        // and the subtitle carries connection state.
+                        if (!cleanLayout && (!supervised || supervisedVisibility.showAgentIdentity)) Box(modifier = Modifier.size(40.dp)) {
                             Surface(
                                 modifier = Modifier.size(40.dp),
                                 shape = CircleShape,
@@ -3151,6 +3154,19 @@ fun ChatScreen(
                             onClick = onNavigateToSettings,
                             modifier = Modifier.padding(end = 4.dp),
                         )
+                    }
+                    // Clean: one compose action, ChatGPT-style. Supervised
+                    // sessions keep their own new-chat placement.
+                    if (cleanLayout && !supervised && sessionsHistoryAllowed) {
+                        IconButton(
+                            onClick = { chatViewModel.createNewChat() },
+                            modifier = Modifier.testTag("chat-header-new-chat"),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.EditNote,
+                                contentDescription = stringResource(R.string.drawer_new_chat),
+                            )
+                        }
                     }
                     // Share is the least-used trailing action (and only valid
                     // once there's a conversation), so it folds into a ⋮
@@ -3463,8 +3479,10 @@ fun ChatScreen(
                         ) {
                             Spacer(modifier = Modifier.weight(0.15f))
 
-                            // ASCII sphere (constrained to square aspect)
+                            // ASCII sphere (constrained to square aspect).
+                            // Clean opens on the greeting alone.
                             if (
+                                !cleanLayout &&
                                 LocalBackgroundVisualizationEnabled.current &&
                                 (!supervised || supervisedVisibility.showAgentIdentity)
                             ) {
@@ -3512,8 +3530,13 @@ fun ChatScreen(
                                     ChatConnectState.Unavailable -> stringResource(R.string.chat_disconnected_label)
                                     ChatConnectState.NeedsConnection -> stringResource(R.string.chat_needs_connection)
                                 },
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface
+                                style = if (cleanLayout) {
+                                    MaterialTheme.typography.headlineSmall
+                                } else {
+                                    MaterialTheme.typography.titleMedium
+                                },
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center,
                             )
 
                             // The selected agent's role/description - the
@@ -3630,9 +3653,16 @@ fun ChatScreen(
                                                     )
                                                 },
                                                 colors = AssistChipDefaults.assistChipColors(
-                                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                                    containerColor = if (cleanLayout) {
+                                                        MaterialTheme.colorScheme.surfaceContainerHigh
+                                                    } else {
+                                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                                    },
                                                     labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
+                                                ),
+                                                // Clean: tonal pills without outlines.
+                                                border = if (cleanLayout) null else AssistChipDefaults.assistChipBorder(enabled = true),
+                                                shape = if (cleanLayout) CircleShape else AssistChipDefaults.shape,
                                             )
                                         }
                                     }
@@ -3650,8 +3680,10 @@ fun ChatScreen(
                         .weight(1f)
                         .fillMaxWidth()
                 ) {
-                    // Ambient avatar behind messages
+                    // Ambient avatar behind messages. Clean keeps the
+                    // transcript on a plain surface.
                     if (
+                        !cleanLayout &&
                         LocalBackgroundVisualizationEnabled.current &&
                         (!supervised || supervisedVisibility.showAgentIdentity) &&
                         animationBehindChat

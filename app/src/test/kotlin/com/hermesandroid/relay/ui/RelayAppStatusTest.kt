@@ -76,6 +76,12 @@ class RelayAppStatusTest {
     }
 
     @Test
+    fun `clean layout hides the offline strip in demo mode`() {
+        assertFalse(shouldShowStatusStrip(LayoutStyle.CLEAN, offline = true, reconnecting = false, demoMode = true))
+        assertTrue(shouldShowStatusStrip(LayoutStyle.CLASSIC, offline = true, reconnecting = false, demoMode = true))
+    }
+
+    @Test
     fun `full-screen connect routes suppress connection-dependent app chrome`() {
         assertTrue(
             shouldSuppressGlobalChrome(

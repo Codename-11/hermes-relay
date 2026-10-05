@@ -1270,7 +1270,8 @@ The gateway-platform model is the *correct + sufficient architecture* (the phone
 ## Clean layout + Clean/Material You themes — follow-ups
 
 - **On-device verification.** Clean layout: assistant prose spans the column with no bubble, tap reveals time/tokens/"Delivered", failed/sending states stay visible, one routine-tool summary per assistant turn, Terminal/Settings in the chat ⋮ menu, and the footer strip appears only offline or reconnecting. Material You: wallpaper colors apply on Android 12+ and the Clean fallback below that.
-- **Material 3 Expressive motion.** Clean layout should opt into `MotionScheme.expressive()`, which is internal in the pinned material3 1.4.0. Wire it through `HermesRelayTheme` once the BOM ships a material3 release that exposes it.
+- **Material 3 Expressive APIs.** material3 1.4.0 keeps `MotionScheme` internal and lacks `ButtonGroup`, `LoadingIndicator`, and `MaterialShapes`; they are public only in 1.5.0 alphas, which also require Compose 1.13 alphas. Clean currently uses local spring tokens (`ExpressiveMotion`). Once a stable BOM ships material3 1.5, pass `MotionScheme.expressive()` through `HermesRelayTheme`, replace `ExpressiveMotion`, and adopt the expressive loading indicator and button groups.
+- **Clean on-device pass.** Header new-chat action, pill composer send/voice/stop states, Clean drawer overflow (Bot Mode, Customize, source filter, Refresh), and the Appearance preview switching between layouts.
 - **Composer pickers in Clean.** Model and reasoning pickers render as quiet text buttons. A further step is to hide the reasoning picker while it is on the server default and surface it from the model sheet instead.
 
 ## Chat UI refresh — follow-ups

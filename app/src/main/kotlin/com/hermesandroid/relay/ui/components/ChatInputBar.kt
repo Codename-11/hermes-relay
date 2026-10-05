@@ -58,6 +58,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -77,6 +80,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.ExpressiveMotion
 import com.hermesandroid.relay.ui.theme.isCleanLayout
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.appearanceComposerShape
@@ -331,10 +335,12 @@ fun ChatInputBar(
             correctionAvailable = correctionAvailable,
             onStop = onStop.takeUnless { trailing == ChatInputTrailing.STOP },
         ) {
+        // Clean: a borderless tonal pill (M3 Expressive container), no outline.
+        val cleanComposer = isCleanLayout
         Surface(
-            shape = appearanceComposerShape(),
+            shape = if (cleanComposer) appearanceRoundedCornerShape(28.dp) else appearanceComposerShape(),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            border = if (cleanComposer) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 3.dp)
@@ -541,7 +547,7 @@ fun ChatInputBar(
                     Spacer(modifier = Modifier.weight(1f))
 
                     // Trailing slot
-                    val glow = trailing == ChatInputTrailing.SEND && enabled && isDarkTheme
+                    val glow = !cleanComposer && trailing == ChatInputTrailing.SEND && enabled && isDarkTheme
                     Box(
                         modifier = if (glow) {
                             Modifier.purpleGlow(radius = 24.dp, alpha = 0.35f, isDarkTheme = true)
@@ -552,13 +558,32 @@ fun ChatInputBar(
                         AnimatedContent(
                             targetState = trailing,
                             transitionSpec = {
-                                (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f))
-                                    .togetherWith(fadeOut(tween(100)))
+                                if (cleanComposer) {
+                                    // Expressive: a springy pop between send,
+                                    // voice, and stop.
+                                    (fadeIn(ExpressiveMotion.fastEffects()) +
+                                        scaleIn(ExpressiveMotion.fastSpatial(), initialScale = 0.6f))
+                                        .togetherWith(fadeOut(ExpressiveMotion.fastEffects()))
+                                } else {
+                                    (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f))
+                                        .togetherWith(fadeOut(tween(100)))
+                                }
                             },
                             label = "chatInputTrailing",
                         ) { state ->
                             when (state) {
-                                ChatInputTrailing.SEND -> IconButton(
+                                // Clean: filled circular send, the one primary
+                                // action in the composer.
+                                ChatInputTrailing.SEND -> if (cleanComposer) FilledIconButton(
+                                    onClick = onSend,
+                                    enabled = canSubmit,
+                                    shape = CircleShape,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.ArrowUpward,
+                                        contentDescription = stringResource(R.string.chat_input_send_message),
+                                    )
+                                } else IconButton(
                                     onClick = onSend,
                                     enabled = canSubmit,
                                 ) {
@@ -573,13 +598,23 @@ fun ChatInputBar(
                                 ChatInputTrailing.VOICE -> {
                                     if (!suppressVoiceTrailing) {
                                         Box {
-                                            IconButton(onClick = onVoice) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.GraphicEq,
-                                                    contentDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
-                                                        else stringResource(R.string.chat_input_voice_setup_needed),
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                )
+                                            val voiceDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
+                                                else stringResource(R.string.chat_input_voice_setup_needed)
+                                            if (cleanComposer) {
+                                                FilledTonalIconButton(onClick = onVoice, shape = CircleShape) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.GraphicEq,
+                                                        contentDescription = voiceDescription,
+                                                    )
+                                                }
+                                            } else {
+                                                IconButton(onClick = onVoice) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.GraphicEq,
+                                                        contentDescription = voiceDescription,
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                    )
+                                                }
                                             }
                                             // "Needs setup" badge — full-alpha button + Amber
                                             // dot instead of a half-dimmed broken-looking mic.
@@ -598,7 +633,14 @@ fun ChatInputBar(
                                 }
 
                                 ChatInputTrailing.STOP -> {
-                                    if (!suppressVoiceTrailing) {
+                                    if (!suppressVoiceTrailing && cleanComposer) {
+                                        FilledTonalIconButton(onClick = onStop, shape = CircleShape) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Stop,
+                                                contentDescription = stringResource(R.string.chat_input_stop_streaming),
+                                            )
+                                        }
+                                    } else if (!suppressVoiceTrailing) {
                                         IconButton(onClick = onStop) {
                                             Box(
                                                 modifier = Modifier

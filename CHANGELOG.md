@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Changed
 
 - Android Appearance shows theme, mode, accent, and layout first; language, text, font, animation, background, and pet settings sit under More appearance options.
+- Android uses the Clean layout by default; Classic remains available in Appearance.
+- Android Clean layout: a plain chat background, a header with the agent name and one new-chat action, a borderless pill composer with a filled send button, a chat list led by search, and no status strip in demo mode.
+- Android Appearance puts the layout choice first and previews the selected layout.
 
 ### Fixed
 

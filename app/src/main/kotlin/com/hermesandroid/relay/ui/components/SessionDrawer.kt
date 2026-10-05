@@ -40,6 +40,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import com.hermesandroid.relay.ui.theme.isCleanLayout
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AccountTree
@@ -485,128 +490,279 @@ fun SessionDrawerContent(
         }
     }
 
+    val cleanDrawer = isCleanLayout
     val panel: @Composable () -> Unit = {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = drawerTitle,
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.weight(1f),
-                )
-                // Source filter — show/hide gateway sources (default hides the
-                // noisy cron+webhook). Only when external sources are present.
-                if (supervisedSessionActions == null && onToggleSourceHidden != null && presentSources.isNotEmpty()) {
-                    Box {
-                        IconButton(
-                            onClick = { sourceFilterOpen = true },
-                            modifier = Modifier.size(36.dp),
+            // Clean: ChatGPT/Telegram-style top row. Search is always visible,
+            // new chat is one icon, and the rarely used tools (refresh, source
+            // filter, Bot Mode, customize) fold into one overflow menu.
+            if (cleanDrawer) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        modifier = Modifier.weight(1f).heightIn(min = 44.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(
-                                Icons.Filled.FilterList,
-                                contentDescription = stringResource(R.string.drawer_filter_by_source),
-                                tint = if (presentSources.any { it in hiddenSources }) {
+                                Icons.Filled.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            val searchLabel = stringResource(R.string.drawer_search_sessions)
+                            BasicTextField(
+                                value = query,
+                                onValueChange = { query = it },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                ),
+                                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .semantics {
+                                        contentDescription = searchLabel
+                                    },
+                                decorationBox = { inner ->
+                                    Box {
+                                        if (query.isEmpty()) {
+                                            Text(
+                                                text = stringResource(R.string.drawer_search_placeholder),
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                            )
+                                        }
+                                        inner()
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    if (newChatEnabled) {
+                        IconButton(onClick = onNewChat) {
+                            Icon(
+                                Icons.Outlined.EditNote,
+                                contentDescription = stringResource(R.string.drawer_new_chat),
+                            )
+                        }
+                    }
+                    var moreOpen by remember { mutableStateOf(false) }
+                    val sourcesAvailable = onToggleSourceHidden != null && presentSources.isNotEmpty()
+                    if (onRefresh != null || onOpenBotMode != null || sourcesAvailable || supervisedSessionActions == null) {
+                        Box {
+                            IconButton(onClick = { moreOpen = true }) {
+                                Icon(
+                                    Icons.Filled.MoreVert,
+                                    contentDescription = stringResource(R.string.chat_more_actions_a11y),
+                                )
+                            }
+                            DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
+                                onOpenBotMode?.let { openBotMode ->
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.bot_mode_title)) },
+                                        leadingIcon = { Icon(Icons.Filled.Groups, contentDescription = null) },
+                                        onClick = {
+                                            moreOpen = false
+                                            openBotMode()
+                                        },
+                                    )
+                                }
+                                if (supervisedSessionActions == null) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.drawer_customize_sessions)) },
+                                        leadingIcon = { Icon(Icons.Filled.FilterList, contentDescription = null) },
+                                        onClick = {
+                                            moreOpen = false
+                                            customizeOpen = true
+                                        },
+                                    )
+                                }
+                                if (sourcesAvailable) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.drawer_filter_by_source)) },
+                                        leadingIcon = { Icon(Icons.Filled.Tune, contentDescription = null) },
+                                        onClick = {
+                                            moreOpen = false
+                                            sourceFilterOpen = true
+                                        },
+                                    )
+                                }
+                                onRefresh?.let { refresh ->
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.drawer_refresh_sessions)) },
+                                        leadingIcon = { Icon(Icons.Filled.Refresh, contentDescription = null) },
+                                        onClick = {
+                                            moreOpen = false
+                                            refresh()
+                                        },
+                                    )
+                                }
+                            }
+                            if (sourcesAvailable) {
+                                DropdownMenu(
+                                    expanded = sourceFilterOpen,
+                                    onDismissRequest = { sourceFilterOpen = false },
+                                ) {
+                                    presentSources.forEach { src ->
+                                        val badge = sourceBadge(src)
+                                        val shown = src !in hiddenSources
+                                        DropdownMenuItem(
+                                            text = { Text(badge?.label ?: src) },
+                                            leadingIcon = {
+                                                if (shown) {
+                                                    Icon(Icons.Filled.Check, contentDescription = null)
+                                                } else {
+                                                    Spacer(modifier = Modifier.size(24.dp))
+                                                }
+                                            },
+                                            onClick = { onToggleSourceHidden?.invoke(src, shown) },
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // The connection/profile name stays as quiet context.
+                Text(
+                    text = drawerTitle,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(start = 4.dp, top = 12.dp),
+                )
+            } else {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = drawerTitle,
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // Source filter — show/hide gateway sources (default hides the
+                    // noisy cron+webhook). Only when external sources are present.
+                    if (supervisedSessionActions == null && onToggleSourceHidden != null && presentSources.isNotEmpty()) {
+                        Box {
+                            IconButton(
+                                onClick = { sourceFilterOpen = true },
+                                modifier = Modifier.size(36.dp),
+                            ) {
+                                Icon(
+                                    Icons.Filled.FilterList,
+                                    contentDescription = stringResource(R.string.drawer_filter_by_source),
+                                    tint = if (presentSources.any { it in hiddenSources }) {
+                                        RelayRefresh.Relay
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = sourceFilterOpen,
+                                onDismissRequest = { sourceFilterOpen = false },
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.drawer_show_sources),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                )
+                                presentSources.forEach { src ->
+                                    val badge = sourceBadge(src)
+                                    val shown = src !in hiddenSources
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                text = badge?.label ?: src,
+                                                color = if (shown) {
+                                                    MaterialTheme.colorScheme.onSurface
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                },
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            if (shown) {
+                                                Icon(
+                                                    Icons.Filled.Check,
+                                                    contentDescription = null,
+                                                    tint = badge?.color ?: RelayRefresh.Relay,
+                                                )
+                                            } else {
+                                                Spacer(modifier = Modifier.size(24.dp))
+                                            }
+                                        },
+                                        onClick = { onToggleSourceHidden(src, shown) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    // Threads affordance — a clean thread-spool that toggles the Threads
+                    // filter. Shown only when the Threads capability is active (or a Thread is
+                    // already present), so an ordinary no-relay drawer is visually unchanged.
+                    if (supervisedSessionActions == null && showThreads) {
+                        IconButton(
+                            onClick = {
+                                filter = if (filter == SessionDrawerFilter.Threads) {
+                                    SessionDrawerFilter.All
+                                } else {
+                                    SessionDrawerFilter.Threads
+                                }
+                            },
+                            modifier = Modifier.size(36.dp),
+                        ) {
+                            ThreadSpoolGlyph(
+                                modifier = Modifier.size(20.dp),
+                                tint = if (activeFilter == SessionDrawerFilter.Threads) {
                                     RelayRefresh.Relay
                                 } else {
                                     MaterialTheme.colorScheme.onSurfaceVariant
                                 },
-                                modifier = Modifier.size(20.dp),
                             )
-                        }
-                        DropdownMenu(
-                            expanded = sourceFilterOpen,
-                            onDismissRequest = { sourceFilterOpen = false },
-                        ) {
-                            Text(
-                                text = stringResource(R.string.drawer_show_sources),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            )
-                            presentSources.forEach { src ->
-                                val badge = sourceBadge(src)
-                                val shown = src !in hiddenSources
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            text = badge?.label ?: src,
-                                            color = if (shown) {
-                                                MaterialTheme.colorScheme.onSurface
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
-                                        )
-                                    },
-                                    leadingIcon = {
-                                        if (shown) {
-                                            Icon(
-                                                Icons.Filled.Check,
-                                                contentDescription = null,
-                                                tint = badge?.color ?: RelayRefresh.Relay,
-                                            )
-                                        } else {
-                                            Spacer(modifier = Modifier.size(24.dp))
-                                        }
-                                    },
-                                    onClick = { onToggleSourceHidden(src, shown) },
-                                )
-                            }
                         }
                     }
-                }
-                // Threads affordance — a clean thread-spool that toggles the Threads
-                // filter. Shown only when the Threads capability is active (or a Thread is
-                // already present), so an ordinary no-relay drawer is visually unchanged.
-                if (supervisedSessionActions == null && showThreads) {
                     IconButton(
-                        onClick = {
-                            filter = if (filter == SessionDrawerFilter.Threads) {
-                                SessionDrawerFilter.All
-                            } else {
-                                SessionDrawerFilter.Threads
-                            }
-                        },
+                        onClick = { searchExpanded = !searchExpanded },
                         modifier = Modifier.size(36.dp),
                     ) {
-                        ThreadSpoolGlyph(
-                            modifier = Modifier.size(20.dp),
-                            tint = if (activeFilter == SessionDrawerFilter.Threads) {
+                        Icon(
+                            Icons.Filled.Search,
+                            contentDescription = stringResource(R.string.drawer_search_sessions),
+                            tint = if (searchExpanded || query.isNotBlank()) {
                                 RelayRefresh.Relay
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
                             },
-                        )
-                    }
-                }
-                IconButton(
-                    onClick = { searchExpanded = !searchExpanded },
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        Icons.Filled.Search,
-                        contentDescription = stringResource(R.string.drawer_search_sessions),
-                        tint = if (searchExpanded || query.isNotBlank()) {
-                            RelayRefresh.Relay
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                // Manual re-pull: the server titles a session asynchronously after
-                // the first turn (and never pushes a rename), so a refresh is the
-                // way to pick up a title the auto-reconcile window missed.
-                onRefresh?.let { refresh ->
-                    IconButton(onClick = refresh, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            Icons.Filled.Refresh,
-                            contentDescription = stringResource(R.string.drawer_refresh_sessions),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(20.dp),
                         )
+                    }
+                    // Manual re-pull: the server titles a session asynchronously after
+                    // the first turn (and never pushes a rename), so a refresh is the
+                    // way to pick up a title the auto-reconcile window missed.
+                    onRefresh?.let { refresh ->
+                        IconButton(onClick = refresh, modifier = Modifier.size(36.dp)) {
+                            Icon(
+                                Icons.Filled.Refresh,
+                                contentDescription = stringResource(R.string.drawer_refresh_sessions),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -635,7 +791,7 @@ fun SessionDrawerContent(
                     )
                 }
             }
-            drawerSubtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
+            drawerSubtitle?.takeIf { it.isNotBlank() && !cleanDrawer }?.let { subtitle ->
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
@@ -647,8 +803,8 @@ fun SessionDrawerContent(
             }
             Spacer(modifier = Modifier.height(8.dp))
 
-            // New Chat button
-            Button(
+            // New Chat button (Clean puts it in the top row)
+            if (!cleanDrawer) Button(
                 onClick = onNewChat,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = newChatEnabled,
@@ -658,7 +814,7 @@ fun SessionDrawerContent(
                 Text(stringResource(R.string.drawer_new_chat))
             }
 
-            onOpenBotMode?.let { openBotMode ->
+            if (!cleanDrawer) onOpenBotMode?.let { openBotMode ->
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = openBotMode,
@@ -680,7 +836,7 @@ fun SessionDrawerContent(
                 }
             }
 
-            if (searchExpanded || query.isNotBlank()) {
+            if (!cleanDrawer && (searchExpanded || query.isNotBlank())) {
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = query,
@@ -751,7 +907,7 @@ fun SessionDrawerContent(
                         )
                     }
             }
-            if (supervisedSessionActions == null) {
+            if (supervisedSessionActions == null && !cleanDrawer) {
                 TextButton(
                     onClick = { customizeOpen = true },
                     modifier = Modifier.align(Alignment.Start),
@@ -781,7 +937,7 @@ fun SessionDrawerContent(
                     Text(stringResource(R.string.drawer_new_thread))
                 }
             }
-            if (!autoTitlesSupported) {
+            if (!autoTitlesSupported && !cleanDrawer) {
                 // This connection runs chats over the api_server SSE path, which
                 // doesn't auto-name sessions (only the gateway transport does).
                 // A quiet hint so consistently-untitled chats read as expected
@@ -794,7 +950,7 @@ fun SessionDrawerContent(
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
-            HorizontalDivider()
+            if (!cleanDrawer) HorizontalDivider()
             Spacer(modifier = Modifier.height(8.dp))
         }
 
