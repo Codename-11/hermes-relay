@@ -1459,7 +1459,7 @@
     <string name="proactive_fcm_clear">清除 FCM 设置</string>
     <string name="proactive_fcm_token_status">设备令牌：%1$s</string>
     <string name="proactive_fcm_not_paired">配对 Relay 以向主机注册设备令牌。</string>
-    <string name="proactive_fcm_mac_note">在 Mac 上将 RELAY_FCM_SERVICE_ACCOUNT_JSON 设为 Firebase 服务账号路径（或 JSON）。切勿把服务账号放进应用。</string>
+    <string name="proactive_fcm_mac_note">在此 Hermes 主机：Dashboard → Hermes-Relay → Settings → Push wake — 选择 Firebase Admin 服务账号 JSON（或运行：python -m plugin.relay.fcm_sender install ./sa.json）。切勿把服务账号放进应用；手机只需客户端 google-services.json。</string>
     <string name="proactive_fcm_wake_title">Hermes</string>
     <string name="proactive_fcm_wake_body">Hermes 有一条消息 — 打开以重连并投递。</string>
     <string name="proactive_fcm_wake_channel">推送唤醒</string>

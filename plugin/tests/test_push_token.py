@@ -52,6 +52,23 @@ class PushTokenHttpTests(AioHTTPTestCase):
         self.assertTrue(body.get("ok"))
         tokens = self.app["server"].fcm_tokens.tokens()
         self.assertEqual(tokens, ["fcm-device-token"])
+        regs = self.app["server"].fcm_tokens.registrations()
+        self.assertTrue(regs[0]["include_preview"])
+
+        hide = await self.client.post(
+            "/push/token",
+            json={
+                "token": "fcm-device-token",
+                "platform": "android",
+                "project_id": "p",
+                "include_preview": False,
+            },
+            headers=headers,
+        )
+        self.assertEqual(hide.status, 200)
+        self.assertFalse(
+            self.app["server"].fcm_tokens.registrations()[0]["include_preview"]
+        )
 
         cleared = await self.client.post(
             "/push/token",

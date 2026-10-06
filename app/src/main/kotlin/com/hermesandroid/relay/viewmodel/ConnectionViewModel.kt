@@ -82,6 +82,7 @@ import com.hermesandroid.relay.data.setProactiveEnabled
 import com.hermesandroid.relay.data.fcmPushPreferencesFlow
 import com.hermesandroid.relay.data.setFcmClientConfig
 import com.hermesandroid.relay.data.setFcmPushEnabled
+import com.hermesandroid.relay.data.setFcmHideNotificationContent
 import com.hermesandroid.relay.data.setFcmLastToken
 import com.hermesandroid.relay.data.clearFcmClientConfig
 import com.hermesandroid.relay.data.FcmClientConfig
@@ -3600,6 +3601,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 val result = relayHttpClient.registerPushToken(
                     token = token,
                     projectId = config.projectId,
+                    includePreview = !fcmPushPreferences.value.hideNotificationContent,
                 )
                 _fcmStatusMessage.value = if (result.isSuccess) {
                     "FCM ready — token registered with relay"
@@ -3621,6 +3623,33 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Hide message content in notifications (FCM wake + chat replies). Default
+     * is show preview. When toggled, re-registers the device token so the Mac
+     * omits or includes ``preview`` on the FCM wire.
+     */
+    fun setFcmHideNotificationContent(hide: Boolean) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            app.setFcmHideNotificationContent(hide)
+            val prefs = fcmPushPreferences.value
+            if (!prefs.enabled || !prefs.config.isComplete) return@launch
+            val token = fcmPushController.currentToken().ifBlank { prefs.lastToken }
+            if (token.isBlank()) return@launch
+            relayHttpClient.registerPushToken(
+                token = token,
+                projectId = prefs.config.projectId,
+                includePreview = !hide,
+            ).onSuccess {
+                _fcmStatusMessage.value = if (hide) {
+                    "Notifications will hide message content"
+                } else {
+                    "Notifications will show message preview"
+                }
+            }
+        }
+    }
+
     /** Re-upload token after pair / token refresh. */
     fun syncFcmTokenIfNeeded() {
         viewModelScope.launch {
@@ -3632,7 +3661,11 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             val token = fcmPushController.currentToken().ifBlank { prefs.lastToken }
             if (token.isBlank()) return@launch
             getApplication<Application>().setFcmLastToken(token)
-            relayHttpClient.registerPushToken(token = token, projectId = prefs.config.projectId)
+            relayHttpClient.registerPushToken(
+                token = token,
+                projectId = prefs.config.projectId,
+                includePreview = !prefs.hideNotificationContent,
+            )
         }
     }
 

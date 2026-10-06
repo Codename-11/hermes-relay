@@ -316,6 +316,7 @@ class ProactiveChannel:
             await self._maybe_wake_offline_phone(
                 message_id=message_id,
                 title=out_payload.get("title"),
+                preview=out_payload.get("text"),
             )
             return {
                 "delivered": False,
@@ -512,13 +513,18 @@ class ProactiveChannel:
         *,
         message_id: str,
         title: Any = None,
+        preview: Any = None,
     ) -> None:
         """Best-effort offline wake (BYO FCM). Never raises into push()."""
         hook = self.on_queued_wake
         if hook is None:
             return
         try:
-            result = hook(message_id, title if isinstance(title, str) else None)
+            result = hook(
+                message_id,
+                title if isinstance(title, str) else None,
+                preview if isinstance(preview, str) else None,
+            )
             if asyncio.iscoroutine(result):
                 await result
         except Exception as exc:  # pragma: no cover - defensive

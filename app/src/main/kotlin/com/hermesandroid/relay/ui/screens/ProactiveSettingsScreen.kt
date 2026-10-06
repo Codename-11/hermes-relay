@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Message
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -52,6 +53,7 @@ import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.FcmClientConfig
 import com.hermesandroid.relay.data.FcmClientConfigParser
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import java.nio.charset.Charset
 
 /**
  * "Threads" — the opt-in surface that lets the agent proactively
@@ -200,6 +202,7 @@ private fun FcmByoSection(
     connectionViewModel: ConnectionViewModel,
     paired: Boolean,
 ) {
+    val context = LocalContext.current
     val prefs by connectionViewModel.fcmPushPreferences.collectAsState()
     val status by connectionViewModel.fcmStatusMessage.collectAsState()
     var projectId by remember(prefs.config.projectId) { mutableStateOf(prefs.config.projectId) }
@@ -212,6 +215,54 @@ private fun FcmByoSection(
     }
     var pasteJson by remember { mutableStateOf("") }
     var enabled by remember(prefs.enabled) { mutableStateOf(prefs.enabled) }
+    var importError by remember { mutableStateOf<String?>(null) }
+    var importNote by remember { mutableStateOf<String?>(null) }
+
+    fun applyFirebaseJson(raw: String, sourceLabel: String) {
+        val parsed = FcmClientConfigParser.parse(raw)
+        parsed.fold(
+            onSuccess = { cfg ->
+                projectId = cfg.projectId
+                applicationId = cfg.applicationId
+                apiKey = cfg.apiKey
+                gcmSenderId = cfg.gcmSenderId
+                // Keep a short marker in the paste box so the user sees something loaded;
+                // full multi-KB JSON is awkward to scroll on phone.
+                pasteJson = raw.trim().let { if (it.length <= 400) it else it.take(400) + "\n…" }
+                importError = null
+                importNote = context.getString(R.string.proactive_fcm_loaded_from, sourceLabel)
+            },
+            onFailure = { err ->
+                importNote = null
+                importError = err.message
+                    ?: context.getString(R.string.proactive_fcm_parse_failed)
+            },
+        )
+    }
+
+    val pickJsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val raw = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                stream.bufferedReader(Charset.forName("UTF-8")).readText()
+            }
+        }.getOrElse { err ->
+            importNote = null
+            importError = err.message
+                ?: context.getString(R.string.proactive_fcm_read_failed)
+            return@rememberLauncherForActivityResult
+        }
+        if (raw.isNullOrBlank()) {
+            importNote = null
+            importError = context.getString(R.string.proactive_fcm_read_failed)
+            return@rememberLauncherForActivityResult
+        }
+        val label = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "file"
+        applyFirebaseJson(raw, label)
+    }
 
     ProactiveSectionCard(title = stringResource(R.string.proactive_fcm_title)) {
         Text(
@@ -231,10 +282,68 @@ private fun FcmByoSection(
             )
             Switch(checked = enabled, onCheckedChange = { enabled = it })
         }
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.proactive_fcm_hide_content),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    text = stringResource(R.string.proactive_fcm_hide_content_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = prefs.hideNotificationContent,
+                onCheckedChange = { connectionViewModel.setFcmHideNotificationContent(it) },
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = stringResource(R.string.proactive_fcm_config_heading),
+            style = MaterialTheme.typography.titleSmall,
+        )
+        Text(
+            text = stringResource(R.string.proactive_fcm_load_file_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(
+            onClick = {
+                // JSON + broad fallbacks: Downloads often report octet-stream / plain text.
+                pickJsonLauncher.launch(
+                    arrayOf(
+                        "application/json",
+                        "application/octet-stream",
+                        "text/plain",
+                        "text/*",
+                        "*/*",
+                    ),
+                )
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Folder,
+                contentDescription = null,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(stringResource(R.string.proactive_fcm_load_file))
+        }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = pasteJson,
-            onValueChange = { pasteJson = it },
+            onValueChange = {
+                pasteJson = it
+                importError = null
+                importNote = null
+            },
             modifier = Modifier.fillMaxWidth(),
             label = { Text(stringResource(R.string.proactive_fcm_paste_json)) },
             minLines = 3,
@@ -242,19 +351,27 @@ private fun FcmByoSection(
         )
         Spacer(Modifier.height(8.dp))
         FilledTonalButton(
-            onClick = {
-                val parsed = FcmClientConfigParser.parse(pasteJson)
-                parsed.getOrNull()?.let { cfg ->
-                    projectId = cfg.projectId
-                    applicationId = cfg.applicationId
-                    apiKey = cfg.apiKey
-                    gcmSenderId = cfg.gcmSenderId
-                }
-            },
+            onClick = { applyFirebaseJson(pasteJson, "paste") },
             enabled = pasteJson.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(stringResource(R.string.proactive_fcm_import_json))
+        }
+        importNote?.let { note ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = note,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        importError?.let { err ->
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = err,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
         }
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
