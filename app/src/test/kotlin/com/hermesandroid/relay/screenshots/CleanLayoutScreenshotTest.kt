@@ -14,6 +14,8 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -26,6 +28,7 @@ import com.hermesandroid.relay.ui.components.CHAT_INPUT_ATTACH_TEST_TAG
 import androidx.compose.ui.test.onNodeWithTag
 import org.junit.Assert.assertEquals
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
+import com.hermesandroid.relay.ui.components.ComposerActionSheet
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.screens.AppearanceLivePreview
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
@@ -35,6 +38,7 @@ import com.hermesandroid.relay.ui.theme.appearanceShapeScale
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -46,6 +50,39 @@ class CleanLayoutScreenshotTest {
 
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
+
+    @Test
+    @Config(qualifiers = "w360dp-h320dp-xhdpi")
+    fun `clean actions remain reachable with large text in a short window`() {
+        var commandsOpened = 0
+        var dismissed = 0
+        RuntimeEnvironment.setFontScale(2f)
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "clean", themePreference = "light") {
+                ComposerActionSheet(
+                    onDismiss = { dismissed++ },
+                    onAttachCamera = {}, onAttachPhotos = {}, onAttachFiles = {}, onPasteImage = {},
+                    modelControl = ChatInputPickerControl(
+                        value = "Model", contentDescription = "Model",
+                        options = listOf(ChatInputPickerOption(label = "Model", value = "model")),
+                    ),
+                    onModelClick = {},
+                    effortControl = ChatInputPickerControl(
+                        value = "High", contentDescription = "Reasoning",
+                        options = listOf(ChatInputPickerOption(label = "High", value = "high")),
+                    ),
+                    onEffortClick = {},
+                    onCommands = { commandsOpened++ },
+                )
+            }
+        }
+        compose.onNodeWithText("Browse commands").performScrollTo().assertIsDisplayed().performClick()
+        compose.runOnIdle {
+            assertEquals(1, commandsOpened)
+            assertEquals(1, dismissed)
+        }
+        compose.onRoot().captureRoboImage("build/ui-regression/clean-sheet-large-text.png")
+    }
 
     private val user = ChatMessage(
         id = "u1",

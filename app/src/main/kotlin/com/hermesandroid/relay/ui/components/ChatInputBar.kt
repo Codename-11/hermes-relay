@@ -451,7 +451,7 @@ fun ChatInputBar(
                                         Text(
                                             text = placeholder,
                                             style = MaterialTheme.typography.bodyLarge,
-                                            color = RelayRefresh.Dim,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
                                     }
                                     inner()

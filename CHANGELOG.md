@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Android composer placeholder uses readable secondary text; Clean composer options scroll in short windows and at larger text sizes.
+- Android Material container colors stay consistent over nested surfaces, preserving their intended text contrast.
 - Windows CLI+UI installation correctly selects its latest release when GitHub returns Android and Plugin releases on the same page, including when discovery needs multiple pages.
 - Desktop tray notices, screenshot evidence, and grant prompts stay reusable after dismissal; screenshot evidence keeps the most recently selected image. (#606)
 - Desktop computer screenshots attach validated image bytes to the host tool result instead of returning base64 as plain text.
