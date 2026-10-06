@@ -1721,8 +1721,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val client = gptLiveVoiceClient ?: return
         if (gptLiveSession != null || gptLiveStarting) return
         gptLiveStartJob?.cancel()
+        // Claim the microphone lane synchronously before launching. Continuous
+        // mode can otherwise observe voiceMode=true in the same frame and open
+        // VoiceRecorder before the coroutine gets a chance to set this flag.
+        gptLiveStarting = true
         gptLiveStartJob = viewModelScope.launch {
-            gptLiveStarting = true
             try {
                 val status = client.status().getOrElse { error ->
                     Log.i(TAG, "GPT-Live status unavailable; keeping chained voice: ${error.message}")
