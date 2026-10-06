@@ -367,6 +367,12 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
 
+    // GPT-Live uses a native full-duplex WebRTC media session. Keep the
+    // OpenAI credential on the Hermes host; Android only exchanges SDP with
+    // the authenticated Dashboard endpoint and then talks media/data directly
+    // to the Live session.
+    implementation(libs.webrtc)
+
     // Media3 ExoPlayer + lifecycle-aware Compose video surface.
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.ui.compose)
