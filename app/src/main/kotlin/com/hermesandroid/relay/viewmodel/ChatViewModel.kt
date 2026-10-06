@@ -9076,6 +9076,8 @@ class ChatViewModel : ViewModel() {
                 explicitGatewayAttachments,
                 explicitOnTransportAccepted,
                 explicitOnTransportFailed,
+                explicitGatewaySurface,
+                explicitGatewayVoiceContext,
             )
         } else if (sessionId != null) {
             startStream(
@@ -9092,6 +9094,8 @@ class ChatViewModel : ViewModel() {
                 explicitGatewayAttachments,
                 explicitOnTransportAccepted,
                 explicitOnTransportFailed,
+                explicitGatewaySurface,
+                explicitGatewayVoiceContext,
             )
         } else {
             if (client == null) {
@@ -9136,6 +9140,8 @@ class ChatViewModel : ViewModel() {
                             explicitGatewayAttachments,
                             explicitOnTransportAccepted,
                             explicitOnTransportFailed,
+                            explicitGatewaySurface,
+                            explicitGatewayVoiceContext,
                         )
 
                         // Auto-title: use first ~50 chars of user message
@@ -9999,6 +10005,8 @@ class ChatViewModel : ViewModel() {
         gatewayOnlyAttachments: List<Attachment> = emptyList(),
         onTransportAccepted: () -> Unit = { },
         onTransportFailed: (String) -> Unit = { },
+        gatewaySurface: String? = null,
+        gatewayVoiceContext: String? = null,
     ) {
         val transportAccepted = AtomicBoolean(false)
         val transportFailed = AtomicBoolean(false)
@@ -10990,8 +10998,8 @@ class ChatViewModel : ViewModel() {
                     truncateBeforeUserOrdinal = pendingTruncation?.ordinal,
                     truncateBeforeRowId = pendingTruncation?.rowId,
                     queuedFollowUp = queuedFollowUp,
-                    clientSurface = explicitGatewaySurface,
-                    voiceContext = explicitGatewayVoiceContext,
+                    clientSurface = gatewaySurface,
+                    voiceContext = gatewayVoiceContext,
                     onSurvivorUserRowIds = handler::rebindSurvivorUserRowIds,
                     onAttachmentFailure = { reason ->
                         _steerableTurn.value = false
