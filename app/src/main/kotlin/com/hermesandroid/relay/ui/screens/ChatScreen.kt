@@ -661,6 +661,9 @@ private fun LazyListState.scrollTickerProgress(): Float {
 private fun ChatScrollTicker(
     listState: LazyListState,
     modifier: Modifier = Modifier,
+    // Clean shows the rail only while the list is moving, like a native
+    // scrollbar; Classic keeps it parked at a dim idle alpha.
+    idleVisible: Boolean = true,
 ) {
     val isScrollable by remember(listState) {
         derivedStateOf { listState.canScrollBackward || listState.canScrollForward }
@@ -680,9 +683,15 @@ private fun ChatScrollTicker(
         targetValue = when {
             !isScrollable -> 0f
             listState.isScrollInProgress -> 0.95f
-            else -> 0.54f
+            idleVisible -> 0.54f
+            else -> 0f
         },
-        animationSpec = tween(durationMillis = 160),
+        animationSpec = if (!idleVisible && !listState.isScrollInProgress) {
+            // Linger briefly after the fling, then fade out.
+            tween(durationMillis = 600, delayMillis = 400)
+        } else {
+            tween(durationMillis = 160)
+        },
         label = "chatScrollTickerAlpha",
     )
 
@@ -2576,8 +2585,10 @@ fun ChatScreen(
                 scopeTitle = drawerTitle,
                 scopeSubtitle = drawerSubtitle,
                 activeProfileName = drawerProfileName ?: "default",
-                isLoading = isLoadingSessions,
-                loadFailed = sessionListUnavailable,
+                // Demo mode has no server to list sessions from; never
+                // leave the drawer spinning.
+                isLoading = isLoadingSessions && !isDemoMode,
+                loadFailed = sessionListUnavailable && !isDemoMode,
                 isLoadingMore = isLoadingMoreSessions,
                 hasMore = hasMoreSessions,
                 loadMoreFailed = sessionPageLoadFailed,
@@ -2930,7 +2941,12 @@ fun ChatScreen(
                     // yet (server config still loading), fall back to the plain
                     // connection status \u2014 never the literal "None"/"Default"
                     // personality label.
-                    val subtitleText = if (!headerChatReady) {
+                    // Clean: demo mode has nothing to be disconnected from,
+                    // so the subtitle names the mode instead of a red error.
+                    val cleanDemoHeader = cleanLayout && isDemoMode && !headerChatReady
+                    val subtitleText = if (cleanDemoHeader) {
+                        stringResource(R.string.demo_badge)
+                    } else if (!headerChatReady) {
                         statusText
                     } else if (supervised) {
                         buildList {
@@ -2948,7 +2964,7 @@ fun ChatScreen(
                             modelName = modelName,
                         )
                     }
-                    val subtitleColor = if (headerChatReady) {
+                    val subtitleColor = if (headerChatReady || cleanDemoHeader) {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     } else {
                         statusColor
@@ -4154,6 +4170,7 @@ fun ChatScreen(
 
                     ChatScrollTicker(
                         listState = listState,
+                        idleVisible = !cleanLayout,
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
                             .padding(top = 10.dp, end = 2.dp, bottom = 78.dp)
