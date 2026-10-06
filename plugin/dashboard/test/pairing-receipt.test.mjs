@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import QRCode from "qrcode";
 
-import { pairingQrRenderOptions } from "../src/lib/pairing-qr.mjs";
+import { pairingQrRenderOptions, pairingQrErrorMessage } from "../src/lib/pairing-qr.mjs";
 
 import {
   classifyPublicRouteInput,
@@ -37,6 +37,18 @@ test("certificate-bearing pairing invite fits the Dashboard QR renderer", () => 
   assert.ok(qr.version <= 40);
 });
 
+test("multi-route certificate invite reports QR capacity without discarding the invite", () => {
+  const payload = JSON.stringify({hermes:3, endpoints:[{role:"plugin_proxy", proxy:{
+    url:"https://relay.example:9443", cert_der:"a".repeat(3200),
+    pin_sha256:"sha256/"+"A".repeat(43)+"=", surfaces:["relay","dashboard"],
+  }}]});
+  assert.throws(() => QRCode.create(payload, pairingQrRenderOptions()), (error) => {
+    assert.match(pairingQrErrorMessage(error), /too large.*Copy the full invite/);
+    return true;
+  });
+  assert.match(pairingQrErrorMessage(new Error("Canvas unavailable")), /could not be drawn/);
+});
+
 test("Secure Link receipt derives only its advertised namespaces without exposing trust material", () => {
   const payload = { endpoints: [{ role: "plugin_proxy", proxy: {
     url: "https://relay.example:9443",
@@ -52,7 +64,7 @@ test("Secure Link receipt derives only its advertised namespaces without exposin
   ]);
   const probes = pairingSurfaceProbes(receipt);
   assert.ok(probes.every(probe => probe.requires_paired_client));
-  assert.deepEqual(pairingProbeStatus(probes[0]), { healthy: null, label: "Import QR to verify" });
+  assert.deepEqual(pairingProbeStatus(probes[0]), { healthy: null, label: "Verify after pairing" });
   assert.equal(JSON.stringify(receipt).includes("public-certificate"), false);
   assert.equal(JSON.stringify(receipt).includes("sha256/"), false);
   payload.endpoints[0].proxy.pin_sha256 = "wrong";
@@ -287,10 +299,12 @@ test("CLI compatibility distinguishes Dashboard ingress from direct and pinned r
     role:"public_legacy", relay:{url:"ws://hermes.example:8767"},
   }]})).length, 0);
   const pinned = pairingEndpointReceipt({endpoints:[{role:"secure_link", proxy:{
-    url:"https://secure.example:9443", surfaces:["relay"],
+    url:"https://secure.example:9443", surfaces:["relay","dashboard","api"],
     pin_sha256:"sha256/"+"A".repeat(43)+"=", cert_der:"test-cert",
   }}]});
   assert.equal(desktopPairingRoutes(pinned).length, 1);
+  assert.deepEqual(desktopPairingRoutes(pinned)[0].surfaces.map(surface=>surface.surface), ["relay"]);
+  assert.deepEqual(pinned.routes[0].surfaces.map(surface=>surface.surface), ["dashboard","relay","api"]);
 });
 
 test("address protocol makes default and non-default ports explicit", () => {

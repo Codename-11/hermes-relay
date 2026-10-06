@@ -11,3 +11,9 @@ export function pairingQrRenderOptions() {
     errorCorrectionLevel: "L",
   };
 }
+
+export function pairingQrErrorMessage(error) {
+  return /too big/i.test(error && error.message ? error.message : String(error))
+    ? "This invite is too large for a QR code. Copy the full invite instead."
+    : "The QR code could not be drawn. Copy the full invite instead.";
+}

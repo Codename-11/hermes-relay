@@ -5,7 +5,8 @@ const { useState, useEffect, useRef, useCallback, useMemo } = SDK.hooks;
 import QRCode from "qrcode";
 import { mintPairingWithMode, probeEndpoints } from "../lib/api.js";
 import { canonicalDashboardOrigin } from "../lib/mobile-setup.mjs";
-import { pairingQrRenderOptions } from "../lib/pairing-qr.mjs";
+import { copyText } from "../lib/copy-text.mjs";
+import { pairingQrRenderOptions, pairingQrErrorMessage } from "../lib/pairing-qr.mjs";
 import {
   pairingEndpointReceipt,
   pairingProbeKey,
@@ -49,6 +50,12 @@ const PREFER_ROLES = [
   { value: "tailscale", label: "Tailscale → priority 0" },
   { value: "public",    label: "Public → priority 0" },
 ];
+
+const RELAY_ROLE_LABELS = {
+  plugin_proxy: "Secure Link",
+  public_legacy: "External",
+  legacy_direct: "LAN",
+};
 
 function readString(key, fallback) {
   try { return window.localStorage.getItem(key) ?? fallback; }
@@ -122,6 +129,8 @@ export default function PairDialog({ open, onClose }) {
   const [state, setState] = useState({ status: "idle" });
   const [probeState, setProbeState] = useState({ status: "idle", results: [] });
   const [copyStatus, setCopyStatus] = useState("");
+  const [qrState, setQrState] = useState({ status: "idle" });
+  const [manualCopy, setManualCopy] = useState(false);
   // Operator's explicit "yes, I know it's proxy-fronted, mint anyway"
   // acknowledgement. Resets every time the pinned host changes so a new
   // host triggers a fresh consent step — avoids a situation where the
@@ -130,13 +139,19 @@ export default function PairDialog({ open, onClose }) {
   const canvasRef = useRef(null);
   const mintGeneration = useRef(0);
   const countdown = useCountdown(state.data ? state.data.expires_at : null);
+  const isDesktop = settings.client === "desktop";
+  const expired = countdown === "expired";
 
   const receipt = useMemo(
     () => pairingEndpointReceipt(state.data ? state.data.qr_payload : null),
     [state.data],
   );
-  const probes = useMemo(() => pairingSurfaceProbes(receipt), [receipt]);
-  const cliRoutes = desktopPairingRoutes(receipt);
+  const cliRoutes = useMemo(() => desktopPairingRoutes(receipt), [receipt]);
+  const visibleRoutes = isDesktop ? cliRoutes : receipt.routes;
+  const probes = useMemo(
+    () => pairingSurfaceProbes({ routes: visibleRoutes }),
+    [visibleRoutes],
+  );
   const probeByKey = useMemo(() => {
     const byKey = new Map();
     (probeState.results || []).forEach((result) => byKey.set(pairingProbeKey(result), result));
@@ -174,6 +189,7 @@ export default function PairDialog({ open, onClose }) {
       });
       if (generation !== mintGeneration.current) return;
       setCopyStatus("");
+      setManualCopy(false);
       setState({ status: "ok", data });
     } catch (err) {
       if (generation !== mintGeneration.current) return;
@@ -217,19 +233,30 @@ export default function PairDialog({ open, onClose }) {
   }, [open, state.status, mint, hostLooksProxyFronted, proxyConfirmed]);
 
   useEffect(() => {
-    if (state.status !== "ok" || !canvasRef.current) return;
+    if (!open || isDesktop || expired || state.status !== "ok" || !canvasRef.current) {
+      setQrState({ status: "idle" });
+      return undefined;
+    }
+    let cancelled = false;
+    setQrState({ status: "loading" });
     QRCode.toCanvas(
       canvasRef.current,
       state.data.qr_payload,
       pairingQrRenderOptions(),
-    ).catch(() => { /* canvas failure non-fatal */ });
-  }, [state.status, state.data]);
+    ).then(() => {
+      if (!cancelled) setQrState({ status: "ok" });
+    }).catch((error) => {
+      if (!cancelled) setQrState({ status: "error", error: pairingQrErrorMessage(error) });
+    });
+    return () => { cancelled = true; };
+  }, [open, isDesktop, expired, state.status, state.data]);
 
   useEffect(() => {
     if (open) return;
     mintGeneration.current += 1;
     setState({ status: "idle" });
     setCopyStatus("");
+    setManualCopy(false);
     setProbeState({ status: "idle", results: [] });
     setAdvancedOpen(false);
     setProxyConfirmed(false);
@@ -270,12 +297,17 @@ export default function PairDialog({ open, onClose }) {
 
   const copyInvite = useCallback(async () => {
     const invite = state.data && (state.data.pairing_url || state.data.qr_payload);
-    if (!invite) return;
+    if (!invite || state.data.expires_at <= Math.floor(Date.now() / 1000)) return;
+    const generation = mintGeneration.current;
     try {
-      await navigator.clipboard.writeText(invite);
-      setCopyStatus("Copied invite URL");
+      await copyText(invite);
+      if (generation !== mintGeneration.current) return;
+      setCopyStatus("Invite copied");
+      setManualCopy(false);
     } catch (_err) {
-      setCopyStatus("Copy failed; select the URL manually");
+      if (generation !== mintGeneration.current) return;
+      setCopyStatus("Copy failed. Select the invite below and copy it manually.");
+      setManualCopy(true);
     }
   }, [state.data]);
 
@@ -302,6 +334,13 @@ export default function PairDialog({ open, onClose }) {
 
         <div className="hr-pair-body">
           <section className="hr-pair-qr-column" aria-label="Hermes-Relay pairing code">
+            <div className="hr-pair-panel">
+              <Label htmlFor="pair-client">Pairing client</Label>
+              <select id="pair-client" className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm" value={settings.client} onChange={(event) => updateSetting({ client: event.target.value })}>
+                <option value="android">Hermes-Relay Android</option>
+                <option value="desktop">Hermes-Relay CLI+UI</option>
+              </select>
+            </div>
             {blockForProxyConsent ? (
               <div className="rounded-md border border-amber-500/60 bg-amber-500/15 p-3 text-sm space-y-2">
                 <div className="font-medium">Proxy-fronted host detected</div>
@@ -341,9 +380,31 @@ export default function PairDialog({ open, onClose }) {
               </div>
             ) : state.status === "ok" ? (
               <>
-                <div className="hr-qr-frame hr-pairing-qr">
-                  <canvas ref={canvasRef} className="block" aria-label="Hermes-Relay pairing QR code" />
-                </div>
+                {expired ? (
+                  <div className="hr-pair-panel" role="status">
+                    <div className="hr-pair-panel-title">Invite expired</div>
+                    <p className="text-sm text-muted-foreground">Create a new invite to continue pairing.</p>
+                    <Button size="sm" onClick={regenerate}>New invite</Button>
+                  </div>
+                ) : isDesktop ? (
+                  <div className="hr-pair-panel">
+                    <div className="hr-pair-panel-title">Connect this computer</div>
+                    <p className="text-sm">Copy the invite, then open CLI+UI → Pair host → Paste invite.</p>
+                    <p className="text-xs text-muted-foreground">The invite includes Relay addresses and Secure Link certificate trust. Hermes sign-in is not required on the computer.</p>
+                  </div>
+                ) : (
+                  <>
+                    {qrState.status === "error" ? (
+                      <div className="hr-pair-panel" role="status">
+                        <div className="hr-pair-panel-title">Use the pairing invite</div>
+                        <p className="text-sm text-muted-foreground">{qrState.error}</p>
+                      </div>
+                    ) : null}
+                    <div className="hr-qr-frame hr-pairing-qr" hidden={qrState.status === "error"}>
+                      <canvas ref={canvasRef} className="block" aria-label="Hermes-Relay pairing QR code" />
+                    </div>
+                  </>
+                )}
                 <div className="hr-pair-code-row">
                   <div>
                     <div className="text-xs uppercase tracking-wider text-muted-foreground">Pairing code</div>
@@ -358,10 +419,14 @@ export default function PairDialog({ open, onClose }) {
                 </div>
                 {state.data.pairing_url ? (
                   <div className="space-y-2">
-                    <Button className="w-full" size="sm" variant="outline" onClick={copyInvite}>
+                    <Button className="w-full" size="sm" onClick={copyInvite} disabled={expired || (isDesktop && cliRoutes.length === 0)}>
                       Copy invite
                     </Button>
-                    {copyStatus ? <div className="text-center text-xs text-muted-foreground">{copyStatus}</div> : null}
+                    {!expired && copyStatus ? <div className="text-center text-xs text-muted-foreground" role="status">{copyStatus}</div> : null}
+                    {!expired && manualCopy ? (
+                      <textarea className="hr-pair-invite-text" aria-label="Pairing invite" readOnly
+                        value={state.data.pairing_url} onFocus={(event) => event.target.select()} />
+                    ) : null}
                   </div>
                 ) : null}
               </>
@@ -369,32 +434,7 @@ export default function PairDialog({ open, onClose }) {
           </section>
 
           <section className="hr-pair-options-column">
-            <div className="hr-pair-panel">
-              <Label htmlFor="pair-client">Pairing client</Label>
-              <select id="pair-client" className="h-9 w-full rounded-md border border-border bg-background px-2 text-sm" value={settings.client} onChange={(event) => updateSetting({ client: event.target.value })}>
-                <option value="android">Hermes-Relay Android</option>
-                <option value="desktop">Hermes-Relay CLI+UI</option>
-              </select>
-              {settings.client === "desktop" && <p className="text-xs text-muted-foreground">Includes direct Relay compatibility routes. This does not publish a listener; verify a direct or Secure Link route is reachable from the computer.</p>}
-            </div>
-            <div className="hr-pair-panel">
-              <div className="hr-pair-panel-title">Pairing another computer</div>
-              {state.status === "ok" && cliRoutes.length > 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  Copy this invite, then open CLI+UI → Pair host → Paste invite.
-                  The CLI also accepts <code>hermes-relay pair --pair-qr '&lt;invite&gt;'</code>.
-                  Import the full invite to preserve Secure Link certificate trust.
-                </p>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Choose CLI+UI above to mint an invite with direct Relay routes, or on the host run{' '}
-                  <code>hermes pair --legacy-direct-relay</code> and use a deliberately reachable
-                  direct Relay address, including its <code>ws://</code> or <code>wss://</code> protocol and port.
-                  A public Dashboard address does not expose the direct Relay port.
-                </p>
-              )}
-            </div>
-            <div className="hr-pair-panel">
+            {!isDesktop && <div className="hr-pair-panel">
               <div className="hr-pair-panel-title">What this adds</div>
               <div className="hr-grant-list">
                 {['Terminal', 'Bridge', 'Media', 'Voice'].map((label) => (
@@ -404,13 +444,13 @@ export default function PairDialog({ open, onClose }) {
               <p className="text-xs text-muted-foreground">
                 Extends an existing Hermes Dashboard connection with Hermes-Relay capabilities.
               </p>
-            </div>
+            </div>}
 
             <div className="hr-pair-panel">
               <div className="hr-pair-connection-header">
                 <div>
-                  <div className="hr-pair-panel-title">Connection</div>
-                  <div className="text-xs text-muted-foreground">Best available route</div>
+                  <div className="hr-pair-panel-title">{isDesktop ? "Relay routes" : "Connection"}</div>
+                  <div className="text-xs text-muted-foreground">{isDesktop ? "Addresses this computer can use" : "Best available route"}</div>
                 </div>
                 <select
                   id="pair-mode"
@@ -420,16 +460,16 @@ export default function PairDialog({ open, onClose }) {
                   onChange={(event) => updateSetting({ mode: event.target.value })}
                 >
                   {MODES.map((mode) => (
-                    <option key={mode.value} value={mode.value}>{mode.label}</option>
+                    <option key={mode.value} value={mode.value}>{isDesktop && mode.value === "public" ? "Public routes" : mode.label}</option>
                   ))}
                 </select>
               </div>
-              {receipt.routes.length > 0 ? (
+              {visibleRoutes.length > 0 ? (
                 <div className="hr-endpoint-list">
-                  {receipt.routes.map((route) => (
+                  {visibleRoutes.map((route) => (
                     <div key={`${route.role}-${route.priority}`} className="hr-endpoint-route">
                       <div className="hr-endpoint-row">
-                        <Badge variant="outline" className="text-xs capitalize">{route.role}</Badge>
+                        <Badge variant="outline" className="text-xs capitalize">{RELAY_ROLE_LABELS[route.role] || route.role}</Badge>
                         <span className="text-xs text-muted-foreground hr-endpoint-address">
                           {route.protection}
                         </span>
@@ -450,7 +490,7 @@ export default function PairDialog({ open, onClose }) {
                             <div key={`${surface.surface}-${surface.url}`} className="hr-endpoint-surface">
                               <span className="text-xs font-medium">{surface.label}</span>
                               <div className="min-w-0">
-                                <span className="block font-mono text-xs hr-endpoint-address" title={surface.url}>
+                                  <span className={`block font-mono text-xs ${isDesktop ? "hr-relay-address" : "hr-endpoint-address"}`} title={surface.url}>
                                   {surface.url}
                                 </span>
                                 <div className="text-xs text-muted-foreground">{pairingAddressProtocol(surface.url)}</div>
@@ -464,12 +504,12 @@ export default function PairDialog({ open, onClose }) {
                   ))}
                 </div>
               ) : (
-                <div className="text-xs text-muted-foreground">Automatic route selection will use server configuration.</div>
+                <div className="text-xs text-muted-foreground">{isDesktop && state.status === "ok" ? "No compatible Relay route is available. Configure a reachable direct Relay or Secure Link address before pairing." : "Automatic route selection will use server configuration."}</div>
               )}
               <p className="text-xs text-muted-foreground">
-                Tailscale is preferred because it keeps the route private and ACL-controlled. A raw
+                {isDesktop ? "The CLI verifies the selected route while pairing. A Dashboard address alone cannot connect this computer to Relay." : <>Tailscale is preferred because it keeps the route private and ACL-controlled. A raw
                 HTTP/WS tailnet URL has no application TLS, but Tailscale still encrypts device-to-device
-                traffic. Public routes must use HTTPS/WSS.
+                traffic. Public routes must use HTTPS/WSS.</>}
               </p>
               {probeState.status === "error" ? (
                 <div className="text-xs text-destructive">Surface probes failed: {probeState.error}</div>
