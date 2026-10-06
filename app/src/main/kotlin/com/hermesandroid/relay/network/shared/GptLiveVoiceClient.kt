@@ -6,6 +6,8 @@ data class GptLiveStatus(
     val reason: String? = null,
     val model: String = "gpt-live-1",
     val voice: String = "marin",
+    val authMode: String? = null,
+    val eventDialect: String = "public",
 )
 
 data class GptLiveHistoryMessage(
@@ -23,7 +25,11 @@ data class GptLiveTranscriptFragment(
 }
 
 data class GptLiveCallbacks(
-    val onDelegation: (delegationId: String, context: List<GptLiveTranscriptFragment>) -> Unit,
+    val onDelegation: (
+        delegationId: String,
+        prompt: String?,
+        context: List<GptLiveTranscriptFragment>,
+    ) -> Unit,
     val onTranscript: (GptLiveTranscriptFragment) -> Unit = {},
     val onSpeakingChanged: (Boolean) -> Unit = {},
     val onError: (message: String, fatal: Boolean) -> Unit = { _, _ -> },

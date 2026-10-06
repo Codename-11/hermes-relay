@@ -721,6 +721,41 @@ async def get_provider_usage(
     )
 
 
+@router.get("/voice-live/status")
+async def get_voice_live_status() -> dict[str, Any]:
+    """Report Relay-owned GPT-Live readiness without exposing credentials."""
+    live = _plugin_module("relay.gpt_live")
+    state = live.readiness()
+    return {
+        "ok": True,
+        "mode": "gpt-live",
+        "available": state.available,
+        "reason": state.reason,
+        "model": state.model,
+        "voice": state.voice,
+        "auth_mode": "subscription",
+        "event_dialect": "subscription",
+        "auth_source": state.auth_source,
+    }
+
+
+@router.post("/voice-live/session")
+async def create_voice_live_session(
+    payload: dict[str, Any] = Body(...),
+) -> dict[str, Any]:
+    """Exchange Android's SDP offer for a GPT-Live answer via Codex OAuth."""
+    live = _plugin_module("relay.gpt_live")
+    try:
+        result = await live.create_session(payload.get("sdp"), payload.get("history"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except live.GptLiveUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except live.GptLiveRejected as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"ok": True, **result}
+
+
 @router.get("/phone/config")
 async def get_phone_config() -> dict[str, Any]:
     """Phone-platform home-channel config for the Management tab.

@@ -68,19 +68,47 @@ class StandardGptLiveVoiceClient(
         runCatching {
             val base = dashboardBaseUrl()
                 ?: throw IOException("Hermes dashboard URL not configured")
-            val url = standardHermesAudioUrl(
+            val hostUrl = standardHermesAudioUrl(
                 base,
                 "/api/audio/voice-live/status",
                 activeProfile(),
             ) ?: throw IOException("Hermes dashboard URL is not a valid address: $base")
-            val request = Request.Builder().url(url).get().build()
-            val root = executeJson(request, "GPT-Live status", base)
+            val hostRoot = executeJson(
+                Request.Builder().url(hostUrl).get().build(),
+                "GPT-Live status",
+                base,
+            )
+            if (hostRoot.string("mode") != "gpt-live") {
+                return@runCatching GptLiveStatus(
+                    mode = hostRoot.string("mode") ?: "chained",
+                    available = hostRoot.boolean("available") ?: false,
+                    reason = hostRoot.string("reason"),
+                    model = hostRoot.string("model") ?: "gpt-live-1",
+                    voice = hostRoot.string("voice") ?: "marin",
+                    authMode = hostRoot.string("auth_mode"),
+                    eventDialect = hostRoot.string("event_dialect") ?: "public",
+                )
+            }
+            val relayUrl = standardHermesAudioUrl(
+                base,
+                "/api/plugins/hermes-relay/voice-live/status",
+                activeProfile(),
+            ) ?: throw IOException("Hermes dashboard URL is not a valid address: $base")
+            val relayRequest = Request.Builder().url(relayUrl).get().build()
+            val relayRoot = executeJsonOrNullOn404(
+                relayRequest,
+                "Relay GPT-Live status",
+                base,
+            )
+            val root = relayRoot ?: hostRoot
             GptLiveStatus(
                 mode = root.string("mode") ?: "chained",
                 available = root.boolean("available") ?: false,
                 reason = root.string("reason"),
                 model = root.string("model") ?: "gpt-live-1",
                 voice = root.string("voice") ?: "marin",
+                authMode = root.string("auth_mode"),
+                eventDialect = root.string("event_dialect") ?: "public",
             )
         }
     }
@@ -106,6 +134,11 @@ class StandardGptLiveVoiceClient(
         history: List<GptLiveHistoryMessage>,
         sdp: String,
     ): LiveSessionAnswer = withContext(Dispatchers.IO) {
+        val relayUrl = standardHermesAudioUrl(
+            baseUrl,
+            "/api/plugins/hermes-relay/voice-live/session",
+            activeProfile(),
+        ) ?: throw IOException("Hermes dashboard URL is not a valid address: $baseUrl")
         val url = standardHermesAudioUrl(
             baseUrl,
             "/api/audio/voice-live/session",
@@ -135,18 +168,34 @@ class StandardGptLiveVoiceClient(
             put("sdp", sdp)
             put("history", historyJson)
         }
-        val request = Request.Builder()
-            .url(url)
+        val relayRequest = Request.Builder()
+            .url(relayUrl)
             .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
             .header("Accept", "application/json")
             .build()
-        val root = executeJson(request, "GPT-Live session creation", baseUrl)
+        val root = executeJsonOrNullOn404(
+            relayRequest,
+            "Relay GPT-Live session creation",
+            baseUrl,
+        ) ?: executeJson(
+            Request.Builder()
+                .url(url)
+                .post(json.encodeToString(JsonObject.serializer(), payload).toRequestBody(JSON_MEDIA))
+                .header("Accept", "application/json")
+                .build(),
+            "GPT-Live session creation",
+            baseUrl,
+        )
         val sessionId = (root["session"] as? JsonObject)?.string("id")
         val transport = root["transport"] as? JsonObject
             ?: throw IOException("GPT-Live session response missing transport")
         val answer = transport.string("sdp")
             ?: throw IOException("GPT-Live session response missing SDP answer")
-        LiveSessionAnswer(sessionId, answer)
+        LiveSessionAnswer(
+            sessionId = sessionId,
+            sdp = answer,
+            eventDialect = root.string("event_dialect") ?: "public",
+        )
     }
 
     private fun executeJson(request: Request, operation: String, baseUrl: String): JsonObject {
@@ -171,6 +220,32 @@ class StandardGptLiveVoiceClient(
         }
     }
 
+    private fun executeJsonOrNullOn404(
+        request: Request,
+        operation: String,
+        baseUrl: String,
+    ): JsonObject? {
+        val client = standardHermesDashboardAudioClient(dashboardHttpClientProvider(baseUrl), 180L)
+        client.newCall(request).execute().use { response ->
+            val body = response.body.string()
+            if (response.code == 404) return null
+            if (!response.isSuccessful) {
+                throw IOException(
+                    when (response.code) {
+                        401, 403 -> "$operation needs dashboard sign-in"
+                        502, 503 -> "$operation is unavailable: ${body.take(500)}"
+                        else -> "$operation failed (HTTP ${response.code}): ${body.take(500)}"
+                    },
+                )
+            }
+            val root = json.decodeFromString<JsonObject>(body)
+            if (root.boolean("ok") == false) {
+                throw IOException(root.string("detail") ?: root.string("error") ?: "$operation failed")
+            }
+            return root
+        }
+    }
+
     private fun dashboardBaseUrl(): String? =
         dashboardUrlProvider()?.trim()?.trimEnd('/')?.takeIf(String::isNotBlank)
 
@@ -182,7 +257,11 @@ class StandardGptLiveVoiceClient(
     }
 }
 
-private data class LiveSessionAnswer(val sessionId: String?, val sdp: String)
+private data class LiveSessionAnswer(
+    val sessionId: String?,
+    val sdp: String,
+    val eventDialect: String = "public",
+)
 
 private class AndroidGptLiveSession(
     context: Context,
@@ -202,6 +281,7 @@ private class AndroidGptLiveSession(
     private var microphoneTrack: AudioTrack? = null
     private var events: DataChannel? = null
     private var started = false
+    private var eventDialect: String = "public"
 
     @Volatile
     override var sessionId: String? = null
@@ -279,6 +359,7 @@ private class AndroidGptLiveSession(
             ?: throw IOException("GPT-Live WebRTC offer has no SDP")
         val answer = createSession(sdp)
         sessionId = answer.sessionId
+        eventDialect = answer.eventDialect
         setRemoteDescription(
             localPeer,
             SessionDescription(SessionDescription.Type.ANSWER, answer.sdp),
@@ -286,6 +367,23 @@ private class AndroidGptLiveSession(
     }
 
     override fun speak(delegationId: String?, content: String) {
+        if (eventDialect == "subscription" && delegationId != null) {
+            chunkSubscriptionText(content).forEach { chunk ->
+                send(buildJsonObject {
+                    put("type", "delegation.context.append")
+                    put("event_id", nextEventId("say"))
+                    put("delegation_item_id", delegationId)
+                    put("channel", "speakable")
+                    put("content", buildJsonArray {
+                        add(buildJsonObject {
+                            put("type", "input_text")
+                            put("text", chunk)
+                        })
+                    })
+                })
+            }
+            return
+        }
         chunkCommentary(content).forEach { chunk ->
             send(buildJsonObject {
                 put("type", "session.commentary.append")
@@ -299,6 +397,23 @@ private class AndroidGptLiveSession(
     override fun think(delegationId: String?, content: String) {
         val clean = content.replace(Regex("\\s+"), " ").trim().take(APPEND_CHAR_LIMIT)
         if (clean.isBlank()) return
+        if (eventDialect == "subscription" && delegationId != null) {
+            chunkSubscriptionText(clean).forEach { chunk ->
+                send(buildJsonObject {
+                    put("type", "delegation.context.append")
+                    put("event_id", nextEventId("think"))
+                    put("delegation_item_id", delegationId)
+                    put("channel", "commentary")
+                    put("content", buildJsonArray {
+                        add(buildJsonObject {
+                            put("type", "input_text")
+                            put("text", chunk)
+                        })
+                    })
+                })
+            }
+            return
+        }
         send(buildJsonObject {
             put("type", "session.thinking.append")
             put("event_id", nextEventId("think"))
@@ -310,6 +425,18 @@ private class AndroidGptLiveSession(
     override fun instruct(content: String) {
         val clean = content.trim().take(APPEND_CHAR_LIMIT)
         if (clean.isBlank()) return
+        if (eventDialect == "subscription") {
+            send(buildJsonObject {
+                put("type", "session.context.append")
+                put("content", buildJsonArray {
+                    add(buildJsonObject {
+                        put("type", "input_text")
+                        put("text", clean)
+                    })
+                })
+            })
+            return
+        }
         send(buildJsonObject {
             put("type", "session.instructions.append")
             put("event_id", nextEventId("instr"))
@@ -319,6 +446,12 @@ private class AndroidGptLiveSession(
 
     override fun setMuted(muted: Boolean) {
         microphoneTrack?.setEnabled(!muted)
+        if (eventDialect == "subscription") {
+            send(buildJsonObject {
+                put("type", if (muted) "input_audio.pause" else "input_audio.resume")
+            })
+            return
+        }
         send(buildJsonObject {
             put("type", if (muted) "session.input_audio.mute" else "session.input_audio.unmute")
             put("event_id", nextEventId(if (muted) "mute" else "unmute"))
@@ -362,9 +495,61 @@ private class AndroidGptLiveSession(
                 if (transcript.size > 2_000) transcript.subList(0, transcript.size - 1_500).clear()
                 callbacks.onTranscript(fragment)
             }
+            "input_transcript.added", "output_transcript.added" -> {
+                val type = event.string("type") ?: return
+                val item = event["item"] as? JsonObject ?: return
+                val text = item.string("text").orEmpty()
+                if (text.isBlank()) return
+                val fragment = GptLiveTranscriptFragment(
+                    speaker = if (type == "input_transcript.added") {
+                        GptLiveTranscriptFragment.Speaker.User
+                    } else {
+                        GptLiveTranscriptFragment.Speaker.Assistant
+                    },
+                    text = text,
+                    startMs = item.long("start_ms") ?: 0L,
+                    endMs = item.long("end_ms") ?: 0L,
+                )
+                transcript += fragment
+                if (transcript.size > 2_000) transcript.subList(0, transcript.size - 1_500).clear()
+                callbacks.onTranscript(fragment)
+            }
+            // Subscription v3 also emits turn.done, but its transcript may be
+            // partial and can arrive after input/output_transcript.added deltas.
+            // Treating it as another transcript fragment duplicates spoken
+            // text and can corrupt a delegated prompt, so it is bookkeeping only.
+            "turn.done" -> Unit
             "session.delegation.created" -> {
                 val id = (event["delegation"] as? JsonObject)?.string("id") ?: return
                 callbacks.onDelegation(id, contextWindow())
+            }
+            "delegation.created" -> {
+                val item = event["item"] as? JsonObject ?: return
+                if (item.string("target") != "client" || item.string("type") != "delegation") return
+                val id = item.string("id") ?: return
+                val prompt = (item["content"] as? JsonArray)
+                    ?.mapNotNull { part ->
+                        val objectPart = part as? JsonObject ?: return@mapNotNull null
+                        if (objectPart.string("type") == "input_text") {
+                            objectPart.string("text")
+                        } else {
+                            null
+                        }
+                    }
+                    ?.joinToString("")
+                    ?.trim()
+                    .orEmpty()
+                val context = contextWindow().toMutableList()
+                if (prompt.isNotBlank()) {
+                    val endMs = context.lastOrNull()?.endMs ?: 0L
+                    context += GptLiveTranscriptFragment(
+                        speaker = GptLiveTranscriptFragment.Speaker.User,
+                        text = prompt,
+                        startMs = endMs,
+                        endMs = endMs,
+                    )
+                }
+                callbacks.onDelegation(id, context)
             }
             "error" -> {
                 val error = event["error"] as? JsonObject
@@ -493,6 +678,26 @@ private fun chunkCommentary(text: String): List<String> {
         }
     }
     if (current.isNotBlank()) out += current
+    return out
+}
+
+private fun chunkSubscriptionText(text: String): List<String> {
+    val clean = text.replace(Regex("\\s+"), " ").trim()
+    if (clean.isBlank()) return emptyList()
+    val out = mutableListOf<String>()
+    val current = StringBuilder()
+    var bytes = 0
+    clean.forEach { ch ->
+        val width = ch.toString().toByteArray(StandardCharsets.UTF_8).size
+        if (bytes + width > 500 && current.isNotEmpty()) {
+            out += current.toString()
+            current.clear()
+            bytes = 0
+        }
+        current.append(ch)
+        bytes += width
+    }
+    if (current.isNotEmpty()) out += current.toString()
     return out
 }
 
