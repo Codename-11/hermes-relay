@@ -3415,6 +3415,9 @@
     <string name="voice_overlay_provider_output_off">output off</string>
     <string name="voice_overlay_provider_placeholder">provider ...</string>
     <string name="voice_overlay_engine_realtime">Realtime Agent</string>
+    <string name="voice_overlay_engine_gpt_live">GPT-Live</string>
+    <string name="voice_overlay_gpt_live_mode">Live · automatic turn detection</string>
+    <string name="voice_overlay_gpt_live_listening_action">GPT-Live is listening continuously; tap to respond now</string>
     <string name="voice_overlay_engine_hermes">Hermes voice</string>
     <string name="voice_overlay_engine_placeholder">Voice engine ...</string>
 

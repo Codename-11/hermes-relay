@@ -576,6 +576,11 @@ data class VoiceStats(
     val interactionMode: String = "tap",
     /** Current voice engine ("hermes_voice_output" / "realtime_agent"). */
     val voiceEngineMode: String = VoiceEngineMode.HermesVoiceOutput.storageValue,
+    /** True while a full-duplex GPT-Live WebRTC session owns mic + speaker. */
+    val gptLiveActive: Boolean = false,
+    /** Effective provider model/voice for the live session, for honest UI labels. */
+    val gptLiveModel: String = "",
+    val gptLiveVoice: String = "",
     /** Per-profile Realtime Agent selections; blank means relay default. */
     val realtimeModel: String = "",
     val realtimeVoice: String = "",
@@ -1815,6 +1820,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         onClosed = { reason, usageSeconds ->
                             Log.i(TAG, "GPT-Live closed reason=$reason usageSeconds=$usageSeconds")
                             gptLiveSession = null
+                            _voiceStats.update {
+                                it.copy(
+                                    gptLiveActive = false,
+                                    gptLiveModel = "",
+                                    gptLiveVoice = "",
+                                )
+                            }
                             if (_uiState.value.voiceMode && reason != "close_requested") {
                                 _uiState.update { it.copy(state = VoiceState.Idle, outputAudioActive = false) }
                             }
@@ -1835,6 +1847,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 gptLiveSession = session
+                _voiceStats.update {
+                    it.copy(
+                        gptLiveActive = true,
+                        gptLiveModel = status.model,
+                        gptLiveVoice = status.voice,
+                    )
+                }
                 _uiState.update {
                     it.copy(state = VoiceState.Listening, outputAudioActive = false, error = null)
                 }
@@ -1935,6 +1954,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         gptLiveStarting = false
         runCatching { gptLiveSession?.close() }
         gptLiveSession = null
+        _voiceStats.update {
+            it.copy(
+                gptLiveActive = false,
+                gptLiveModel = "",
+                gptLiveVoice = "",
+            )
+        }
     }
 
     /**

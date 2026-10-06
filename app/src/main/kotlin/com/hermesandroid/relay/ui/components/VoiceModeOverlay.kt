@@ -798,6 +798,7 @@ private fun VoiceMicButton(
     onTap: () -> Unit,
     onHoldPress: () -> Unit,
     onHoldRelease: () -> Unit,
+    liveMode: Boolean = false,
     modifier: Modifier = Modifier,
     visible: Boolean = true,
     baseSize: Int = 72,
@@ -808,7 +809,9 @@ private fun VoiceMicButton(
     val micActionDescription = when (uiState.state) {
         VoiceState.Idle, VoiceState.Error -> stringResource(R.string.voice_overlay_tap_action_idle)
         VoiceState.Listening ->
-            if (uiState.interactionMode == InteractionMode.Continuous) {
+            if (liveMode) {
+                stringResource(R.string.voice_overlay_gpt_live_listening_action)
+            } else if (uiState.interactionMode == InteractionMode.Continuous) {
                 stringResource(R.string.voice_overlay_tap_action_pause)
             } else {
                 stringResource(R.string.voice_overlay_tap_action_listening)
@@ -839,7 +842,7 @@ private fun VoiceMicButton(
     // interrupts TTS; the old tertiary (green-ish) read as "playing" and
     // users didn't realize they could stop the agent.
     val containerColor = when (uiState.state) {
-        VoiceState.Listening -> Color(0xFFE53935)
+        VoiceState.Listening -> if (liveMode) MaterialTheme.colorScheme.primary else Color(0xFFE53935)
         VoiceState.Speaking -> Color(0xFFE53935)
         VoiceState.Transcribing, VoiceState.Thinking -> Color(0xFFE53935)
         VoiceState.Error -> MaterialTheme.colorScheme.errorContainer
@@ -847,7 +850,7 @@ private fun VoiceMicButton(
     }
 
     val icon = when (uiState.state) {
-        VoiceState.Listening -> Icons.Filled.Stop
+        VoiceState.Listening -> if (liveMode) Icons.Filled.Mic else Icons.Filled.Stop
         VoiceState.Transcribing, VoiceState.Thinking -> Icons.Filled.Stop
         // Stop icon makes the "tap to interrupt TTS" affordance obvious;
         // VolumeUp looked decorative and users didn't try tapping it.
@@ -855,7 +858,9 @@ private fun VoiceMicButton(
         else -> Icons.Filled.Mic
     }
 
-    val gestureModifier = when (uiState.interactionMode) {
+    val gestureModifier = if (liveMode) {
+        Modifier.clickable(onClick = onTap)
+    } else when (uiState.interactionMode) {
         InteractionMode.HoldToTalk -> Modifier.voiceHoldGesture(
             state = uiState.state,
             inactiveActionLabel = micActionDescription,
@@ -879,7 +884,7 @@ private fun VoiceMicButton(
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
-                contentDescription = if (uiState.interactionMode == InteractionMode.HoldToTalk) {
+                contentDescription = if (!liveMode && uiState.interactionMode == InteractionMode.HoldToTalk) {
                     null
                 } else {
                     micActionDescription
@@ -1075,17 +1080,26 @@ fun ConversationVoiceDock(
                     .padding(start = 10.dp, top = 8.dp, end = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    InteractionMode.values().forEach { mode ->
-                        VoiceControlChip(
-                            text = mode.shortLabel(),
-                            selected = uiState.interactionMode == mode,
-                            onClick = { onModeChange(mode) },
-                            modifier = Modifier.weight(1f),
-                        )
+                if (engineMode == "gpt_live") {
+                    Text(
+                        text = stringResource(R.string.voice_overlay_gpt_live_mode),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        InteractionMode.values().forEach { mode ->
+                            VoiceControlChip(
+                                text = mode.shortLabel(),
+                                selected = uiState.interactionMode == mode,
+                                onClick = { onModeChange(mode) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
                 VoiceRouteSummary(
@@ -1207,6 +1221,7 @@ fun ConversationVoiceDock(
 
             ConversationVoiceMicButton(
                 uiState = uiState,
+                liveMode = engineMode == "gpt_live",
                 onMicTap = onMicTap,
                 onMicRelease = onMicRelease,
                 onInterrupt = onInterrupt,
@@ -1357,6 +1372,7 @@ private fun VoiceSessionPill(
                 if (!focusMode) {
                     ConversationVoiceMicButton(
                         uiState = uiState,
+                        liveMode = engineMode == "gpt_live",
                         onMicTap = onMicTap,
                         onMicRelease = onMicRelease,
                         onInterrupt = onInterrupt,
@@ -1397,17 +1413,26 @@ private fun VoiceSessionPill(
                         .padding(top = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        InteractionMode.values().forEach { mode ->
-                            VoiceControlChip(
-                                text = mode.shortLabel(),
-                                selected = uiState.interactionMode == mode,
-                                onClick = { onModeChange(mode) },
-                                modifier = Modifier.weight(1f),
-                            )
+                    if (engineMode == "gpt_live") {
+                        Text(
+                            text = stringResource(R.string.voice_overlay_gpt_live_mode),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            InteractionMode.values().forEach { mode ->
+                                VoiceControlChip(
+                                    text = mode.shortLabel(),
+                                    selected = uiState.interactionMode == mode,
+                                    onClick = { onModeChange(mode) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
                         }
                     }
 
@@ -1500,6 +1525,7 @@ private fun VoiceSessionPill(
 @Composable
 private fun ConversationVoiceMicButton(
     uiState: VoiceUiState,
+    liveMode: Boolean = false,
     onMicTap: () -> Unit,
     onMicRelease: () -> Unit,
     onInterrupt: () -> Unit,
@@ -1510,6 +1536,7 @@ private fun ConversationVoiceMicButton(
 ) {
     VoiceMicButton(
         uiState = uiState,
+        liveMode = liveMode,
         onTap = {
             dispatchVoiceMicTap(
                 uiState = uiState,
@@ -1770,6 +1797,7 @@ internal fun voiceRouteDisplayLabel(value: String): String =
 @Composable
 private fun voiceEngineLabel(engineMode: String?): String = when (engineMode) {
     "realtime_agent" -> stringResource(R.string.voice_overlay_engine_realtime)
+    "gpt_live" -> stringResource(R.string.voice_overlay_engine_gpt_live)
     "hermes_voice_output" -> stringResource(R.string.voice_overlay_engine_standard)
     null, "" -> stringResource(R.string.voice_overlay_engine_placeholder)
     else -> engineMode

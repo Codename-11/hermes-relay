@@ -1673,30 +1673,42 @@ fun ChatScreen(
         }
     }
 
-    val realtimeAgentActive = voiceStats.voiceEngineMode == "realtime_agent"
-    val activeVoiceProvider = if (realtimeAgentActive) {
+    val gptLiveActive = voiceStats.gptLiveActive
+    val effectiveVoiceEngineMode = if (gptLiveActive) "gpt_live" else voiceStats.voiceEngineMode
+    val realtimeAgentActive = !gptLiveActive && voiceStats.voiceEngineMode == "realtime_agent"
+    val activeVoiceProvider = if (gptLiveActive) {
+        "GPT-Live"
+    } else if (realtimeAgentActive) {
         realtimeAgentConfig?.default_provider
     } else {
         voiceOutputConfig?.default_provider
     }
-    val activeVoiceModel = if (realtimeAgentActive) {
+    val activeVoiceModel = if (gptLiveActive) {
+        voiceStats.gptLiveModel.takeIf { it.isNotBlank() }
+    } else if (realtimeAgentActive) {
         voiceStats.realtimeModel.takeIf { it.isNotBlank() }
             ?: realtimeAgentConfig?.default_model
     } else {
         voiceOutputConfig?.default_model
     }
-    val activeVoiceName = if (realtimeAgentActive) {
+    val activeVoiceName = if (gptLiveActive) {
+        voiceStats.gptLiveVoice.takeIf { it.isNotBlank() }
+    } else if (realtimeAgentActive) {
         voiceStats.realtimeVoice.takeIf { it.isNotBlank() }
             ?: realtimeAgentConfig?.default_voice
     } else {
         voiceOutputConfig?.default_voice
     }
-    val activeVoiceScope = if (realtimeAgentActive) {
+    val activeVoiceScope = if (gptLiveActive) {
+        null
+    } else if (realtimeAgentActive) {
         realtimeAgentConfig?.configScope
     } else {
         voiceOutputConfig?.configScope
     }
-    val activeVoiceEnabled = if (realtimeAgentActive) {
+    val activeVoiceEnabled = if (gptLiveActive) {
+        true
+    } else if (realtimeAgentActive) {
         realtimeAgentConfig?.enabled
     } else {
         voiceOutputConfig?.enabled
@@ -1717,7 +1729,7 @@ fun ChatScreen(
                 val shown = voiceOverlayHost.show(
                     VoiceOverlaySession(
                         uiState = voiceViewModel.uiState,
-                        engineMode = voiceStats.voiceEngineMode,
+                        engineMode = effectiveVoiceEngineMode,
                         connectionLabel = activeConnection?.label,
                         provider = activeVoiceProvider,
                         model = activeVoiceModel,
@@ -4930,7 +4942,7 @@ fun ChatScreen(
                 topContent = {
                     ConversationVoiceDock(
                         uiState = voiceUiState,
-                        engineMode = voiceStats.voiceEngineMode,
+                        engineMode = effectiveVoiceEngineMode,
                         provider = activeVoiceProvider,
                         model = activeVoiceModel,
                         voice = activeVoiceName,
@@ -5122,7 +5134,7 @@ fun ChatScreen(
                 // preserving enough recent tool/context rows for voice turns.
                 transcriptMessages = messages.takeLast(12),
                 showThinking = showThinking,
-                voiceEngineMode = voiceStats.voiceEngineMode,
+                voiceEngineMode = effectiveVoiceEngineMode,
                 voiceOutputProvider = activeVoiceProvider,
                 voiceOutputModel = activeVoiceModel,
                 voiceOutputVoice = activeVoiceName,
