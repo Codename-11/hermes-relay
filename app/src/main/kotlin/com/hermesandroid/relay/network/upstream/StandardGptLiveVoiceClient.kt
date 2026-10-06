@@ -521,7 +521,7 @@ private class AndroidGptLiveSession(
             "turn.done" -> Unit
             "session.delegation.created" -> {
                 val id = (event["delegation"] as? JsonObject)?.string("id") ?: return
-                callbacks.onDelegation(id, contextWindow())
+                callbacks.onDelegation(id, null, contextWindow())
             }
             "delegation.created" -> {
                 val item = event["item"] as? JsonObject ?: return
@@ -539,17 +539,7 @@ private class AndroidGptLiveSession(
                     ?.joinToString("")
                     ?.trim()
                     .orEmpty()
-                val context = contextWindow().toMutableList()
-                if (prompt.isNotBlank()) {
-                    val endMs = context.lastOrNull()?.endMs ?: 0L
-                    context += GptLiveTranscriptFragment(
-                        speaker = GptLiveTranscriptFragment.Speaker.User,
-                        text = prompt,
-                        startMs = endMs,
-                        endMs = endMs,
-                    )
-                }
-                callbacks.onDelegation(id, context)
+                callbacks.onDelegation(id, prompt.takeIf { it.isNotBlank() }, contextWindow())
             }
             "error" -> {
                 val error = event["error"] as? JsonObject
