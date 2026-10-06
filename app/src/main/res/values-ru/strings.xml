@@ -1481,7 +1481,7 @@
     <string name="proactive_fcm_clear">Очистить настройки FCM</string>
     <string name="proactive_fcm_token_status">Токен устройства: %1$s</string>
     <string name="proactive_fcm_not_paired">Сопрягите Relay, чтобы зарегистрировать токен устройства на хосте.</string>
-    <string name="proactive_fcm_mac_note">На Mac задайте RELAY_FCM_SERVICE_ACCOUNT_JSON — путь к service account Firebase (или JSON). Никогда не кладите service account в приложение.</string>
+    <string name="proactive_fcm_mac_note">На этом хосте Hermes: Dashboard → Hermes-Relay → Settings → Push wake — выберите JSON сервисного аккаунта Firebase Admin (или: python -m plugin.relay.fcm_sender install ./sa.json). Никогда не кладите service account в приложение; телефону нужен только клиентский google-services.json.</string>
     <string name="proactive_fcm_wake_title">Hermes</string>
     <string name="proactive_fcm_wake_body">У Hermes есть сообщение — откройте, чтобы переподключиться и доставить.</string>
     <string name="proactive_fcm_wake_channel">Push-пробуждение</string>
