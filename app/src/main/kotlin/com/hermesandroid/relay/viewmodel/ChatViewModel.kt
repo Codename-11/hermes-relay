@@ -6683,6 +6683,37 @@ class ChatViewModel : ViewModel() {
         return VoiceMessageSubmissionResult.Submitted(userUiKey)
     }
 
+    /** Submit a GPT-Live client delegation without persisting its context window. */
+    fun sendGptLiveDelegation(
+        text: String,
+        voiceContext: String,
+        onTransportAccepted: () -> Unit = {},
+        onTransportFailed: (String) -> Unit = {},
+    ): VoiceMessageSubmissionResult {
+        if (text.isBlank()) return VoiceMessageSubmissionResult.Rejected("GPT-Live produced no transcript.")
+        if (streamingEndpoint != "gateway" || gatewayClient == null) {
+            return VoiceMessageSubmissionResult.Rejected("GPT-Live delegation needs the Hermes Dashboard gateway.")
+        }
+        val handler = chatHandler ?: return VoiceMessageSubmissionResult.Rejected("Hermes chat is not ready.")
+        if (activeStream != null || streamRecovery != null || handler.isStreaming.value) cancelStream()
+        val existingUserKeys = messages.value.asSequence()
+            .filter { it.role == MessageRole.USER }.mapTo(mutableSetOf()) { it.uiKey }
+        recordRecentPrompt(text)
+        dismissChatFailure()
+        sendMessageInternal(
+            client = apiClient, handler = handler, text = text,
+            explicitOnTransportAccepted = onTransportAccepted,
+            explicitOnTransportFailed = onTransportFailed,
+            explicitGatewaySurface = "voice-live",
+            explicitGatewayVoiceContext = voiceContext,
+            isolateComposer = true,
+        )
+        val userUiKey = messages.value.lastOrNull {
+            it.role == MessageRole.USER && it.uiKey !in existingUserKeys
+        }?.uiKey ?: return VoiceMessageSubmissionResult.Rejected("Hermes could not create the GPT-Live turn.")
+        return VoiceMessageSubmissionResult.Submitted(userUiKey)
+    }
+
     /**
      * Append a local-only voice-intent trace to chat history. Used by
      * VoiceViewModel so phone-control utterances ("open Chrome", "text
@@ -8934,6 +8965,8 @@ class ChatViewModel : ViewModel() {
         explicitInterfaceContextPrompt: String? = null,
         explicitOnTransportAccepted: () -> Unit = { },
         explicitOnTransportFailed: (String) -> Unit = { },
+        explicitGatewaySurface: String? = null,
+        explicitGatewayVoiceContext: String? = null,
         isolateComposer: Boolean = false,
     ) {
         AppAnalytics.onMessageSent()
@@ -9043,6 +9076,8 @@ class ChatViewModel : ViewModel() {
                 explicitGatewayAttachments,
                 explicitOnTransportAccepted,
                 explicitOnTransportFailed,
+                explicitGatewaySurface,
+                explicitGatewayVoiceContext,
             )
         } else if (sessionId != null) {
             startStream(
@@ -9059,6 +9094,8 @@ class ChatViewModel : ViewModel() {
                 explicitGatewayAttachments,
                 explicitOnTransportAccepted,
                 explicitOnTransportFailed,
+                explicitGatewaySurface,
+                explicitGatewayVoiceContext,
             )
         } else {
             if (client == null) {
@@ -9103,6 +9140,8 @@ class ChatViewModel : ViewModel() {
                             explicitGatewayAttachments,
                             explicitOnTransportAccepted,
                             explicitOnTransportFailed,
+                            explicitGatewaySurface,
+                            explicitGatewayVoiceContext,
                         )
 
                         // Auto-title: use first ~50 chars of user message
@@ -9966,6 +10005,8 @@ class ChatViewModel : ViewModel() {
         gatewayOnlyAttachments: List<Attachment> = emptyList(),
         onTransportAccepted: () -> Unit = { },
         onTransportFailed: (String) -> Unit = { },
+        gatewaySurface: String? = null,
+        gatewayVoiceContext: String? = null,
     ) {
         val transportAccepted = AtomicBoolean(false)
         val transportFailed = AtomicBoolean(false)
@@ -10957,6 +10998,8 @@ class ChatViewModel : ViewModel() {
                     truncateBeforeUserOrdinal = pendingTruncation?.ordinal,
                     truncateBeforeRowId = pendingTruncation?.rowId,
                     queuedFollowUp = queuedFollowUp,
+                    clientSurface = gatewaySurface,
+                    voiceContext = gatewayVoiceContext,
                     onSurvivorUserRowIds = handler::rebindSurvivorUserRowIds,
                     onAttachmentFailure = { reason ->
                         _steerableTurn.value = false

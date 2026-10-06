@@ -87,6 +87,8 @@
     <string name="chat_input_live_voice_hint">Голосовой разговор в реальном времени</string>
     <string name="input_live_voice">Живой голосовой разговор</string>
     <string name="chat_input_add_attachment">Добавить вложение</string>
+    <string name="chat_input_sheet_model">Модель</string>
+    <string name="chat_input_sheet_reasoning">Рассуждение</string>
     <string name="chat_input_browse_commands">Просмотреть команды</string>
     <string name="chat_input_add_attachment_hold">Добавить вложение; удерживайте для команд</string>
     <string name="chat_input_photos">Фото</string>
@@ -1279,6 +1281,13 @@
     <string name="appearance_cancel">Отмена</string>
     <string name="appearance_theme">Тема</string>
     <string name="appearance_theme_desc">Выберите внешний вид. Бренд хром, акценты и фон чата следуют вашему выбору.</string>
+    <string name="appearance_layout">Макет</string>
+    <string name="appearance_layout_classic">Классический</string>
+    <string name="appearance_layout_clean">Чистый</string>
+    <string name="appearance_layout_classic_summary">Все детали на экране: пузыри, подписи отправителя, время и строка состояния.</string>
+    <string name="appearance_layout_clean_summary">Меньше на экране. Ответы отображаются как обычный текст, детали появляются при нажатии на сообщение, а строка состояния показывается только когда соединению требуется внимание.</string>
+    <string name="appearance_more_options">Другие параметры оформления</string>
+    <string name="appearance_more_options_summary">Язык, размер текста, шрифт, анимация, фон и питомцы</string>
     <string name="appearance_language">Язык</string>
     <string name="appearance_language_desc">Выберите язык, используемый Hermes-Relay. Системный по умолчанию следует настройкам вашего устройства.</string>
     <string name="appearance_language_system">Системный по умолчанию</string>

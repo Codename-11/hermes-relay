@@ -123,6 +123,37 @@ fun CustomThemePreset.toAppTheme(): AppTheme {
     )
 }
 
+/**
+ * Map a Material [ColorScheme] (e.g. the system dynamic scheme) onto the brand
+ * token set. Semantic status colors come from the Clean reference palette so
+ * success/warning cues stay recognizable on any wallpaper.
+ */
+fun ColorScheme.toBrandPalette(isDark: Boolean): BrandPalette {
+    val reference = if (isDark) BrandPalettes.CleanDark else BrandPalettes.CleanLight
+    val strongAccent = if (isDark) primaryContainer else primary
+    return reference.copy(
+        isDark = isDark,
+        ink = onSurface,
+        paper = onSurface,
+        muted = onSurfaceVariant,
+        dim = outline,
+        background = surface,
+        surfaceLowest = surfaceContainerLowest,
+        surfaceLow = surfaceContainerLow,
+        navy = surfaceContainer,
+        navy2 = surfaceContainerHigh,
+        navy3 = surfaceContainerHighest,
+        relay = primary,
+        purple = secondary,
+        electric = strongAccent,
+        electricMuted = lerp(strongAccent, surface, 0.18f),
+        cyan = tertiary,
+        danger = error,
+        line = outlineVariant,
+        lineStrong = outline,
+    )
+}
+
 /** Active palette accessor for new, composition-correct code. */
 val LocalBrand = staticCompositionLocalOf { BrandPalettes.HermesDark }
 
@@ -167,7 +198,8 @@ fun BrandPalette.withAccent(accentHex: String?): BrandPalette {
 /**
  * Derive a complete Material 3 [ColorScheme] from the palette. Dark and light
  * palettes use distinct mappings; the "text on a deep accent chip" slots use
- * explicit on-colors so they stay readable regardless of mode.
+ * explicit on-colors so they stay readable regardless of mode. Container
+ * fills are opaque so nested surfaces cannot change their color or contrast.
  */
 fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
     darkColorScheme(
@@ -181,7 +213,7 @@ fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
         onSecondaryContainer = paper,
         tertiary = cyan,
         onTertiary = readableContentColor(cyan),
-        tertiaryContainer = purple.copy(alpha = 0.42f),
+        tertiaryContainer = purple.copy(alpha = 0.42f).compositeOver(background),
         onTertiaryContainer = paper,
         background = background,
         onBackground = ink,
@@ -196,7 +228,7 @@ fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
         surfaceContainerHighest = navy3,
         error = danger,
         onError = readableContentColor(danger),
-        errorContainer = danger.copy(alpha = 0.18f),
+        errorContainer = danger.copy(alpha = 0.18f).compositeOver(background),
         onErrorContainer = paper,
         outline = lineStrong,
         outlineVariant = line,
@@ -208,15 +240,15 @@ fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
     lightColorScheme(
         primary = electric,
         onPrimary = readableContentColor(electric),
-        primaryContainer = relay.copy(alpha = 0.22f),
+        primaryContainer = renderedPrimaryContainer,
         onPrimaryContainer = readableContentColor(renderedPrimaryContainer),
         secondary = purple,
         onSecondary = readableContentColor(purple),
-        secondaryContainer = purple.copy(alpha = 0.16f),
+        secondaryContainer = renderedSecondaryContainer,
         onSecondaryContainer = readableContentColor(renderedSecondaryContainer),
         tertiary = cyan,
         onTertiary = readableContentColor(cyan),
-        tertiaryContainer = cyan.copy(alpha = 0.16f),
+        tertiaryContainer = renderedTertiaryContainer,
         onTertiaryContainer = readableContentColor(renderedTertiaryContainer),
         background = background,
         onBackground = ink,
@@ -231,7 +263,7 @@ fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
         surfaceContainerHighest = navy3,
         error = danger,
         onError = Color.White,
-        errorContainer = danger.copy(alpha = 0.14f),
+        errorContainer = danger.copy(alpha = 0.14f).compositeOver(background),
         onErrorContainer = danger.darken(0.42f),
         outline = dim,
         outlineVariant = line,
@@ -435,6 +467,59 @@ object BrandPalettes {
         danger = Color(0xFFFF0055),
     )
 
+    /**
+     * Clean dark — neutral graphite surfaces with one calm accent, so content
+     * rather than chrome carries the color (mainstream messaging-app look).
+     */
+    val CleanDark = BrandPalette(
+        isDark = true,
+        ink = Color(0xFFECECEE),
+        paper = Color(0xFFECECEE),
+        muted = Color(0xFFA1A1AA),
+        dim = Color(0xFF6B6B74),
+        background = Color(0xFF121214),
+        surfaceLowest = Color(0xFF0B0B0D),
+        surfaceLow = Color(0xFF18181B),
+        navy = Color(0xFF1E1E22),
+        navy2 = Color(0xFF26262B),
+        navy3 = Color(0xFF303036),
+        relay = Color(0xFF8AB4F8),
+        purple = Color(0xFFB4B6F5),
+        electric = Color(0xFF3B7BE8),
+        electricMuted = Color(0xFF5B8FE6),
+        cyan = Color(0xFF7DD3E8),
+        green = Color(0xFF5DD07A),
+        amber = Color(0xFFF2B14B),
+        danger = Color(0xFFFF6B6B),
+        line = Color(0xFFECECEE).copy(alpha = 0.10f),
+        lineStrong = Color(0xFFECECEE).copy(alpha = 0.22f),
+    )
+
+    /** Clean light — white canvas, soft grey containers, one blue accent. */
+    val CleanLight = BrandPalette(
+        isDark = false,
+        ink = Color(0xFF111114),
+        paper = Color(0xFF111114),
+        muted = Color(0xFF5D5D66),
+        dim = Color(0xFF8E8E96),
+        background = Color(0xFFFFFFFF),
+        surfaceLowest = Color(0xFFFFFFFF),
+        surfaceLow = Color(0xFFF7F7F8),
+        navy = Color(0xFFF0F0F2),
+        navy2 = Color(0xFFE9E9EC),
+        navy3 = Color(0xFFDDDDE2),
+        relay = Color(0xFF0B57D0),
+        purple = Color(0xFF5E5CE6),
+        electric = Color(0xFF0B57D0),
+        electricMuted = Color(0xFF3D7BE0),
+        cyan = Color(0xFF00639B),
+        green = Color(0xFF1E8E3E),
+        amber = Color(0xFFB06000),
+        danger = Color(0xFFC5221F),
+        line = Color(0xFF111114).copy(alpha = 0.08f),
+        lineStrong = Color(0xFF111114).copy(alpha = 0.18f),
+    )
+
     /** Rosé — soft pink + warm ivory, easy on the eyes. */
     val Rose = darkBrand(
         background = Color(0xFF1A0F15),
@@ -568,9 +653,36 @@ object AppThemes {
         swatch = listOf(Color(0xFF1A0F15), Color(0xFFE86A9C), Color(0xFFFFD4E1)),
     )
 
+    val Clean = AppTheme(
+        id = "clean",
+        label = "Clean",
+        description = "Neutral surfaces, one calm accent — follows light/dark",
+        mode = ThemeMode.BOTH,
+        darkPalette = BrandPalettes.CleanDark,
+        lightPalette = BrandPalettes.CleanLight,
+        swatch = listOf(Color(0xFF121214), Color(0xFF8AB4F8), Color(0xFFECECEE)),
+    )
+
+    /**
+     * Wallpaper-derived Material You colors on Android 12+. The palettes here
+     * are the fallback for older releases; `HermesRelayTheme` swaps in the
+     * system dynamic scheme when it is available.
+     */
+    val MaterialYou = AppTheme(
+        id = "material-you",
+        label = "Material You",
+        description = "Colors from your wallpaper (Android 12+) — follows light/dark",
+        mode = ThemeMode.BOTH,
+        darkPalette = BrandPalettes.CleanDark,
+        lightPalette = BrandPalettes.CleanLight,
+        swatch = listOf(Color(0xFF1D1B20), Color(0xFFD0BCFF), Color(0xFFE6E0E9)),
+    )
+
     /** All themes in picker order: brand first, then the Nous baselines. */
     val ALL: List<AppTheme> = listOf(
         HermesRelay,
+        Clean,
+        MaterialYou,
         HermesTeal,
         NousBlue,
         Midnight,

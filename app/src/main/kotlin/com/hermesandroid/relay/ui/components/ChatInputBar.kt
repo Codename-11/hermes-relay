@@ -57,6 +57,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,6 +80,8 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.ExpressiveMotion
+import com.hermesandroid.relay.ui.theme.isCleanLayout
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.appearanceComposerShape
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
@@ -99,6 +105,8 @@ enum class ChatInputTrailing { SEND, VOICE, STOP, STEER, QUEUE }
 
 internal const val CHAT_INPUT_FIELD_TEST_TAG = "chat-input-field"
 
+const val CHAT_INPUT_ATTACH_TEST_TAG = "chat-input-attach"
+
 data class ChatInputPickerOption(
     val label: String,
     val value: String?,
@@ -114,7 +122,10 @@ data class ChatInputPickerControl(
     val contentDescription: String,
     val options: List<ChatInputPickerOption>,
     val enabled: Boolean = true,
-)
+) {
+    /** True when tapping the picker can do something. */
+    val isUsable: Boolean get() = enabled && options.isNotEmpty()
+}
 
 /**
  * The minimal Telegram-style chat input bar — 3 elements, one trailing
@@ -195,6 +206,8 @@ fun ChatInputBar(
     busyAction: BusyMessageAction? = null,
     correctionAvailable: Boolean = true,
     onBusyActionChange: (BusyMessageAction) -> Unit = {},
+    /** Clean "+" sheet's Commands row; null hides it. */
+    onCommands: (() -> Unit)? = null,
 ) {
     val canSubmit = enabled && submitEnabled && trailing in setOf(
         ChatInputTrailing.SEND,
@@ -329,10 +342,12 @@ fun ChatInputBar(
             correctionAvailable = correctionAvailable,
             onStop = onStop.takeUnless { trailing == ChatInputTrailing.STOP },
         ) {
+        // Clean: a borderless tonal pill (M3 Expressive container), no outline.
+        val cleanComposer = isCleanLayout
         Surface(
-            shape = appearanceComposerShape(),
+            shape = if (cleanComposer) appearanceRoundedCornerShape(28.dp) else appearanceComposerShape(),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            border = if (cleanComposer) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 3.dp)
@@ -363,84 +378,364 @@ fun ChatInputBar(
                 Column(
                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                 ) {
-                    BasicTextField(
-                        value = value,
-                        onValueChange = { updated ->
-                            val converted = largePasteThreshold
-                                ?.let { threshold -> detectLargeTextInsertion(value, updated, threshold) }
-                            if (converted != null) {
-                                onValueChange(converted.remainingText)
-                                onLargePaste(converted.insertedText)
-                            } else if (updated.length <= charLimit) {
-                                onValueChange(updated)
+                    val textField: @Composable (Modifier) -> Unit = { fieldModifier ->
+                        BasicTextField(
+                            value = value,
+                            onValueChange = { updated ->
+                                val converted = largePasteThreshold
+                                    ?.let { threshold -> detectLargeTextInsertion(value, updated, threshold) }
+                                if (converted != null) {
+                                    onValueChange(converted.remainingText)
+                                    onLargePaste(converted.insertedText)
+                                } else if (updated.length <= charLimit) {
+                                    onValueChange(updated)
+                                }
+                            },
+                            modifier = fieldModifier
+                                .heightIn(min = 30.dp)
+                                .padding(horizontal = 10.dp, vertical = 2.dp)
+                                // Keep directional keys inside the editor. Compose's
+                                // BasicTextField owns normal caret/selection movement;
+                                // cancelling focus traversal prevents a boundary arrow
+                                // from jumping to a neighboring composer control.
+                                .focusProperties {
+                                    left = FocusRequester.Cancel
+                                    right = FocusRequester.Cancel
+                                    up = FocusRequester.Cancel
+                                    down = FocusRequester.Cancel
+                                }
+                                .onPreviewKeyEvent { event ->
+                                    val native = event.nativeKeyEvent
+                                    val isEnter = native.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+                                        native.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
+                                    // Enter only means "send" when a physical keyboard is
+                                    // attached. IME-dispatched Enter (commitText or a
+                                    // synthesized KEYCODE_ENTER) must always fall through
+                                    // so the soft keyboard's return key inserts a newline
+                                    // instead of sending (issue #367). Key events alone
+                                    // cannot distinguish physical vs IME origin — deviceId
+                                    // is 0 or -1 depending on the IME — so gate on the
+                                    // hardware keyboard configuration (read above).
+                                    val isSubmitShortcut = native.isCtrlPressed || native.isMetaPressed
+                                    if (native.action != android.view.KeyEvent.ACTION_DOWN || !isEnter) {
+                                        false
+                                    } else if (isSubmitShortcut || (keyboardAttached && physicalEnterSends && !native.isShiftPressed)) {
+                                        if (canSubmit) onSend()
+                                        true
+                                    } else {
+                                        // Shift+Enter always inserts a newline. When
+                                        // Enter is configured for newlines, the plain
+                                        // key also stays owned by BasicTextField.
+                                        false
+                                    }
+                                }
+                                .testTag(CHAT_INPUT_FIELD_TEST_TAG),
+                            maxLines = 5,
+                            enabled = enabled,
+                            keyboardOptions = KeyboardOptions(
+                                capitalization = KeyboardCapitalization.Sentences,
+                                // The field is multiline and already has a dedicated
+                                // send button. Leave the software keyboard action as
+                                // Return; hardware Enter remains handled above.
+                                imeAction = ImeAction.Default,
+                            ),
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                color = MaterialTheme.colorScheme.onSurface,
+                            ),
+                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                            decorationBox = { inner ->
+                                // CenterStart keeps a single line optically
+                                // centered in the field's minimum height.
+                                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
+                                    if (value.isEmpty()) {
+                                        Text(
+                                            text = placeholder,
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    inner()
+                                }
+                            },
+                        )
+                    }
+                    val attachButton: @Composable () -> Unit = {
+                        // "+" tap opens the attach menu (Photos / Files / Camera /
+                        // Paste image); long-press opens the command palette.
+                        var attachMenuExpanded by remember { mutableStateOf(false) }
+                        // Clean: "+" opens one sheet with attach sources, model,
+                        // reasoning, and commands; Classic keeps the dropdown.
+                        var actionSheetOpen by remember { mutableStateOf(false) }
+                        if (actionSheetOpen) {
+                            ComposerActionSheet(
+                                onDismiss = { actionSheetOpen = false },
+                                onAttachCamera = onAttachCamera,
+                                onAttachPhotos = onAttachPhotos,
+                                onAttachFiles = onAttachFiles,
+                                onPasteImage = onPasteImage,
+                                modelControl = modelControl,
+                                onModelClick = onModelPickerClick,
+                                effortControl = effortControl,
+                                onEffortClick = onEffortPickerClick,
+                                onCommands = onCommands,
+                            )
+                        }
+                        Box {
+                            Box(
+                                modifier = Modifier
+                                    .size(48.dp)
+                                    .clip(CircleShape)
+                                    .testTag(CHAT_INPUT_ATTACH_TEST_TAG)
+                                    .combinedClickable(
+                                        onClick = {
+                                            if (cleanComposer) actionSheetOpen = true else attachMenuExpanded = true
+                                        },
+                                        onClickLabel = stringResource(R.string.chat_input_add_attachment),
+                                        onLongClick = onLongPressAttach,
+                                        onLongClickLabel = stringResource(R.string.chat_input_browse_commands),
+                                    ),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Add,
+                                    contentDescription = stringResource(R.string.chat_input_add_attachment_hold),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 30.dp)
-                            .padding(horizontal = 10.dp, vertical = 2.dp)
-                            // Keep directional keys inside the editor. Compose's
-                            // BasicTextField owns normal caret/selection movement;
-                            // cancelling focus traversal prevents a boundary arrow
-                            // from jumping to a neighboring composer control.
-                            .focusProperties {
-                                left = FocusRequester.Cancel
-                                right = FocusRequester.Cancel
-                                up = FocusRequester.Cancel
-                                down = FocusRequester.Cancel
+                            DropdownMenu(
+                                expanded = attachMenuExpanded,
+                                onDismissRequest = { attachMenuExpanded = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.chat_input_photos)) },
+                                    leadingIcon = {
+                                        Icon(Icons.Filled.PhotoLibrary, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        attachMenuExpanded = false
+                                        onAttachPhotos()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.chat_input_files)) },
+                                    leadingIcon = {
+                                        Icon(Icons.Filled.InsertDriveFile, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        attachMenuExpanded = false
+                                        onAttachFiles()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.chat_input_camera)) },
+                                    leadingIcon = {
+                                        Icon(Icons.Filled.PhotoCamera, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        attachMenuExpanded = false
+                                        onAttachCamera()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.chat_input_paste_image)) },
+                                    leadingIcon = {
+                                        Icon(Icons.Filled.ContentPaste, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        attachMenuExpanded = false
+                                        onPasteImage()
+                                    },
+                                )
                             }
-                            .onPreviewKeyEvent { event ->
-                                val native = event.nativeKeyEvent
-                                val isEnter = native.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
-                                    native.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER
-                                // Enter only means "send" when a physical keyboard is
-                                // attached. IME-dispatched Enter (commitText or a
-                                // synthesized KEYCODE_ENTER) must always fall through
-                                // so the soft keyboard's return key inserts a newline
-                                // instead of sending (issue #367). Key events alone
-                                // cannot distinguish physical vs IME origin — deviceId
-                                // is 0 or -1 depending on the IME — so gate on the
-                                // hardware keyboard configuration (read above).
-                                val isSubmitShortcut = native.isCtrlPressed || native.isMetaPressed
-                                if (native.action != android.view.KeyEvent.ACTION_DOWN || !isEnter) {
-                                    false
-                                } else if (isSubmitShortcut || (keyboardAttached && physicalEnterSends && !native.isShiftPressed)) {
-                                    if (canSubmit) onSend()
-                                    true
-                                } else {
-                                    // Shift+Enter always inserts a newline. When
-                                    // Enter is configured for newlines, the plain
-                                    // key also stays owned by BasicTextField.
-                                    false
+                        }
+                    }
+                    val trailingButton: @Composable () -> Unit = {
+                        // Trailing slot
+                        val glow = !cleanComposer && trailing == ChatInputTrailing.SEND && enabled && isDarkTheme
+                        Box(
+                            modifier = if (glow) {
+                                Modifier.purpleGlow(radius = 24.dp, alpha = 0.35f, isDarkTheme = true)
+                            } else {
+                                Modifier
+                            },
+                        ) {
+                            AnimatedContent(
+                                targetState = trailing,
+                                transitionSpec = {
+                                    if (cleanComposer) {
+                                        // Expressive: a springy pop between send,
+                                        // voice, and stop.
+                                        (fadeIn(ExpressiveMotion.fastEffects()) +
+                                            scaleIn(ExpressiveMotion.fastSpatial(), initialScale = 0.6f))
+                                            .togetherWith(fadeOut(ExpressiveMotion.fastEffects()))
+                                    } else {
+                                        (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f))
+                                            .togetherWith(fadeOut(tween(100)))
+                                    }
+                                },
+                                label = "chatInputTrailing",
+                            ) { state ->
+                                when (state) {
+                                    // Clean: filled circular send, the one primary
+                                    // action in the composer.
+                                    ChatInputTrailing.SEND -> if (cleanComposer) FilledIconButton(
+                                        onClick = onSend,
+                                        enabled = canSubmit,
+                                        shape = CircleShape,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.ArrowUpward,
+                                            contentDescription = stringResource(R.string.chat_input_send_message),
+                                        )
+                                    } else IconButton(
+                                        onClick = onSend,
+                                        enabled = canSubmit,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.Send,
+                                            contentDescription = stringResource(R.string.chat_input_send_message),
+                                            tint = if (canSubmit) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+
+                                    ChatInputTrailing.VOICE -> {
+                                        if (!suppressVoiceTrailing) {
+                                            Box {
+                                                val voiceDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
+                                                    else stringResource(R.string.chat_input_voice_setup_needed)
+                                                if (cleanComposer) {
+                                                    FilledTonalIconButton(onClick = onVoice, shape = CircleShape) {
+                                                        Icon(
+                                                            imageVector = Icons.Filled.GraphicEq,
+                                                            contentDescription = voiceDescription,
+                                                        )
+                                                    }
+                                                } else {
+                                                    IconButton(onClick = onVoice) {
+                                                        Icon(
+                                                            imageVector = Icons.Filled.GraphicEq,
+                                                            contentDescription = voiceDescription,
+                                                            tint = MaterialTheme.colorScheme.primary,
+                                                        )
+                                                    }
+                                                }
+                                                // "Needs setup" badge — full-alpha button + Amber
+                                                // dot instead of a half-dimmed broken-looking mic.
+                                                if (!voiceReady) {
+                                                    // Clean: a ringed badge on the filled
+                                                    // button's edge, not floating inside it.
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .align(Alignment.TopEnd)
+                                                            .padding(
+                                                                top = if (cleanComposer) 4.dp else 8.dp,
+                                                                end = if (cleanComposer) 4.dp else 8.dp,
+                                                            )
+                                                            .size(if (cleanComposer) 10.dp else 6.dp)
+                                                            .clip(CircleShape)
+                                                            .then(
+                                                                if (cleanComposer) {
+                                                                    Modifier.border(
+                                                                        2.dp,
+                                                                        MaterialTheme.colorScheme.surfaceContainerHigh,
+                                                                        CircleShape,
+                                                                    )
+                                                                } else {
+                                                                    Modifier
+                                                                },
+                                                            )
+                                                            .background(RelayRefresh.Amber),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    ChatInputTrailing.STOP -> {
+                                        if (!suppressVoiceTrailing && cleanComposer) {
+                                            FilledTonalIconButton(onClick = onStop, shape = CircleShape) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Stop,
+                                                    contentDescription = stringResource(R.string.chat_input_stop_streaming),
+                                                )
+                                            }
+                                        } else if (!suppressVoiceTrailing) {
+                                            IconButton(onClick = onStop) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(32.dp)
+                                                        .border(1.dp, MaterialTheme.colorScheme.error, CircleShape),
+                                                    contentAlignment = Alignment.Center,
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Stop,
+                                                        contentDescription = stringResource(R.string.chat_input_stop_streaming),
+                                                        tint = MaterialTheme.colorScheme.error,
+                                                        modifier = Modifier.size(18.dp),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    ChatInputTrailing.STEER -> IconButton(
+                                        onClick = onSend,
+                                        enabled = canSubmit,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.Send,
+                                            contentDescription = stringResource(R.string.chat_input_steer_response),
+                                            tint = MaterialTheme.colorScheme.tertiary,
+                                        )
+                                    }
+
+                                    ChatInputTrailing.QUEUE -> IconButton(
+                                        onClick = onSend,
+                                        enabled = canSubmit,
+                                    ) {
+                                        Box {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                                contentDescription = stringResource(R.string.chat_input_queue_message),
+                                                tint = MaterialTheme.colorScheme.tertiary,
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Filled.Schedule,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.tertiary,
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .offset(x = 5.dp, y = (-3).dp)
+                                                    .size(10.dp),
+                                            )
+                                        }
+                                    }
                                 }
                             }
-                            .testTag(CHAT_INPUT_FIELD_TEST_TAG),
-                        maxLines = 5,
-                        enabled = enabled,
-                        keyboardOptions = KeyboardOptions(
-                            capitalization = KeyboardCapitalization.Sentences,
-                            // The field is multiline and already has a dedicated
-                            // send button. Leave the software keyboard action as
-                            // Return; hardware Enter remains handled above.
-                            imeAction = ImeAction.Default,
-                        ),
-                        textStyle = MaterialTheme.typography.bodyLarge.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                        ),
-                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                        decorationBox = { inner ->
-                            Box(Modifier.fillMaxWidth()) {
-                                if (value.isEmpty()) {
-                                    Text(
-                                        text = placeholder,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = RelayRefresh.Dim,
-                                    )
-                                }
-                                inner()
+                        }
+                    }
+                    val showModelPicker = modelControl != null && (!cleanComposer || modelControl.isUsable)
+                    val showEffortPicker = effortControl != null && (!cleanComposer || effortControl.isUsable)
+                    // Clean is one row, the ChatGPT/Messages pill: attach,
+                    // field, and one action. Pickers live in the "+" sheet.
+                    if (cleanComposer) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            attachButton()
+                            Box(
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                textField(Modifier.fillMaxWidth().padding(vertical = 9.dp))
                             }
-                        },
-                    )
+                            trailingButton()
+                        }
+                    } else {
+                    textField(Modifier.fillMaxWidth())
 
                 Row(
                     modifier = Modifier
@@ -449,85 +744,21 @@ fun ChatInputBar(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    // "+" tap opens the attach menu (Photos / Files / Camera /
-                    // Paste image); long-press opens the command palette.
-                    var attachMenuExpanded by remember { mutableStateOf(false) }
-                    Box {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .combinedClickable(
-                                    onClick = { attachMenuExpanded = true },
-                                    onClickLabel = stringResource(R.string.chat_input_add_attachment),
-                                    onLongClick = onLongPressAttach,
-                                    onLongClickLabel = stringResource(R.string.chat_input_browse_commands),
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Add,
-                                contentDescription = stringResource(R.string.chat_input_add_attachment_hold),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = attachMenuExpanded,
-                            onDismissRequest = { attachMenuExpanded = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.chat_input_photos)) },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.PhotoLibrary, contentDescription = null)
-                                },
-                                onClick = {
-                                    attachMenuExpanded = false
-                                    onAttachPhotos()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.chat_input_files)) },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.InsertDriveFile, contentDescription = null)
-                                },
-                                onClick = {
-                                    attachMenuExpanded = false
-                                    onAttachFiles()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.chat_input_camera)) },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.PhotoCamera, contentDescription = null)
-                                },
-                                onClick = {
-                                    attachMenuExpanded = false
-                                    onAttachCamera()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.chat_input_paste_image)) },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.ContentPaste, contentDescription = null)
-                                },
-                                onClick = {
-                                    attachMenuExpanded = false
-                                    onPasteImage()
-                                },
-                            )
-                        }
-                    }
+                    attachButton()
 
-                    if (modelControl != null) {
+                    // Clean hides a picker that cannot be used yet (no
+                    // options while offline or in demo) instead of showing a
+                    // greyed, truncated label.
+                    if (showModelPicker && modelControl != null) {
                         ChatInputPickerChip(
                             control = modelControl,
                             onSelect = onModelOptionSelected,
-                            modifier = Modifier.widthIn(max = 126.dp),
+                            modifier = Modifier.widthIn(max = if (cleanComposer) 168.dp else 126.dp),
                             onClickOverride = onModelPickerClick,
                         )
                     }
 
-                    if (effortControl != null) {
+                    if (showEffortPicker && effortControl != null) {
                         ChatInputPickerChip(
                             control = effortControl,
                             onSelect = {},
@@ -538,119 +769,9 @@ fun ChatInputBar(
 
                     Spacer(modifier = Modifier.weight(1f))
 
-                    // Trailing slot
-                    val glow = trailing == ChatInputTrailing.SEND && enabled && isDarkTheme
-                    Box(
-                        modifier = if (glow) {
-                            Modifier.purpleGlow(radius = 24.dp, alpha = 0.35f, isDarkTheme = true)
-                        } else {
-                            Modifier
-                        },
-                    ) {
-                        AnimatedContent(
-                            targetState = trailing,
-                            transitionSpec = {
-                                (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f))
-                                    .togetherWith(fadeOut(tween(100)))
-                            },
-                            label = "chatInputTrailing",
-                        ) { state ->
-                            when (state) {
-                                ChatInputTrailing.SEND -> IconButton(
-                                    onClick = onSend,
-                                    enabled = canSubmit,
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = stringResource(R.string.chat_input_send_message),
-                                        tint = if (canSubmit) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-
-                                ChatInputTrailing.VOICE -> {
-                                    if (!suppressVoiceTrailing) {
-                                        Box {
-                                            IconButton(onClick = onVoice) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.GraphicEq,
-                                                    contentDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
-                                                        else stringResource(R.string.chat_input_voice_setup_needed),
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                )
-                                            }
-                                            // "Needs setup" badge — full-alpha button + Amber
-                                            // dot instead of a half-dimmed broken-looking mic.
-                                            if (!voiceReady) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .align(Alignment.TopEnd)
-                                                        .padding(top = 8.dp, end = 8.dp)
-                                                        .size(6.dp)
-                                                        .clip(CircleShape)
-                                                        .background(RelayRefresh.Amber),
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-
-                                ChatInputTrailing.STOP -> {
-                                    if (!suppressVoiceTrailing) {
-                                        IconButton(onClick = onStop) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(32.dp)
-                                                    .border(1.dp, MaterialTheme.colorScheme.error, CircleShape),
-                                                contentAlignment = Alignment.Center,
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.Stop,
-                                                    contentDescription = stringResource(R.string.chat_input_stop_streaming),
-                                                    tint = MaterialTheme.colorScheme.error,
-                                                    modifier = Modifier.size(18.dp),
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-
-                                ChatInputTrailing.STEER -> IconButton(
-                                    onClick = onSend,
-                                    enabled = canSubmit,
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = stringResource(R.string.chat_input_steer_response),
-                                        tint = MaterialTheme.colorScheme.tertiary,
-                                    )
-                                }
-
-                                ChatInputTrailing.QUEUE -> IconButton(
-                                    onClick = onSend,
-                                    enabled = canSubmit,
-                                ) {
-                                    Box {
-                                        Icon(
-                                            imageVector = Icons.AutoMirrored.Filled.Send,
-                                            contentDescription = stringResource(R.string.chat_input_queue_message),
-                                            tint = MaterialTheme.colorScheme.tertiary,
-                                        )
-                                        Icon(
-                                            imageVector = Icons.Filled.Schedule,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.tertiary,
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .offset(x = 5.dp, y = (-3).dp)
-                                                .size(10.dp),
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    trailingButton()
                 }
+                    }
             }
         }
     }
@@ -701,18 +822,28 @@ private fun ChatInputPickerChip(
     onClickOverride: (() -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val enabled = control.enabled && control.options.isNotEmpty()
+    val enabled = control.isUsable
     val contentColor = if (enabled) {
         MaterialTheme.colorScheme.onSurfaceVariant
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
     }
 
+    // Clean layout renders pickers as quiet text buttons rather than outlined chips.
+    val cleanLayout = isCleanLayout
     Box(modifier = modifier) {
         Surface(
             shape = appearanceRoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.32f),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)),
+            color = if (cleanLayout) {
+                Color.Transparent
+            } else {
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.32f)
+            },
+            border = if (cleanLayout) {
+                null
+            } else {
+                BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+            },
             modifier = Modifier
                 .heightIn(min = 32.dp)
                 .clip(appearanceRoundedCornerShape(12.dp))

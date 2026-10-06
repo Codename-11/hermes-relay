@@ -105,6 +105,8 @@
     <!-- Chat input bar -->
     <string name="chat_input_live_voice_hint">Live voice conversation</string>
     <string name="chat_input_add_attachment">Add attachment</string>
+    <string name="chat_input_sheet_model">Model</string>
+    <string name="chat_input_sheet_reasoning">Reasoning</string>
     <string name="chat_input_browse_commands">Browse commands</string>
     <string name="chat_input_add_attachment_hold">Add attachment; hold for commands</string>
     <string name="chat_input_photos">Photos</string>
@@ -1471,6 +1473,13 @@
     <string name="appearance_cancel">Cancel</string>
     <string name="appearance_theme">Theme</string>
     <string name="appearance_theme_desc">Pick a look. The brand chrome, accents, and chat background all follow your choice.</string>
+    <string name="appearance_layout">Layout</string>
+    <string name="appearance_layout_classic">Classic</string>
+    <string name="appearance_layout_clean">Clean</string>
+    <string name="appearance_layout_classic_summary">Every detail on screen: bubbles, sender labels, timestamps, and the status bar.</string>
+    <string name="appearance_layout_clean_summary">Less on screen. Replies read as open text, details appear when you tap a message, and the status bar shows only when the connection needs attention.</string>
+    <string name="appearance_more_options">More appearance options</string>
+    <string name="appearance_more_options_summary">Language, text size, font, animation, background, and pets</string>
     <string name="appearance_language">Language</string>
     <string name="appearance_language_desc">Choose the language used by Hermes-Relay. System default follows your device setting.</string>
     <string name="appearance_language_system">System default</string>

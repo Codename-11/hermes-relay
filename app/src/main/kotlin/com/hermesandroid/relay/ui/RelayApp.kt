@@ -196,6 +196,7 @@ import com.hermesandroid.relay.ui.screens.NotificationCompanionSettingsScreen
 import com.hermesandroid.relay.ui.screens.ProactiveSettingsScreen
 import com.hermesandroid.relay.ui.screens.VoiceSettingsScreen
 import com.hermesandroid.relay.ui.screens.prewarmDashboardManage
+import com.hermesandroid.relay.ui.theme.LayoutStyle
 import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.ui.theme.RelayRefresh
@@ -393,6 +394,19 @@ internal fun resolveFooterRouteLabel(
 /** Keep the footer's model identity compact; context-window suffixes belong in model details. */
 internal fun compactFooterModelLabel(model: String): String =
     model.substringAfterLast('/').replace(Regex("-\\d+[kKmM]$"), "")
+
+/**
+ * Clean layout keeps the footer status strip out of the way while the
+ * connection is healthy; it reappears while the route is reconnecting or a
+ * real connection is offline. Demo mode has no connection to report, and the
+ * chat header already says when chat is offline. Classic always shows it.
+ */
+internal fun shouldShowStatusStrip(
+    layoutStyle: LayoutStyle,
+    offline: Boolean,
+    reconnecting: Boolean,
+    demoMode: Boolean = false,
+): Boolean = layoutStyle == LayoutStyle.CLASSIC || reconnecting || (offline && !demoMode)
 
 /**
  * Conversation voice remains part of chat, so its persistent connection
@@ -1282,6 +1296,7 @@ fun RelayApp() {
         accentHex = appearanceAccent.takeIf { resolvedTheme.useGlobalCustomTheme },
         shapeId = appearanceShape,
         customTheme = activeCustomTheme.takeIf { resolvedTheme.useGlobalCustomTheme },
+        layoutStyleId = appearance.layoutStyleId,
     ) {
         // Surface a crash report from a previous session, if any. Renders a
         // platform Dialog (own window) so tree position is z-order-agnostic;
@@ -2187,7 +2202,12 @@ fun RelayApp() {
                     } else {
                         null
                     }
-                    RelayStatusStrip(
+                    if (shouldShowStatusStrip(
+                        layoutStyle = LayoutStyle.fromId(appearance.layoutStyleId),
+                        offline = transportStatus.tier == ChatTransportTier.Offline,
+                        reconnecting = connectionReconnecting,
+                        demoMode = isDemoMode,
+                    )) RelayStatusStrip(
                         leadingBadge = {
                             ChatTransportStatusBadge(
                                 status = transportStatus,

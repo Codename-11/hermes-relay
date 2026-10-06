@@ -174,10 +174,11 @@ fun RelayDottedOverlay(
     }
 }
 
+/** Metadata voice: monospaced in Classic, the body face in the Clean [LayoutStyle]. */
 @Composable
 fun relayMetadataStyle(): TextStyle =
     MaterialTheme.typography.labelSmall.copy(
-        fontFamily = RelayRefresh.Mono,
+        fontFamily = if (isCleanLayout) MaterialTheme.typography.bodyMedium.fontFamily else RelayRefresh.Mono,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.sp,
     )

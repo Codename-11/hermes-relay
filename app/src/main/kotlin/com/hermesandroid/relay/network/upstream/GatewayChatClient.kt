@@ -759,6 +759,8 @@ class GatewayChatClient(
         truncateBeforeUserOrdinal: Int? = null,
         truncateBeforeRowId: Long? = null,
         queuedFollowUp: Boolean = false,
+        clientSurface: String? = null,
+        voiceContext: String? = null,
         onSurvivorUserRowIds: (List<Long?>) -> Unit = { },
         onTransportAccepted: () -> Unit = { },
         onAttachmentFailure: ((String) -> Unit)? = null,
@@ -833,6 +835,8 @@ class GatewayChatClient(
                     buildJsonObject {
                         put("session_id", liveSessionId ?: error("no live session"))
                         put("text", submittedText)
+                        clientSurface?.takeIf { it.isNotBlank() }?.let { put("surface", it) }
+                        voiceContext?.takeIf { it.isNotBlank() }?.let { put("voice_context", it) }
                         if (truncateBeforeUserOrdinal != null || truncateBeforeRowId != null) {
                             put("confirm_truncate", true)
                         }

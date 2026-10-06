@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.MoreVert
@@ -279,6 +280,7 @@ import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
 import com.hermesandroid.relay.ui.components.SubagentLane
 import com.hermesandroid.relay.ui.components.ToolActivityRun
+import com.hermesandroid.relay.ui.components.cleanTurnToolItems
 import com.hermesandroid.relay.ui.components.ToolProgressCard
 import com.hermesandroid.relay.ui.components.ToolTranscriptItem
 import com.hermesandroid.relay.ui.components.groupTranscriptTools
@@ -292,6 +294,7 @@ import com.hermesandroid.relay.util.HumanErrorAction
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import kotlin.math.abs
+import com.hermesandroid.relay.ui.theme.isCleanLayout
 import com.hermesandroid.relay.ui.theme.relayGridTexture
 import com.hermesandroid.relay.ui.theme.relayMetadataStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -658,6 +661,9 @@ private fun LazyListState.scrollTickerProgress(): Float {
 private fun ChatScrollTicker(
     listState: LazyListState,
     modifier: Modifier = Modifier,
+    // Clean shows the rail only while the list is moving, like a native
+    // scrollbar; Classic keeps it parked at a dim idle alpha.
+    idleVisible: Boolean = true,
 ) {
     val isScrollable by remember(listState) {
         derivedStateOf { listState.canScrollBackward || listState.canScrollForward }
@@ -677,9 +683,15 @@ private fun ChatScrollTicker(
         targetValue = when {
             !isScrollable -> 0f
             listState.isScrollInProgress -> 0.95f
-            else -> 0.54f
+            idleVisible -> 0.54f
+            else -> 0f
         },
-        animationSpec = tween(durationMillis = 160),
+        animationSpec = if (!idleVisible && !listState.isScrollInProgress) {
+            // Linger briefly after the fling, then fade out.
+            tween(durationMillis = 600, delayMillis = 400)
+        } else {
+            tween(durationMillis = 160)
+        },
         label = "chatScrollTickerAlpha",
     )
 
@@ -2573,8 +2585,10 @@ fun ChatScreen(
                 scopeTitle = drawerTitle,
                 scopeSubtitle = drawerSubtitle,
                 activeProfileName = drawerProfileName ?: "default",
-                isLoading = isLoadingSessions,
-                loadFailed = sessionListUnavailable,
+                // Demo mode has no server to list sessions from; never
+                // leave the drawer spinning.
+                isLoading = isLoadingSessions && !isDemoMode,
+                loadFailed = sessionListUnavailable && !isDemoMode,
                 isLoadingMore = isLoadingMoreSessions,
                 hasMore = hasMoreSessions,
                 loadMoreFailed = sessionPageLoadFailed,
@@ -2817,13 +2831,14 @@ fun ChatScreen(
                 },
     ) {
         val isDarkTheme = LocalBrand.current.isDark
+        val cleanLayout = isCleanLayout
 
         Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .background(RelayRefresh.Background)
-                .relayGridTexture(alpha = 0.14f)
+                .then(if (cleanLayout) Modifier else Modifier.relayGridTexture(alpha = 0.14f))
                 .imePadding()
                 .alpha(chatAlpha)
         ) {
@@ -2926,7 +2941,12 @@ fun ChatScreen(
                     // yet (server config still loading), fall back to the plain
                     // connection status \u2014 never the literal "None"/"Default"
                     // personality label.
-                    val subtitleText = if (!headerChatReady) {
+                    // Clean: demo mode has nothing to be disconnected from,
+                    // so the subtitle names the mode instead of a red error.
+                    val cleanDemoHeader = cleanLayout && isDemoMode && !headerChatReady
+                    val subtitleText = if (cleanDemoHeader) {
+                        stringResource(R.string.demo_badge)
+                    } else if (!headerChatReady) {
                         statusText
                     } else if (supervised) {
                         buildList {
@@ -2944,7 +2964,7 @@ fun ChatScreen(
                             modelName = modelName,
                         )
                     }
-                    val subtitleColor = if (headerChatReady) {
+                    val subtitleColor = if (headerChatReady || cleanDemoHeader) {
                         MaterialTheme.colorScheme.onSurfaceVariant
                     } else {
                         statusColor
@@ -2986,7 +3006,9 @@ fun ChatScreen(
                         // Avatar — a plain 40dp circle whose letter swaps to the
                         // active agent (profile or personality). No overlay ring:
                         // the letter itself is the indicator.
-                        if (!supervised || supervisedVisibility.showAgentIdentity) Box(modifier = Modifier.size(40.dp)) {
+                        // Clean drops the avatar: the title carries identity
+                        // and the subtitle carries connection state.
+                        if (!cleanLayout && (!supervised || supervisedVisibility.showAgentIdentity)) Box(modifier = Modifier.size(40.dp)) {
                             Surface(
                                 modifier = Modifier.size(40.dp),
                                 shape = CircleShape,
@@ -3130,19 +3152,38 @@ fun ChatScreen(
                                 modifier = Modifier.padding(end = 4.dp),
                             )
                         }
+                        if (!cleanLayout) {
+                            RelayChromeIconButton(
+                                icon = Icons.Filled.Code,
+                                contentDescription = stringResource(R.string.cd_terminal),
+                                onClick = onNavigateToTerminal,
+                                modifier = Modifier.padding(end = 4.dp),
+                            )
+                        }
+                    }
+                    // Clean layout folds Terminal + Settings into the ⋮ menu so
+                    // the header carries only identity plus one action.
+                    if (!cleanLayout) {
                         RelayChromeIconButton(
-                            icon = Icons.Filled.Code,
-                            contentDescription = stringResource(R.string.cd_terminal),
-                            onClick = onNavigateToTerminal,
+                            icon = Icons.Filled.Tune,
+                            contentDescription = stringResource(R.string.cd_settings),
+                            onClick = onNavigateToSettings,
                             modifier = Modifier.padding(end = 4.dp),
                         )
                     }
-                    RelayChromeIconButton(
-                        icon = Icons.Filled.Tune,
-                        contentDescription = stringResource(R.string.cd_settings),
-                        onClick = onNavigateToSettings,
-                        modifier = Modifier.padding(end = 4.dp),
-                    )
+                    // Clean: one compose action, ChatGPT-style. Supervised
+                    // sessions keep their own new-chat placement.
+                    if (cleanLayout && !supervised && sessionsHistoryAllowed) {
+                        IconButton(
+                            onClick = { chatViewModel.createNewChat() },
+                            modifier = Modifier.testTag("chat-header-new-chat"),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.EditNote,
+                                contentDescription = stringResource(R.string.drawer_new_chat),
+                            )
+                        }
+                    }
                     // Share is the least-used trailing action (and only valid
                     // once there's a conversation), so it folds into a ⋮
                     // overflow instead of competing for width with Terminal +
@@ -3150,22 +3191,56 @@ fun ChatScreen(
                     // Session identity is useful before the first message; sharing only appears
                     // once the conversation has content.
                     if (
+                        cleanLayout ||
                         (!supervised && (messages.isNotEmpty() || !currentSessionId.isNullOrBlank())) ||
                         (supervised && messages.isNotEmpty() &&
                             supervisedPolicy.allowsSessionAction(SupervisedSessionAction.ShareTranscript))
                     ) {
                         var showOverflowMenu by remember { mutableStateOf(false) }
                         Box {
-                            RelayChromeIconButton(
-                                icon = Icons.Filled.MoreVert,
-                                contentDescription = stringResource(R.string.chat_more_actions_a11y),
-                                onClick = { showOverflowMenu = true },
-                                modifier = Modifier.padding(end = 4.dp),
-                            )
+                            if (cleanLayout) {
+                                IconButton(onClick = { showOverflowMenu = true }) {
+                                    Icon(
+                                        imageVector = Icons.Filled.MoreVert,
+                                        contentDescription = stringResource(R.string.chat_more_actions_a11y),
+                                    )
+                                }
+                            } else {
+                                RelayChromeIconButton(
+                                    icon = Icons.Filled.MoreVert,
+                                    contentDescription = stringResource(R.string.chat_more_actions_a11y),
+                                    onClick = { showOverflowMenu = true },
+                                    modifier = Modifier.padding(end = 4.dp),
+                                )
+                            }
                             DropdownMenu(
                                 expanded = showOverflowMenu,
                                 onDismissRequest = { showOverflowMenu = false },
                             ) {
+                                if (cleanLayout) {
+                                    if (!supervised) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.cd_terminal)) },
+                                            leadingIcon = {
+                                                Icon(Icons.Filled.Code, contentDescription = null)
+                                            },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                onNavigateToTerminal()
+                                            },
+                                        )
+                                    }
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.cd_settings)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Tune, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            onNavigateToSettings()
+                                        },
+                                    )
+                                }
                                 currentSessionId?.takeIf { !supervised && it.isNotBlank() }?.let { sessionId ->
                                     DropdownMenuItem(
                                         text = { Text(copySessionIdLabel) },
@@ -3420,8 +3495,10 @@ fun ChatScreen(
                         ) {
                             Spacer(modifier = Modifier.weight(0.15f))
 
-                            // ASCII sphere (constrained to square aspect)
+                            // ASCII sphere (constrained to square aspect).
+                            // Clean opens on the greeting alone.
                             if (
+                                !cleanLayout &&
                                 LocalBackgroundVisualizationEnabled.current &&
                                 (!supervised || supervisedVisibility.showAgentIdentity)
                             ) {
@@ -3469,8 +3546,13 @@ fun ChatScreen(
                                     ChatConnectState.Unavailable -> stringResource(R.string.chat_disconnected_label)
                                     ChatConnectState.NeedsConnection -> stringResource(R.string.chat_needs_connection)
                                 },
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface
+                                style = if (cleanLayout) {
+                                    MaterialTheme.typography.headlineSmall
+                                } else {
+                                    MaterialTheme.typography.titleMedium
+                                },
+                                color = MaterialTheme.colorScheme.onSurface,
+                                textAlign = TextAlign.Center,
                             )
 
                             // The selected agent's role/description - the
@@ -3587,9 +3669,16 @@ fun ChatScreen(
                                                     )
                                                 },
                                                 colors = AssistChipDefaults.assistChipColors(
-                                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                                                    containerColor = if (cleanLayout) {
+                                                        MaterialTheme.colorScheme.surfaceContainerHigh
+                                                    } else {
+                                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                                    },
                                                     labelColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
+                                                ),
+                                                // Clean: tonal pills without outlines.
+                                                border = if (cleanLayout) null else AssistChipDefaults.assistChipBorder(enabled = true),
+                                                shape = if (cleanLayout) CircleShape else AssistChipDefaults.shape,
                                             )
                                         }
                                     }
@@ -3607,8 +3696,10 @@ fun ChatScreen(
                         .weight(1f)
                         .fillMaxWidth()
                 ) {
-                    // Ambient avatar behind messages
+                    // Ambient avatar behind messages. Clean keeps the
+                    // transcript on a plain surface.
                     if (
+                        !cleanLayout &&
                         LocalBackgroundVisualizationEnabled.current &&
                         (!supervised || supervisedVisibility.showAgentIdentity) &&
                         animationBehindChat
@@ -3668,6 +3759,15 @@ fun ChatScreen(
                     }
                     val petJourneyPerchUiKeys = remember(messages) {
                         petPerchUiKeys(messages)
+                    }
+                    // Clean layout: assistant prose spans the transcript column.
+                    val cleanAssistantWidth = (
+                        responsiveLayout.transcriptMaxWidth
+                            ?: LocalConfiguration.current.screenWidthDp.dp
+                        ) - 24.dp
+                    // Clean layout: one routine-tool summary per assistant turn.
+                    val cleanTurnTools = remember(messages, cleanLayout) {
+                        if (cleanLayout) cleanTurnToolItems(messages) else null
                     }
                     val visibleMessageKeys by remember(listState) {
                         derivedStateOf {
@@ -3805,7 +3905,11 @@ fun ChatScreen(
                                     } else {
                                         null
                                     },
-                                    maxBubbleWidth = maxBubbleWidth,
+                                    maxBubbleWidth = if (cleanLayout && message.role == MessageRole.ASSISTANT) {
+                                        cleanAssistantWidth
+                                    } else {
+                                        maxBubbleWidth
+                                    },
                                     showThinking = showThinking,
                                     showAgentIdentity = !supervised || supervisedVisibility.showAgentIdentity,
                                     showTimestamps = !supervised || supervisedVisibility.showTimestamps,
@@ -3959,7 +4063,8 @@ fun ChatScreen(
                                 // activity; the null group retains source order
                                 // while routine calls collapse into runs.
                                 val laneGroups = message.toolCalls.groupBy { it.taskIndex }
-                                val transcriptTools = groupTranscriptTools(laneGroups[null].orEmpty())
+                                val transcriptTools = cleanTurnTools?.get(message.uiKey)
+                                    ?: groupTranscriptTools(laneGroups[null].orEmpty())
                                 transcriptTools.forEachIndexed { itemIndex, item ->
                                     when (item) {
                                         is ToolTranscriptItem.ActivityRun -> {
@@ -4065,6 +4170,7 @@ fun ChatScreen(
 
                     ChatScrollTicker(
                         listState = listState,
+                        idleVisible = !cleanLayout,
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
                             .padding(top = 10.dp, end = 2.dp, bottom = 78.dp)
@@ -4740,6 +4846,11 @@ fun ChatScreen(
                             supervisedPolicy.capabilities.attachmentCategories
                         )) pasteImageFromClipboard else ({ }),
                 onLongPressAttach = { if (!supervised) showCommandPalette = true },
+                onCommands = if (!supervised) {
+                    { showCommandPalette = true }
+                } else {
+                    null
+                },
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
                     .then(

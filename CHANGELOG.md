@@ -6,8 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Android Appearance offers a Clean layout: assistant replies read as open text, message details appear on tap, each turn shows one tool summary, header shortcuts move into the menu, and the status bar appears only when the connection needs attention.
+- Android Clean and Material You themes; Material You follows wallpaper colors on Android 12 and later.
+
+### Changed
+
+- Android Appearance shows theme, mode, accent, and layout first; language, text, font, animation, background, and pet settings sit under More appearance options.
+- Android uses the Clean layout by default; Classic remains available in Appearance.
+- Android Clean layout: a plain chat background, a header with the agent name and one new-chat action, a borderless pill composer with a filled send button, a chat list led by search, and no status strip in demo mode.
+- Android Appearance puts the layout choice first and previews the selected layout.
+- Android Clean composer is one row (+, message, send or voice); attachments, model, reasoning, and commands open from the + button.
+
 ### Fixed
 
+- Android composer placeholder uses readable secondary text; Clean composer options scroll in short windows and at larger text sizes.
+- Android Material container colors stay consistent over nested surfaces, preserving their intended text contrast.
 - Windows CLI+UI installation correctly selects its latest release when GitHub returns Android and Plugin releases on the same page, including when discovery needs multiple pages.
 - Desktop tray notices, screenshot evidence, and grant prompts stay reusable after dismissal; screenshot evidence keeps the most recently selected image. (#606)
 - Desktop computer screenshots attach validated image bytes to the host tool result instead of returning base64 as plain text.

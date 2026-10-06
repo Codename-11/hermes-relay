@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import com.hermesandroid.relay.ui.theme.AppFont
 import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.theme.AppearanceShape
+import com.hermesandroid.relay.ui.theme.LayoutStyle
 import com.hermesandroid.relay.ui.theme.normalizeAccentHex
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -21,6 +22,7 @@ internal data class PersistedAppearance(
     val appFontId: String = AppFont.DEFAULT.id,
     val fontScale: Float = 1.0f,
     val customTheme: CustomThemePreset? = null,
+    val layoutStyleId: String = LayoutStyle.DEFAULT.id,
 )
 
 internal object AppearancePreferences {
@@ -31,6 +33,7 @@ internal object AppearancePreferences {
     val appFontKey = stringPreferencesKey("app_font")
     val fontScaleKey = floatPreferencesKey("font_scale")
     val customThemesKey = stringPreferencesKey("custom_theme_presets")
+    val layoutStyleKey = stringPreferencesKey("appearance_layout_style")
 
     private val json = Json { ignoreUnknownKeys = true }
     private val serializer = ListSerializer(CustomThemePreset.serializer())
@@ -53,6 +56,7 @@ internal object AppearancePreferences {
             appFontId = AppFont.byId(preferences[appFontKey]).id,
             fontScale = (preferences[fontScaleKey] ?: 1.0f).coerceIn(0.85f, 1.3f),
             customTheme = customTheme,
+            layoutStyleId = LayoutStyle.fromId(preferences[layoutStyleKey]).id,
         )
     }
 

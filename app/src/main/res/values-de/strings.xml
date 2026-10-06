@@ -77,6 +77,8 @@
     <!-- Chat input bar -->
     <string name="chat_input_live_voice_hint">Live-Sprachgespräch</string>
     <string name="chat_input_add_attachment">Anhang hinzufügen</string>
+    <string name="chat_input_sheet_model">Modell</string>
+    <string name="chat_input_sheet_reasoning">Denkaufwand</string>
     <string name="chat_input_browse_commands">Befehle durchsuchen</string>
     <string name="chat_input_add_attachment_hold">Anhang hinzufügen; halten für Befehle</string>
     <string name="chat_input_photos">Fotos</string>
@@ -1266,6 +1268,13 @@
     <string name="appearance_cancel">Abbrechen</string>
     <string name="appearance_theme">Design</string>
     <string name="appearance_theme_desc">Wähle ein Erscheinungsbild. Markenrahmen, Akzente und Chathintergrund folgen deiner Auswahl.</string>
+    <string name="appearance_layout">Layout</string>
+    <string name="appearance_layout_classic">Klassisch</string>
+    <string name="appearance_layout_clean">Aufgeräumt</string>
+    <string name="appearance_layout_classic_summary">Alle Details auf dem Bildschirm: Blasen, Absenderzeilen, Uhrzeiten und die Statusleiste.</string>
+    <string name="appearance_layout_clean_summary">Weniger auf dem Bildschirm. Antworten erscheinen als offener Text, Details beim Antippen einer Nachricht, und die Statusleiste nur, wenn die Verbindung Aufmerksamkeit braucht.</string>
+    <string name="appearance_more_options">Weitere Darstellungsoptionen</string>
+    <string name="appearance_more_options_summary">Sprache, Textgröße, Schriftart, Animation, Hintergrund und Begleiter</string>
     <string name="appearance_language">Sprache</string>
     <string name="appearance_language_desc">Wähle die Sprache für Hermes-Relay. Die Systemeinstellung richtet sich nach der Sprache deines Geräts.</string>
     <string name="appearance_language_system">Systemeinstellung</string>

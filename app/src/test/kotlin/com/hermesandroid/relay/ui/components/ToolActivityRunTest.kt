@@ -41,6 +41,40 @@ class ToolActivityRunTest {
     }
 
     @Test
+    fun `clean turn consolidation folds routine calls across messages into one run`() {
+        val read = call("read-1", "read_file")
+        val search = call("search-1", "web_search")
+        val delegate = call("delegate-1", "delegate_task")
+        val command = call("command-1", "terminal")
+
+        val items = consolidateTurnTools(
+            listOf(listOf(read), listOf(search), listOf(delegate, command), emptyList()),
+        )
+
+        assertEquals(4, items.size)
+        assertEquals(
+            listOf(read, search, command),
+            (items[0].single() as ToolTranscriptItem.ActivityRun).calls,
+        )
+        assertTrue(items[1].isEmpty())
+        assertEquals(delegate, (items[2].single() as ToolTranscriptItem.Standalone).call)
+        assertTrue(items[3].isEmpty())
+    }
+
+    @Test
+    fun `clean turn consolidation places the run at the first routine position`() {
+        val edit = call("edit-1", "apply_patch")
+        val read = call("read-1", "read_file")
+        val grep = call("grep-1", "grep")
+
+        val items = consolidateTurnTools(listOf(listOf(edit), listOf(read), listOf(grep)))
+
+        assertEquals(edit, (items[0].single() as ToolTranscriptItem.Standalone).call)
+        assertEquals(listOf(read, grep), (items[1].single() as ToolTranscriptItem.ActivityRun).calls)
+        assertTrue(items[2].isEmpty())
+    }
+
+    @Test
     fun `off hides only ordinary activity scaffolding`() {
         val run = ToolTranscriptItem.ActivityRun(listOf(call("read", "read_file")))
         val failure = ToolTranscriptItem.Standalone(

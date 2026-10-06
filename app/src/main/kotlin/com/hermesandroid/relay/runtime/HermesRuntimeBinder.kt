@@ -28,6 +28,7 @@ import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
 import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
 import com.hermesandroid.relay.network.upstream.StandardHermesVoiceClient
+import com.hermesandroid.relay.network.upstream.StandardGptLiveVoiceClient
 import com.hermesandroid.relay.viewmodel.SESSION_DIRECTORY_PAGE_SIZE
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.VoiceState
@@ -119,6 +120,14 @@ internal class HermesRuntimeBinder(
                 AgentDisplay.profileRequestName(connection.selectedProfile.value?.name)
             },
         )
+        val gptLiveVoiceClient = StandardGptLiveVoiceClient(
+            context = application,
+            dashboardHttpClientProvider = connection::dashboardHttpClientForActive,
+            dashboardUrlProvider = connection::activeDashboardUrl,
+            profileProvider = {
+                AgentDisplay.profileRequestName(connection.selectedProfile.value?.name)
+            },
+        )
         val voiceAudioClient = AutoVoiceAudioClient(
             standardClient = standardVoiceClient,
             relayClient = RelayVoiceAudioClientAdapter(
@@ -137,6 +146,7 @@ internal class HermesRuntimeBinder(
         voice.initialize(
             voiceClient = relayVoiceClient,
             voiceAudioClient = voiceAudioClient,
+            gptLiveVoiceClient = gptLiveVoiceClient,
             chatViewModel = chat,
             recorder = VoiceRecorder(application, voice.viewModelScope),
             player = VoicePlayer(application),

@@ -77,6 +77,8 @@
     <!-- Chat input bar -->
     <string name="chat_input_live_voice_hint">ライブ音声会話</string>
     <string name="chat_input_add_attachment">添付ファイルを追加する</string>
+    <string name="chat_input_sheet_model">モデル</string>
+    <string name="chat_input_sheet_reasoning">推論</string>
     <string name="chat_input_browse_commands">ブラウズコマンド</string>
     <string name="chat_input_add_attachment_hold">添付ファイルを追加します。コマンドを押し続ける</string>
     <string name="chat_input_photos">写真</string>
@@ -1276,6 +1278,13 @@
     <string name="appearance_cancel">キャンセル</string>
     <string name="appearance_theme">テーマ</string>
     <string name="appearance_theme_desc">見てみましょう。ブランドのクローム、アクセント、チャットの背景はすべてあなたの選択に従います。</string>
+    <string name="appearance_layout">レイアウト</string>
+    <string name="appearance_layout_classic">クラシック</string>
+    <string name="appearance_layout_clean">すっきり</string>
+    <string name="appearance_layout_classic_summary">すべての詳細を表示：吹き出し、送信者ラベル、時刻、ステータスバー。</string>
+    <string name="appearance_layout_clean_summary">表示を減らします。返信は吹き出しなしのテキストで表示され、詳細はメッセージをタップすると表示されます。ステータスバーは接続に注意が必要なときだけ表示されます。</string>
+    <string name="appearance_more_options">その他の外観オプション</string>
+    <string name="appearance_more_options_summary">言語、文字サイズ、フォント、アニメーション、背景、ペット</string>
     <string name="appearance_language">言語</string>
     <string name="appearance_language_desc">Hermes-Relay で使用される言語を選択します。システムのデフォルトはデバイスの設定に従います。</string>
     <string name="appearance_language_system">システムのデフォルト</string>

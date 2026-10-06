@@ -13,6 +13,7 @@ import com.hermesandroid.relay.viewmodel.ChatRuntimeStatus
 import com.hermesandroid.relay.viewmodel.ChatTransportPath
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import com.hermesandroid.relay.viewmodel.resolveChatConnectState
+import com.hermesandroid.relay.ui.theme.LayoutStyle
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -64,6 +65,20 @@ class RelayAppStatusTest {
         assertTrue(shouldShowConnectionFooter(voiceMode = false, VoicePresentationMode.Focus))
         assertTrue(shouldShowConnectionFooter(voiceMode = true, VoicePresentationMode.Conversation))
         assertFalse(shouldShowConnectionFooter(voiceMode = true, VoicePresentationMode.Focus))
+    }
+
+    @Test
+    fun `clean layout shows the status strip only when the connection needs attention`() {
+        assertTrue(shouldShowStatusStrip(LayoutStyle.CLASSIC, offline = false, reconnecting = false))
+        assertFalse(shouldShowStatusStrip(LayoutStyle.CLEAN, offline = false, reconnecting = false))
+        assertTrue(shouldShowStatusStrip(LayoutStyle.CLEAN, offline = true, reconnecting = false))
+        assertTrue(shouldShowStatusStrip(LayoutStyle.CLEAN, offline = false, reconnecting = true))
+    }
+
+    @Test
+    fun `clean layout hides the offline strip in demo mode`() {
+        assertFalse(shouldShowStatusStrip(LayoutStyle.CLEAN, offline = true, reconnecting = false, demoMode = true))
+        assertTrue(shouldShowStatusStrip(LayoutStyle.CLASSIC, offline = true, reconnecting = false, demoMode = true))
     }
 
     @Test

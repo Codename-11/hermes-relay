@@ -42,6 +42,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.ChatMessage
+import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.ToolCall
 import com.hermesandroid.relay.data.isImageGenerationToolName
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
@@ -93,6 +95,72 @@ internal fun groupTranscriptTools(calls: List<ToolCall>): List<ToolTranscriptIte
         }
     }
     flushRun()
+    return result
+}
+
+/**
+ * Clean layout: fold every routine call of one assistant turn into a single
+ * summary run, so a turn that spans several transcript messages reads as one
+ * "Used N tools" row instead of one row per message. The run is placed where
+ * the turn's first routine run would have been; attention-bearing calls keep
+ * their own surface and position.
+ *
+ * @param turn top-level (non-subagent) tool calls of each consecutive message
+ *   in one assistant turn, in transcript order.
+ * @return transcript items for each message of [turn], index-aligned.
+ */
+internal fun consolidateTurnTools(turn: List<List<ToolCall>>): List<List<ToolTranscriptItem>> {
+    val perMessage = turn.map(::groupTranscriptTools)
+    val routine = perMessage.flatMap { items ->
+        items.filterIsInstance<ToolTranscriptItem.ActivityRun>().flatMap { it.calls }
+    }
+    var ownerPlaced = false
+    return perMessage.map { items ->
+        buildList {
+            items.forEach { item ->
+                when (item) {
+                    is ToolTranscriptItem.Standalone -> add(item)
+                    is ToolTranscriptItem.ActivityRun -> if (!ownerPlaced) {
+                        ownerPlaced = true
+                        add(ToolTranscriptItem.ActivityRun(routine))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Apply [consolidateTurnTools] across a transcript. A turn is a maximal run of
+ * consecutive assistant messages; any other role ends it. Messages that render
+ * a background-task card own their tools there and contribute nothing.
+ *
+ * @return top-level transcript items keyed by [ChatMessage.uiKey].
+ */
+internal fun cleanTurnToolItems(messages: List<ChatMessage>): Map<String, List<ToolTranscriptItem>> {
+    val result = HashMap<String, List<ToolTranscriptItem>>(messages.size)
+    val turn = mutableListOf<ChatMessage>()
+
+    fun flushTurn() {
+        if (turn.isEmpty()) return
+        val items = consolidateTurnTools(
+            turn.map { message ->
+                if (message.backgroundTask != null) emptyList()
+                else message.toolCalls.filter { it.taskIndex == null }
+            },
+        )
+        turn.forEachIndexed { index, message -> result[message.uiKey] = items[index] }
+        turn.clear()
+    }
+
+    messages.forEach { message ->
+        if (message.role == MessageRole.ASSISTANT) {
+            turn += message
+        } else {
+            flushTurn()
+        }
+    }
+    flushTurn()
     return result
 }
 
