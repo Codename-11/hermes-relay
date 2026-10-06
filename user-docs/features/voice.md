@@ -70,9 +70,14 @@ Common speech output choices:
 | **Hermes fallback TTS** | Depends on upstream provider | Used if relay voice output fails before audio starts. |
 
 Realtime Agent native providers also run relay-side. `xai_realtime` uses the
-relay-owned xAI API key or OAuth store. `openai_realtime` uses
+relay-owned xAI API key or OAuth store. `openai_realtime` can use
 `OPENAI_REALTIME_API_KEY`, `OPENAI_API_KEY`, or `VOICE_TOOLS_OPENAI_KEY` on the
-relay host. These keys are never stored on Android.
+relay host, or a ChatGPT/Codex subscription login. Set
+`RELAY_OPENAI_REALTIME_AUTH=codex_oauth` to require the subscription lane and
+refuse metered API-key fallback; `auto` keeps API-key-first compatibility and
+uses Codex OAuth only when no key is configured. The OAuth lane prefers Hermes'
+`openai-codex` login and otherwise reads the local Codex CLI login. Credentials
+are never stored on Android.
 
 Five STT providers are supported:
 

@@ -8,6 +8,7 @@ import os
 import urllib.parse
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 import aiohttp
@@ -79,6 +80,12 @@ SocketFactory = Callable[[str, dict[str, str], float], Any]
 class AuthToken:
     value: str
     source: str
+
+
+_AUTH_AUTO = "auto"
+_AUTH_API_KEY = "api_key"
+_AUTH_CODEX_OAUTH = "codex_oauth"
+_AUTH_MODES = {_AUTH_AUTO, _AUTH_API_KEY, _AUTH_CODEX_OAUTH}
 
 
 class OpenAIRealtimeAgentAdapter(RealtimeAgentProviderAdapter):
@@ -678,6 +685,26 @@ def _default_instructions(config: RealtimeAgentSessionConfig) -> str:
 
 
 def _resolve_auth_token(options: dict[str, Any]) -> AuthToken | None:
+    auth_mode = (
+        _option(options, "auth_mode")
+        or os.getenv("RELAY_OPENAI_REALTIME_AUTH", _AUTH_AUTO).strip().lower()
+        or _AUTH_AUTO
+    )
+    if auth_mode not in _AUTH_MODES:
+        raise ProviderUnavailable(
+            "OpenAI Realtime auth_mode must be auto, api_key, or codex_oauth"
+        )
+
+    if auth_mode == _AUTH_CODEX_OAUTH:
+        token = _resolve_codex_oauth_token()
+        if token is None:
+            raise ProviderUnavailable(
+                "OpenAI Realtime is pinned to Codex OAuth, but no usable ChatGPT "
+                "subscription login was found. Run `codex login` or "
+                "`hermes auth login openai-codex`. Metered API keys were not used."
+            )
+        return token
+
     for name in ("api_key", "openai_api_key", "client_secret"):
         explicit = _option(options, name)
         if explicit:
@@ -687,7 +714,83 @@ def _resolve_auth_token(options: dict[str, Any]) -> AuthToken | None:
         value = os.getenv(name, "").strip()
         if value:
             return AuthToken(value=value, source=f"env:{name}")
-    return None
+
+    if auth_mode == _AUTH_API_KEY:
+        return None
+
+    return _resolve_codex_oauth_token()
+
+
+def _resolve_codex_oauth_token() -> AuthToken | None:
+    """Borrow a Codex/ChatGPT subscription bearer without exposing it.
+
+    Prefer Hermes' own resolver because it owns refresh/locking semantics. The
+    direct Codex CLI store fallback is intentionally read-only: an expired token
+    should be refreshed by `codex login`, not by Relay mutating another tool's
+    credential file.
+    """
+    try:
+        from hermes_cli.auth_codex import resolve_codex_runtime_credentials
+    except ImportError:
+        resolve_codex_runtime_credentials = None
+
+    if resolve_codex_runtime_credentials is not None:
+        try:
+            credentials = resolve_codex_runtime_credentials()
+        except Exception:
+            credentials = None
+        if isinstance(credentials, dict):
+            token = credentials.get("api_key")
+            if isinstance(token, str) and token.strip():
+                return AuthToken(
+                    value=token.strip(),
+                    source="hermes:openai-codex",
+                )
+
+    configured_home = os.getenv("CODEX_HOME", "").strip()
+    auth_path = (
+        Path(configured_home) / "auth.json"
+        if configured_home
+        else Path.home() / ".codex" / "auth.json"
+    )
+    try:
+        data = json.loads(auth_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    auth_mode = str(data.get("auth_mode") or "").strip().lower()
+    if auth_mode and auth_mode not in {"chatgpt", "chatgptauthtokens"}:
+        return None
+    tokens = data.get("tokens")
+    if not isinstance(tokens, dict):
+        return None
+    access_token = tokens.get("access_token")
+    if not isinstance(access_token, str) or not access_token.strip():
+        return None
+    if _jwt_is_expired(access_token):
+        return None
+    return AuthToken(value=access_token.strip(), source="codex-cli:chatgpt")
+
+
+def _jwt_is_expired(token: str) -> bool:
+    parts = token.split(".")
+    if len(parts) < 2:
+        return False
+    payload = parts[1]
+    payload += "=" * (-len(payload) % 4)
+    try:
+        decoded = json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return True
+    if not isinstance(decoded, dict):
+        return True
+    expires_at = decoded.get("exp")
+    if not isinstance(expires_at, (int, float)):
+        return False
+    import time
+
+    return expires_at <= time.time() + 60
 
 
 def _url_with_model(base_url: str, model: str) -> str:
