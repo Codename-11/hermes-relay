@@ -5,7 +5,9 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -38,12 +40,17 @@ private val KEY_FCM_API_KEY = stringPreferencesKey("fcm_api_key")
 private val KEY_FCM_GCM_SENDER_ID = stringPreferencesKey("fcm_gcm_sender_id")
 private val KEY_FCM_LAST_TOKEN = stringPreferencesKey("fcm_last_token")
 private val KEY_FCM_LAST_ERROR = stringPreferencesKey("fcm_last_error")
+/** When true, notifications use generic copy (no message preview). Default false = show preview. */
+private val KEY_FCM_HIDE_NOTIFICATION_CONTENT =
+    booleanPreferencesKey("fcm_hide_notification_content")
 
 data class FcmPushPreferences(
     val enabled: Boolean = false,
     val config: FcmClientConfig = FcmClientConfig(),
     val lastToken: String = "",
     val lastError: String = "",
+    /** Default false: show message preview on wake/reply notifications. */
+    val hideNotificationContent: Boolean = false,
 )
 
 fun Context.fcmPushPreferencesFlow(): Flow<FcmPushPreferences> =
@@ -58,11 +65,16 @@ fun Context.fcmPushPreferencesFlow(): Flow<FcmPushPreferences> =
             ),
             lastToken = prefs[KEY_FCM_LAST_TOKEN].orEmpty(),
             lastError = prefs[KEY_FCM_LAST_ERROR].orEmpty(),
+            hideNotificationContent = prefs[KEY_FCM_HIDE_NOTIFICATION_CONTENT] ?: false,
         )
     }
 
 suspend fun Context.setFcmPushEnabled(enabled: Boolean) {
     relayDataStore.edit { it[KEY_FCM_ENABLED] = enabled }
+}
+
+suspend fun Context.setFcmHideNotificationContent(hide: Boolean) {
+    relayDataStore.edit { it[KEY_FCM_HIDE_NOTIFICATION_CONTENT] = hide }
 }
 
 suspend fun Context.setFcmClientConfig(config: FcmClientConfig) {
@@ -93,9 +105,20 @@ suspend fun Context.clearFcmClientConfig() {
         it.remove(KEY_FCM_GCM_SENDER_ID)
         it.remove(KEY_FCM_LAST_TOKEN)
         it.remove(KEY_FCM_LAST_ERROR)
+        it.remove(KEY_FCM_HIDE_NOTIFICATION_CONTENT)
         it[KEY_FCM_ENABLED] = false
     }
 }
+
+/**
+ * Sync read for notification paths (FCM service / turn-complete). Default false =
+ * show preview. Brief [runBlocking] is acceptable on those background threads.
+ */
+fun Context.hideNotificationContentBlocking(): Boolean =
+    runBlocking {
+        runCatching { fcmPushPreferencesFlow().first().hideNotificationContent }
+            .getOrDefault(false)
+    }
 
 /**
  * Parse Firebase Android client fields from pasted `google-services.json`

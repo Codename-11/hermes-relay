@@ -1465,7 +1465,7 @@
     <string name="proactive_fcm_clear">FCM-Einstellungen löschen</string>
     <string name="proactive_fcm_token_status">Gerätetoken: %1$s</string>
     <string name="proactive_fcm_not_paired">Kopple Relay, um das Gerätetoken beim Host zu registrieren.</string>
-    <string name="proactive_fcm_mac_note">Auf dem Mac RELAY_FCM_SERVICE_ACCOUNT_JSON auf den Firebase-Service-Account-Pfad (oder JSON) setzen. Niemals den Service Account in die App legen.</string>
+    <string name="proactive_fcm_mac_note">Auf diesem Hermes-Host: Dashboard → Hermes-Relay → Settings → Push wake — Firebase-Admin-Service-Account-JSON wählen (oder: python -m plugin.relay.fcm_sender install ./sa.json). Niemals den Service Account in die App legen; das Telefon braucht nur die Client-google-services.json.</string>
     <string name="proactive_fcm_wake_title">Hermes</string>
     <string name="proactive_fcm_wake_body">Hermes hat eine Nachricht — öffnen zum Reconnect und Zustellen.</string>
     <string name="proactive_fcm_wake_channel">Push-Wake</string>
