@@ -49,7 +49,7 @@ fun HermesRelayTheme(
     accentHex: String? = null,
     shapeId: String = AppearanceShape.DEFAULT.id,
     customTheme: CustomThemePreset? = null,
-    layoutStyleId: String = LayoutStyle.DEFAULT.id,
+    layoutStyleId: String = LayoutStyle.CLASSIC.id,
     content: @Composable () -> Unit
 ) {
     val layoutStyle = LayoutStyle.fromId(layoutStyleId)

@@ -215,6 +215,9 @@ fun MessageBubble(
     // Clean layout renders ordinary assistant replies as open prose on the
     // page (no filled bubble), the convention of current assistant apps.
     val cleanLayout = isCleanLayout
+    // A normal tap reveals the compact action strip (and, in Clean, the
+    // message's metadata and route badges).
+    var showInlineActions by remember(message.uiKey) { mutableStateOf(false) }
     val openAssistantProse = cleanLayout && !isUser && !isSystem && !isActionBubble
 
     val backgroundColor = when {
@@ -372,7 +375,11 @@ fun MessageBubble(
             }
         }
 
-        if (showTechnicalBadges && !isUser && !isSystem && message.badges.isNotEmpty()) {
+        // Clean discloses route badges (Demo, Voice, transport) on tap.
+        if (
+            showTechnicalBadges && !isUser && !isSystem && message.badges.isNotEmpty() &&
+            (!cleanLayout || showInlineActions)
+        ) {
             Row(
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
@@ -491,7 +498,6 @@ fun MessageBubble(
         // the existing overflow menu (or direct-copy shortcut when Copy is the
         // only available action).
         var showMessageActions by remember { mutableStateOf(false) }
-        var showInlineActions by remember(message.uiKey) { mutableStateOf(false) }
         val haptic = LocalHapticFeedback.current
         val accessibleMotion = rememberAccessibleMotionState()
         val animateInlineActions = animationEnabled && accessibleMotion.osAnimations &&
@@ -1027,15 +1033,18 @@ private fun MessageInlineActions(
     onStopSpeaking: () -> Unit,
     onEdit: () -> Unit,
 ) {
+    // Clean: a bare icon row under the message (ChatGPT-style), no card.
+    val clean = isCleanLayout
     Surface(
         shape = appearanceRoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 2.dp,
+        color = if (clean) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = if (clean) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+        tonalElevation = if (clean) 0.dp else 2.dp,
         modifier = Modifier.padding(top = 2.dp),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 2.dp),
+            modifier = Modifier.padding(horizontal = if (clean) 0.dp else 2.dp),
         ) {
             IconButton(onClick = onCopy, modifier = Modifier.size(48.dp)) {
                 Icon(

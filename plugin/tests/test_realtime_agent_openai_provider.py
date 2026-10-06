@@ -16,7 +16,9 @@ from plugin.relay.realtime_agent.models import (
     RealtimeAgentSessionConfig,
 )
 from plugin.relay.realtime_agent.providers.openai import (
+    AuthToken,
     OpenAIRealtimeAgentProvider,
+    _resolve_auth_token,
     _session_update,
 )
 from plugin.voice_lab.providers.base import ProviderUnavailable
@@ -73,6 +75,63 @@ class PCMContractSocket(FakeOpenAISocket):
 
 
 class OpenAIRealtimeAgentProviderTests(unittest.IsolatedAsyncioTestCase):
+    def test_codex_oauth_mode_ignores_metered_api_keys(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "metered-key",
+                "RELAY_OPENAI_REALTIME_AUTH": "codex_oauth",
+            },
+            clear=True,
+        ), patch(
+            "plugin.relay.realtime_agent.providers.openai._resolve_codex_oauth_token",
+            return_value=AuthToken("subscription-token", "codex-cli:chatgpt"),
+        ):
+            auth = _resolve_auth_token({})
+
+        self.assertEqual(auth, AuthToken("subscription-token", "codex-cli:chatgpt"))
+
+    def test_codex_oauth_mode_fails_closed_without_subscription_login(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "metered-key",
+                "RELAY_OPENAI_REALTIME_AUTH": "codex_oauth",
+            },
+            clear=True,
+        ), patch(
+            "plugin.relay.realtime_agent.providers.openai._resolve_codex_oauth_token",
+            return_value=None,
+        ), self.assertRaisesRegex(ProviderUnavailable, "Metered API keys were not used"):
+            _resolve_auth_token({})
+
+    def test_api_key_mode_does_not_fall_back_to_codex_oauth(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"RELAY_OPENAI_REALTIME_AUTH": "api_key"},
+            clear=True,
+        ), patch(
+            "plugin.relay.realtime_agent.providers.openai._resolve_codex_oauth_token"
+        ) as oauth:
+            self.assertIsNone(_resolve_auth_token({}))
+        oauth.assert_not_called()
+
+    def test_auto_mode_preserves_existing_api_key_precedence(self) -> None:
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "metered-key"}, clear=True), patch(
+            "plugin.relay.realtime_agent.providers.openai._resolve_codex_oauth_token"
+        ) as oauth:
+            auth = _resolve_auth_token({})
+        self.assertEqual(auth, AuthToken("metered-key", "env:OPENAI_API_KEY"))
+        oauth.assert_not_called()
+
+    def test_invalid_auth_mode_fails_closed(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"RELAY_OPENAI_REALTIME_AUTH": "maybe"},
+            clear=True,
+        ), self.assertRaisesRegex(ProviderUnavailable, "auth_mode must be"):
+            _resolve_auth_token({})
+
     async def test_pcm_session_negotiation_for_ga_models(self) -> None:
         for model in (
             "gpt-realtime-2", "gpt-realtime-2.1", "gpt-realtime-2.1-mini",

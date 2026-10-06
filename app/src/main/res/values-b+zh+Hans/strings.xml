@@ -77,6 +77,8 @@
     <!-- 聊天输入栏 -->
     <string name="chat_input_live_voice_hint">实时语音对话</string>
     <string name="chat_input_add_attachment">添加附件</string>
+    <string name="chat_input_sheet_model">模型</string>
+    <string name="chat_input_sheet_reasoning">推理</string>
     <string name="chat_input_browse_commands">浏览命令</string>
     <string name="chat_input_add_attachment_hold">添加附件；长按查看命令</string>
     <string name="chat_input_photos">照片</string>

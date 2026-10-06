@@ -10,6 +10,15 @@ import org.junit.Test
 
 class AccentCustomizationTest {
     @Test
+    fun `material container fills stay opaque over nested surfaces`() {
+        AppThemes.ALL.flatMap { listOf(it.darkPalette, it.lightPalette) }.forEach { palette ->
+            val scheme = palette.toColorScheme()
+            listOf(scheme.primaryContainer, scheme.secondaryContainer, scheme.tertiaryContainer, scheme.errorContainer)
+                .forEach { assertEquals(1f, it.alpha, 0f) }
+        }
+    }
+
+    @Test
     fun `accent values normalize to stable persisted RGB`() {
         assertEquals("#5B6CFF", normalizeAccentHex(" 5b6cff "))
         assertNull(normalizeAccentHex("javascript:red"))

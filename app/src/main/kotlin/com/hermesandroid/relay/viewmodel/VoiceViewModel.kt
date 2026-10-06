@@ -39,6 +39,11 @@ import com.hermesandroid.relay.network.relay.RealtimeVoiceSummary
 import com.hermesandroid.relay.network.relay.RealtimeVoiceEvent
 import com.hermesandroid.relay.network.relay.VoiceHandoffEvent
 import com.hermesandroid.relay.network.shared.VoiceAudioClient
+import com.hermesandroid.relay.network.shared.GptLiveCallbacks
+import com.hermesandroid.relay.network.shared.GptLiveHistoryMessage
+import com.hermesandroid.relay.network.shared.GptLiveSession
+import com.hermesandroid.relay.network.shared.GptLiveTranscriptFragment
+import com.hermesandroid.relay.network.shared.GptLiveVoiceClient
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
 import com.hermesandroid.relay.network.shared.VoiceSpeechStream
 import com.hermesandroid.relay.network.shared.VoiceSpeechStreamCallbacks
@@ -758,6 +763,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private var voiceClient: RelayVoiceClient? = null
     private var voiceAudioClient: VoiceAudioClient? = null
+    private var gptLiveVoiceClient: GptLiveVoiceClient? = null
+    private var gptLiveSession: GptLiveSession? = null
+    private var gptLiveStartJob: Job? = null
+    private var gptLiveReplyJob: Job? = null
+    private var gptLiveStarting: Boolean = false
     private var chatViewModel: ChatViewModel? = null
     private var assistantActivationId: String? = null
     private var assistantContextTurnCommitted = false
@@ -1173,6 +1183,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     fun initialize(
         voiceClient: RelayVoiceClient,
         voiceAudioClient: VoiceAudioClient? = null,
+        gptLiveVoiceClient: GptLiveVoiceClient? = null,
         chatViewModel: ChatViewModel,
         recorder: VoiceRecorder,
         player: VoicePlayer,
@@ -1215,6 +1226,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         this.voiceClient = voiceClient
         voiceOutputEpoch++
         this.voiceAudioClient = voiceAudioClient ?: RelayVoiceAudioClientAdapter(voiceClient)
+        this.gptLiveVoiceClient = gptLiveVoiceClient
         this.chatViewModel = chatViewModel
         chatViewModel.gatewayInboundSpeechReceiver = ::captureInboundSpeechReceiver
         this.recorder = recorder
@@ -1700,6 +1712,190 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (freshEntry) bindInboundSpeechOwner()
         prewarmRealtimeSession()
+        startGptLiveIfSelected()
+    }
+
+    /** Start the host-selected GPT-Live frontend when Standard Hermes voice is active. */
+    private fun startGptLiveIfSelected() {
+        if (supervisedModePolicy.enabled || voiceEngineMode != VoiceEngineMode.HermesVoiceOutput) return
+        val client = gptLiveVoiceClient ?: return
+        if (gptLiveSession != null || gptLiveStarting) return
+        gptLiveStartJob?.cancel()
+        // Claim the microphone lane synchronously before launching. Continuous
+        // mode can otherwise observe voiceMode=true in the same frame and open
+        // VoiceRecorder before the coroutine gets a chance to set this flag.
+        gptLiveStarting = true
+        gptLiveStartJob = viewModelScope.launch {
+            try {
+                val status = client.status().getOrElse { error ->
+                    Log.i(TAG, "GPT-Live status unavailable; keeping chained voice: ${error.message}")
+                    return@launch
+                }
+                if (status.mode != "gpt-live") return@launch
+                if (!status.available) {
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Voice,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "GPT-Live unavailable",
+                        detail = status.reason ?: "Hermes host has no GPT-Live credential",
+                    )
+                    return@launch
+                }
+                val chat = chatViewModel ?: return@launch
+                val history = chat.messages.value
+                    .asSequence()
+                    .filter { it.role == MessageRole.USER || it.role == MessageRole.ASSISTANT }
+                    .map { GptLiveHistoryMessage(it.role.name.lowercase(), it.content) }
+                    .filter { it.text.isNotBlank() }
+                    .toList()
+                    .takeLast(24)
+                val session = client.startSession(
+                    history = history,
+                    callbacks = GptLiveCallbacks(
+                        onDelegation = { delegationId, context ->
+                            viewModelScope.launch { handleGptLiveDelegation(delegationId, context) }
+                        },
+                        onTranscript = { fragment ->
+                            if (fragment.speaker == GptLiveTranscriptFragment.Speaker.User) {
+                                _uiState.update { state ->
+                                    state.copy(
+                                        state = VoiceState.Listening,
+                                        transcribedText = appendLiveCaption(state.transcribedText, fragment.text),
+                                        outputAudioActive = false,
+                                    )
+                                }
+                            }
+                        },
+                        onSpeakingChanged = { speaking ->
+                            _uiState.update { state ->
+                                state.copy(
+                                    state = if (speaking) VoiceState.Speaking else if (gptLiveSession != null) VoiceState.Listening else state.state,
+                                    outputAudioActive = speaking,
+                                )
+                            }
+                        },
+                        onError = { message, fatal ->
+                            Log.w(TAG, "GPT-Live: $message")
+                            if (fatal) setError(message)
+                        },
+                        onClosed = { reason, usageSeconds ->
+                            Log.i(TAG, "GPT-Live closed reason=$reason usageSeconds=$usageSeconds")
+                            gptLiveSession = null
+                            if (_uiState.value.voiceMode && reason != "close_requested") {
+                                _uiState.update { it.copy(state = VoiceState.Idle, outputAudioActive = false) }
+                            }
+                        },
+                    ),
+                ).getOrElse { error ->
+                    Log.w(TAG, "Could not start GPT-Live; keeping chained voice: ${error.message}")
+                    DiagnosticsLog.record(
+                        category = DiagnosticCategory.Voice,
+                        severity = DiagnosticSeverity.Warning,
+                        title = "Could not start GPT-Live",
+                        detail = error.message,
+                    )
+                    return@launch
+                }
+                if (!_uiState.value.voiceMode) {
+                    session.close()
+                    return@launch
+                }
+                gptLiveSession = session
+                _uiState.update {
+                    it.copy(state = VoiceState.Listening, outputAudioActive = false, error = null)
+                }
+                Log.i(TAG, "GPT-Live voice session started model=${status.model} voice=${status.voice}")
+            } finally {
+                gptLiveStarting = false
+            }
+        }
+    }
+
+    private suspend fun handleGptLiveDelegation(
+        delegationId: String,
+        context: List<GptLiveTranscriptFragment>,
+    ) {
+        val session = gptLiveSession ?: return
+        val chat = chatViewModel ?: return
+        val turns = mutableListOf<Pair<GptLiveTranscriptFragment.Speaker, StringBuilder>>()
+        context.forEach { fragment ->
+            val last = turns.lastOrNull()
+            if (last?.first == fragment.speaker) last.second.append(fragment.text)
+            else turns += fragment.speaker to StringBuilder(fragment.text)
+        }
+        val prompt = turns.asReversed()
+            .firstOrNull { it.first == GptLiveTranscriptFragment.Speaker.User }
+            ?.second?.toString()?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
+        val voiceContext = turns.joinToString("\n") { (speaker, text) ->
+            "${if (speaker == GptLiveTranscriptFragment.Speaker.User) "User" else "Voice assistant"}: ${text.toString().replace(Regex("\\s+"), " ").trim()}"
+        }
+        if (prompt.isBlank()) {
+            session.speak(delegationId, "Sorry, I did not catch that.")
+            return
+        }
+        val baselineAssistantIds = chat.messages.value
+            .filter { it.role == MessageRole.ASSISTANT }
+            .mapTo(mutableSetOf()) { it.id }
+        _uiState.update { it.copy(state = VoiceState.Thinking, transcribedText = prompt, responseText = "") }
+        val result = chat.sendGptLiveDelegation(
+            text = prompt,
+            voiceContext = voiceContext,
+            onTransportFailed = { reason -> session.speak(delegationId, "Sorry, I could not reach Hermes for that request.") },
+        )
+        if (result is VoiceMessageSubmissionResult.Rejected) {
+            session.speak(delegationId, "Sorry, I could not reach Hermes for that request.")
+            return
+        }
+        gptLiveReplyJob?.cancel()
+        gptLiveReplyJob = viewModelScope.launch {
+            var spokenChars = 0
+            var assistantId: String? = null
+            val startedAt = System.currentTimeMillis()
+            while (isActive && gptLiveSession === session && System.currentTimeMillis() - startedAt < 5 * 60_000L) {
+                val candidate = chat.messages.value.lastOrNull {
+                    it.role == MessageRole.ASSISTANT && it.id !in baselineAssistantIds
+                }
+                if (candidate != null) {
+                    assistantId = candidate.id
+                    val clean = candidate.content.replace(Regex("\\s+"), " ").trim()
+                    // Feed complete sentences while Hermes is streaming, then the tail on settle.
+                    if (chat.isStreaming.value) {
+                        val boundary = clean.lastIndexOf(". ")
+                        val cut = if (boundary >= spokenChars) boundary + 1 else spokenChars
+                        if (cut > spokenChars) {
+                            session.speak(delegationId, clean.substring(spokenChars, cut))
+                            spokenChars = cut
+                        }
+                    } else if (clean.length > spokenChars) {
+                        session.speak(delegationId, clean.substring(spokenChars))
+                        spokenChars = clean.length
+                    }
+                    _uiState.update { it.copy(responseText = clean) }
+                }
+                if (assistantId != null && !chat.isStreaming.value) {
+                    _uiState.update { it.copy(state = VoiceState.Listening, outputAudioActive = false) }
+                    return@launch
+                }
+                delay(200L)
+            }
+            session.think(delegationId, "Hermes finished without a spoken result.")
+            _uiState.update { it.copy(state = VoiceState.Listening, outputAudioActive = false) }
+        }
+    }
+
+    private fun appendLiveCaption(existing: String?, delta: String): String {
+        val next = (existing.orEmpty() + delta).takeLast(1_200)
+        return next.ifBlank { existing.orEmpty() }
+    }
+
+    private fun closeGptLiveSession() {
+        gptLiveStartJob?.cancel()
+        gptLiveStartJob = null
+        gptLiveReplyJob?.cancel()
+        gptLiveReplyJob = null
+        gptLiveStarting = false
+        runCatching { gptLiveSession?.close() }
+        gptLiveSession = null
     }
 
     /**
@@ -1951,6 +2147,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // or as a proactive notification. Cancelling here both killed the task
         // and let the relay's run-cancelled confirm overwrite an already-
         // delivered answer with "Cancelled." in the chat transcript.
+        closeGptLiveSession()
         val detachedRun = synchronized(realtimeSessionStateLock) {
             // Capture run ownership in the same critical section that retires
             // this session. A late promotion/cancellation callback must land
@@ -2067,6 +2264,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startListening(requireContinuousLoop: Boolean) {
+        // GPT-Live owns the microphone continuously. The ordinary recorder must
+        // never contend with WebRTC while a Live session is active/starting.
+        if (gptLiveSession != null || gptLiveStarting) return
         // A direct mic tap starts a normal capture. Only the recorder opened by
         // onBargeInDetected may carry response-interruption command context.
         responseInterruptedForVoiceCommand = false
@@ -2185,6 +2385,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopListening() {
+        // Full-duplex GPT-Live has no recorder-owned turn boundary. A tap while
+        // it is listening is a nudge to answer now, not a request to stop a
+        // VoiceRecorder that does not own the microphone.
+        gptLiveSession?.let {
+            it.instruct("The user has finished speaking. Respond now to what they said.")
+            return
+        }
         if (cancelPendingListeningStart()) return
         val rec = recorder ?: return
         if (!rec.isRecording()) {

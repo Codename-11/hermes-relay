@@ -4433,6 +4433,27 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `voice live delegation carries surface and bounded spoken context`() {
+        val r = Recorder()
+        client.sendTurn(
+            sessionId = null,
+            text = "check whether the garage is open",
+            newSessionTitle = null,
+            callbacks = r.callbacks,
+            clientSurface = "voice-live",
+            voiceContext = "Voice assistant: Sure.\nUser: Is the garage open?",
+            onPreflightFailure = { r.preflightFailures += it },
+        )
+
+        val submit = harness.awaitRpc("prompt.submit")
+        assertEquals("voice-live", (submit["surface"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals(
+            "Voice assistant: Sure.\nUser: Is the garage open?",
+            (submit["voice_context"] as? JsonPrimitive)?.contentOrNull,
+        )
+    }
+
+    @Test
     fun `lazy fresh session waits for authoritative ready edge before submit`() {
         harness.createdSessionLazy = true
         val r = Recorder()

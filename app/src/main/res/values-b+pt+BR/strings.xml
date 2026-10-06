@@ -71,6 +71,8 @@
     <!-- Chat input bar -->
     <string name="chat_input_live_voice_hint">Conversa por voz ao vivo</string>
     <string name="chat_input_add_attachment">Adicionar anexo</string>
+    <string name="chat_input_sheet_model">Modelo</string>
+    <string name="chat_input_sheet_reasoning">Raciocínio</string>
     <string name="chat_input_browse_commands">Explorar comandos</string>
     <string name="chat_input_add_attachment_hold">Adicionar anexo; mantenha pressionado para ver os comandos</string>
     <string name="chat_input_photos">Fotos</string>

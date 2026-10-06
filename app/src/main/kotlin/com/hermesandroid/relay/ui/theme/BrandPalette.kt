@@ -198,7 +198,8 @@ fun BrandPalette.withAccent(accentHex: String?): BrandPalette {
 /**
  * Derive a complete Material 3 [ColorScheme] from the palette. Dark and light
  * palettes use distinct mappings; the "text on a deep accent chip" slots use
- * explicit on-colors so they stay readable regardless of mode.
+ * explicit on-colors so they stay readable regardless of mode. Container
+ * fills are opaque so nested surfaces cannot change their color or contrast.
  */
 fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
     darkColorScheme(
@@ -212,7 +213,7 @@ fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
         onSecondaryContainer = paper,
         tertiary = cyan,
         onTertiary = readableContentColor(cyan),
-        tertiaryContainer = purple.copy(alpha = 0.42f),
+        tertiaryContainer = purple.copy(alpha = 0.42f).compositeOver(background),
         onTertiaryContainer = paper,
         background = background,
         onBackground = ink,
@@ -227,7 +228,7 @@ fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
         surfaceContainerHighest = navy3,
         error = danger,
         onError = readableContentColor(danger),
-        errorContainer = danger.copy(alpha = 0.18f),
+        errorContainer = danger.copy(alpha = 0.18f).compositeOver(background),
         onErrorContainer = paper,
         outline = lineStrong,
         outlineVariant = line,
@@ -239,15 +240,15 @@ fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
     lightColorScheme(
         primary = electric,
         onPrimary = readableContentColor(electric),
-        primaryContainer = relay.copy(alpha = 0.22f),
+        primaryContainer = renderedPrimaryContainer,
         onPrimaryContainer = readableContentColor(renderedPrimaryContainer),
         secondary = purple,
         onSecondary = readableContentColor(purple),
-        secondaryContainer = purple.copy(alpha = 0.16f),
+        secondaryContainer = renderedSecondaryContainer,
         onSecondaryContainer = readableContentColor(renderedSecondaryContainer),
         tertiary = cyan,
         onTertiary = readableContentColor(cyan),
-        tertiaryContainer = cyan.copy(alpha = 0.16f),
+        tertiaryContainer = renderedTertiaryContainer,
         onTertiaryContainer = readableContentColor(renderedTertiaryContainer),
         background = background,
         onBackground = ink,
@@ -262,7 +263,7 @@ fun BrandPalette.toColorScheme(): ColorScheme = if (isDark) {
         surfaceContainerHighest = navy3,
         error = danger,
         onError = Color.White,
-        errorContainer = danger.copy(alpha = 0.14f),
+        errorContainer = danger.copy(alpha = 0.14f).compositeOver(background),
         onErrorContainer = danger.darken(0.42f),
         outline = dim,
         outlineVariant = line,

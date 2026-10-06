@@ -4,6 +4,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import com.hermesandroid.relay.ui.theme.LayoutStyle
+import androidx.compose.animation.SizeTransform
+import com.hermesandroid.relay.ui.theme.ExpressiveMotion
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.AnimatedContent
+import com.hermesandroid.relay.ui.theme.LocalLayoutStyle
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -286,13 +293,26 @@ fun AppearanceSettingsScreen(
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            Text(
-                text = stringResource(R.string.appearance_intro),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            val selectedLayout = LayoutStyle.fromId(layoutStyleId)
+            if (selectedLayout == LayoutStyle.CLASSIC) {
+                Text(
+                    text = stringResource(R.string.appearance_intro),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            AppearanceLivePreview(
+                palette = previewPalette,
+                shapeScale = appearanceShapeScale(appliedShape),
+                layoutStyle = selectedLayout,
             )
 
-            AppearanceLivePreview(previewPalette, appearanceShapeScale(appliedShape))
+            // Layout is the biggest visual choice, so it leads.
+            AppearanceLayoutControl(
+                selected = selectedLayout,
+                onSelected = { connectionViewModel.setLayoutStyle(it.id) },
+            )
 
             // Preset-first gallery, matching the live preview above.
             Text(
@@ -393,11 +413,6 @@ fun AppearanceSettingsScreen(
                     }
                 }
             }
-
-            AppearanceLayoutControl(
-                selected = LayoutStyle.fromId(layoutStyleId),
-                onSelected = { connectionViewModel.setLayoutStyle(it.id) },
-            )
 
             // Progressive disclosure: theme, mode, accent, and layout cover the
             // common choices; language, type, motion, background, and pets sit
@@ -1347,35 +1362,16 @@ private fun AppearanceLayoutControl(
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.primary,
         )
-        Surface(
-            modifier = Modifier.fillMaxWidth().height(40.dp),
-            shape = appearanceRoundedCornerShape(22.dp),
-            color = Color.Transparent,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                LayoutStyle.entries.forEachIndexed { index, style ->
-                    if (index > 0) {
-                        VerticalDivider(Modifier.fillMaxHeight().width(1.dp))
-                    }
-                    Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .fillMaxHeight()
-                            .background(
-                                if (style == selected) MaterialTheme.colorScheme.surfaceContainerHigh
-                                else Color.Transparent,
-                            )
-                            .clickable { onSelected(style) },
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (style == selected) {
-                            Icon(Icons.Filled.Check, null, Modifier.size(15.dp))
-                            Spacer(Modifier.width(5.dp))
-                        }
-                        Text(labels.getValue(style), style = MaterialTheme.typography.labelLarge)
-                    }
+        // Clean leads: it is the default and the recommended layout.
+        val options = listOf(LayoutStyle.CLEAN, LayoutStyle.CLASSIC)
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            options.forEachIndexed { index, style ->
+                SegmentedButton(
+                    selected = style == selected,
+                    onClick = { onSelected(style) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                ) {
+                    Text(labels.getValue(style), style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -1610,13 +1606,99 @@ internal fun AppearanceLivePreview(
     palette: BrandPalette,
     shapeScale: AppearanceShapeScale,
     restricted: Boolean = false,
+    layoutStyle: LayoutStyle = LocalLayoutStyle.current,
 ) {
     CompositionLocalProvider(
         LocalBrand provides palette,
         LocalAppearanceShapeScale provides shapeScale,
+        LocalLayoutStyle provides layoutStyle,
     ) {
         MaterialTheme(colorScheme = palette.toColorScheme(), shapes = shapeScale.asMaterialShapes()) {
-            AppearanceLivePreviewContent(restricted = restricted)
+            AnimatedContent(
+                targetState = layoutStyle,
+                transitionSpec = {
+                    fadeIn(ExpressiveMotion.defaultEffects()) togetherWith
+                        fadeOut(ExpressiveMotion.fastEffects()) using
+                        SizeTransform { _, _ -> ExpressiveMotion.defaultSpatial() }
+                },
+                label = "appearancePreviewLayout",
+            ) { style ->
+                if (style == LayoutStyle.CLEAN) {
+                    AppearanceCleanPreviewContent()
+                } else {
+                    AppearanceLivePreviewContent(restricted = restricted)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Clean layout sample: a solid user bubble, the reply as open prose, and the
+ * borderless pill composer. No sender row, metadata line, or route pill, so
+ * the preview matches what Clean actually shows.
+ */
+@Composable
+private fun AppearanceCleanPreviewContent() {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                Text(
+                    text = stringResource(R.string.appearance_preview_user_message),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .fillMaxWidth(0.78f)
+                        .clip(appearanceRoundedCornerShape(20.dp))
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                )
+            }
+            Text(
+                text = stringResource(R.string.appearance_preview_agent_message),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Surface(
+                shape = appearanceRoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Icon(Icons.Filled.Add, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        stringResource(R.string.appearance_preview_message_placeholder),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.secondaryContainer),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.Filled.GraphicEq,
+                            null,
+                            Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
+                }
+            }
         }
     }
 }

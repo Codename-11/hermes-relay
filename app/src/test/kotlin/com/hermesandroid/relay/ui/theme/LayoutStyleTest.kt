@@ -10,26 +10,26 @@ import org.junit.Test
 
 class LayoutStyleTest {
     @Test
-    fun `unknown or missing ids fall back to classic`() {
-        assertEquals(LayoutStyle.CLASSIC, LayoutStyle.fromId(null))
-        assertEquals(LayoutStyle.CLASSIC, LayoutStyle.fromId("compact"))
-        assertEquals(LayoutStyle.CLEAN, LayoutStyle.fromId("clean"))
+    fun `unknown or missing ids fall back to clean`() {
+        assertEquals(LayoutStyle.CLEAN, LayoutStyle.fromId(null))
+        assertEquals(LayoutStyle.CLEAN, LayoutStyle.fromId("compact"))
+        assertEquals(LayoutStyle.CLASSIC, LayoutStyle.fromId("classic"))
     }
 
     @Test
     fun `persisted appearance decodes the layout style`() {
         val missing = AppearancePreferences.decode(mutablePreferencesOf())
-        assertEquals(LayoutStyle.CLASSIC.id, missing.layoutStyleId)
+        assertEquals(LayoutStyle.CLEAN.id, missing.layoutStyleId)
 
-        val clean = AppearancePreferences.decode(
-            mutablePreferencesOf(AppearancePreferences.layoutStyleKey to "clean"),
+        val classic = AppearancePreferences.decode(
+            mutablePreferencesOf(AppearancePreferences.layoutStyleKey to "classic"),
         )
-        assertEquals(LayoutStyle.CLEAN.id, clean.layoutStyleId)
+        assertEquals(LayoutStyle.CLASSIC.id, classic.layoutStyleId)
 
         val invalid = AppearancePreferences.decode(
             mutablePreferencesOf(AppearancePreferences.layoutStyleKey to "dense"),
         )
-        assertEquals(LayoutStyle.CLASSIC.id, invalid.layoutStyleId)
+        assertEquals(LayoutStyle.CLEAN.id, invalid.layoutStyleId)
     }
 
     @Test

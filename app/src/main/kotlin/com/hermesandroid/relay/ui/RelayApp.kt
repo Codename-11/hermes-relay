@@ -397,14 +397,16 @@ internal fun compactFooterModelLabel(model: String): String =
 
 /**
  * Clean layout keeps the footer status strip out of the way while the
- * connection is healthy; it reappears whenever the route is offline or
- * reconnecting. Classic always shows it.
+ * connection is healthy; it reappears while the route is reconnecting or a
+ * real connection is offline. Demo mode has no connection to report, and the
+ * chat header already says when chat is offline. Classic always shows it.
  */
 internal fun shouldShowStatusStrip(
     layoutStyle: LayoutStyle,
     offline: Boolean,
     reconnecting: Boolean,
-): Boolean = layoutStyle == LayoutStyle.CLASSIC || offline || reconnecting
+    demoMode: Boolean = false,
+): Boolean = layoutStyle == LayoutStyle.CLASSIC || reconnecting || (offline && !demoMode)
 
 /**
  * Conversation voice remains part of chat, so its persistent connection
@@ -2204,6 +2206,7 @@ fun RelayApp() {
                         layoutStyle = LayoutStyle.fromId(appearance.layoutStyleId),
                         offline = transportStatus.tier == ChatTransportTier.Offline,
                         reconnecting = connectionReconnecting,
+                        demoMode = isDemoMode,
                     )) RelayStatusStrip(
                         leadingBadge = {
                             ChatTransportStatusBadge(

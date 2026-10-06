@@ -82,6 +82,36 @@ class SessionDrawerTest {
     }
 
     @Test
+    fun `clean drawer folds secondary tools into one overflow`() {
+        var newChats = 0
+        var botModeOpens = 0
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark", layoutStyleId = "clean") {
+                SessionDrawerContent(
+                    sessions = listOf(ChatSession("session-1", "First chat", null, lastActivityAt = 1_000L)),
+                    currentSessionId = null,
+                    isOpen = true,
+                    autoTitlesSupported = false,
+                    onOpenBotMode = { botModeOpens++ },
+                    onNewChat = { newChats++ },
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onRoot().captureRoboImage("build/ui-regression/session-drawer-clean.png")
+        compose.onNodeWithText("Customize sessions").assertDoesNotExist()
+        compose.onNodeWithText("Bot Mode").assertDoesNotExist()
+        compose.onNodeWithContentDescription("New Chat").performClick()
+        assertEquals(1, newChats)
+        compose.onNodeWithContentDescription("More actions").performClick()
+        compose.onNodeWithText("Bot Mode").performClick()
+        assertEquals(1, botModeOpens)
+    }
+
+    @Test
     fun `pinned sidebar keeps its hide control at large text`() {
         compose.setContent {
             HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
