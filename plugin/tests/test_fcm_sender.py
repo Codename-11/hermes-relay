@@ -14,6 +14,7 @@ from plugin.relay.fcm_sender import (
     fcm_enabled,
     load_service_account_from_env,
     send_wake,
+    truncate_preview,
 )
 
 
@@ -23,7 +24,7 @@ class FcmSenderUnitTests(unittest.TestCase):
             "type": "service_account",
             "project_id": "demo",
             "client_email": "a@b.iam.gserviceaccount.com",
-            "private_key": "-----BEGIN PRIVATE KEY-----\nX\n-----END PRIVATE KEY-----\n",
+            "private_key": "[REDACTED PRIVATE KEY]\n",
         }
         env = {"RELAY_FCM_SERVICE_ACCOUNT_JSON": json.dumps(sa)}
         loaded = load_service_account_from_env(env)
@@ -71,6 +72,26 @@ class FcmSenderUnitTests(unittest.TestCase):
         self.assertEqual(body["android"]["priority"], "HIGH")
         self.assertNotIn("notification", body)
 
+    def test_build_wake_message_includes_preview(self) -> None:
+        msg = build_wake_message(
+            device_token="tok",
+            message_id="m1",
+            title="Hi",
+            preview="  hello   world  " + ("x" * 200),
+        )
+        data = msg["message"]["data"]
+        self.assertEqual(data["type"], "hermes_wake")
+        self.assertIn("preview", data)
+        self.assertTrue(data["preview"].startswith("hello world"))
+        self.assertLessEqual(len(data["preview"]), 160)
+        self.assertTrue(data["preview"].endswith("…"))
+        self.assertEqual(truncate_preview(""), "")
+        self.assertEqual(truncate_preview("  a  b "), "a b")
+
+    def test_build_wake_message_omits_empty_preview(self) -> None:
+        msg = build_wake_message(device_token="tok", message_id="m1", preview="   ")
+        self.assertNotIn("preview", msg["message"]["data"])
+
     def test_token_store_roundtrip(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             store = FcmTokenStore(Path(td) / "tokens.json")
@@ -79,6 +100,71 @@ class FcmSenderUnitTests(unittest.TestCase):
             self.assertEqual(store2.tokens(), ["abc"])
             store2.remove("dev1")
             self.assertEqual(store2.tokens(), [])
+
+    def test_token_store_include_preview_default(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            store = FcmTokenStore(Path(td) / "tokens.json")
+            store.upsert(device_id="dev1", token="abc", project_id="p")
+            regs = store.registrations()
+            self.assertEqual(len(regs), 1)
+            self.assertTrue(regs[0]["include_preview"])
+            store.upsert(
+                device_id="dev1",
+                token="abc",
+                project_id="p",
+                include_preview=False,
+            )
+            self.assertFalse(store.registrations()[0]["include_preview"])
+
+
+    def test_load_sa_from_default_path(self) -> None:
+        sa = {
+            "project_id": "p",
+            "client_email": "c@x",
+            "private_key": "k",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            dest = home / "secrets" / "fcm-sa.json"
+            dest.parent.mkdir(parents=True)
+            dest.write_text(json.dumps(sa), encoding="utf-8")
+            loaded = load_service_account_from_env({}, home=home)
+        assert loaded is not None
+        self.assertEqual(loaded["project_id"], "p")
+
+    def test_install_and_status(self) -> None:
+        from plugin.relay.fcm_sender import (
+            clear_service_account,
+            fcm_host_status,
+            install_service_account,
+            set_fcm_enabled_flag,
+        )
+
+        sa = {
+            "project_id": "demo",
+            "client_email": "a@b.iam.gserviceaccount.com",
+            "private_key": "-----BEGIN PRIVATE KEY-----\nK\n-----END PRIVATE KEY-----\n",
+        }
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            env: dict = {}
+            status = install_service_account(sa, home=home, env=env)
+            self.assertTrue(status["configured"])
+            self.assertTrue(status["enabled"])
+            self.assertEqual(status["project_id"], "demo")
+            dest = home / "secrets" / "fcm-sa.json"
+            self.assertTrue(dest.is_file())
+            env_text = (home / ".env").read_text(encoding="utf-8")
+            self.assertIn("RELAY_FCM_SERVICE_ACCOUNT_JSON=", env_text)
+            self.assertIn("RELAY_FCM_ENABLED=1", env_text)
+            # default path works even with empty env override of path key
+            env2 = {"RELAY_FCM_ENABLED": "1"}
+            self.assertTrue(load_service_account_from_env(env2, home=home) is not None)
+            off = set_fcm_enabled_flag(False, home=home, env=env)
+            self.assertFalse(off["enabled"])
+            cleared = clear_service_account(home=home, env=env)
+            self.assertFalse(cleared["configured"])
+            self.assertFalse(dest.is_file())
 
     def test_send_wake_uses_http_v1(self) -> None:
         sa = {
@@ -112,12 +198,14 @@ class FcmSenderUnitTests(unittest.TestCase):
             service_account=sa,
             access_token="ya29.test",
             opener=fake_open,
+            preview="agent says hello",
         )
         self.assertTrue(result.ok)
         self.assertIn("demo-proj", captured["url"])
         self.assertTrue(captured["auth"].startswith("Bearer ya29"))
         payload = json.loads(captured["body"].decode("utf-8"))
         self.assertEqual(payload["message"]["token"], "device-token")
+        self.assertEqual(payload["message"]["data"]["preview"], "agent says hello")
 
 
 if __name__ == "__main__":

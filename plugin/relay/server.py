@@ -321,24 +321,30 @@ class RelayServer:
         self,
         message_id: str,
         title: str | None = None,
+        preview: str | None = None,
     ) -> None:
-        """Send high-priority FCM data wakes to registered device tokens."""
+        """Send high-priority FCM data wakes to registered device tokens.
+
+        Message ``preview`` is included by default. Devices that registered with
+        ``include_preview: false`` get a wake without preview on the wire.
+        """
         if not fcm_enabled():
             return
         sa = load_service_account_from_env()
         if sa is None:
             return
-        tokens = self.fcm_tokens.tokens()
-        if not tokens:
+        regs = self.fcm_tokens.registrations()
+        if not regs:
             return
 
-        async def _one(token: str) -> None:
+        async def _one(token: str, include_preview: bool) -> None:
             result = await asyncio.to_thread(
                 send_wake,
                 device_token=token,
                 message_id=message_id,
                 service_account=sa,
                 title=title,
+                preview=preview if include_preview else None,
             )
             if not result.ok:
                 logger.info(
@@ -348,7 +354,13 @@ class RelayServer:
                     result.error or result.body[:200],
                 )
 
-        await asyncio.gather(*[_one(t) for t in tokens], return_exceptions=True)
+        await asyncio.gather(
+            *[
+                _one(str(r["token"]), bool(r.get("include_preview", True)))
+                for r in regs
+            ],
+            return_exceptions=True,
+        )
 
     async def close(self) -> None:
         """Shut down all channel handlers and close client connections."""
@@ -4137,12 +4149,18 @@ async def handle_push_token(request: web.Request) -> web.Response:
         platform = "android"
     if not isinstance(project_id, str):
         project_id = ""
+    # Default True: Mac puts a short message preview on the FCM data wake.
+    # False = hide content (no preview field on the wire).
+    include_preview = payload.get("include_preview", True)
+    if not isinstance(include_preview, bool):
+        include_preview = True
     try:
         server.fcm_tokens.upsert(
             device_id=device_id,
             token=token.strip(),
             platform=platform.strip() or "android",
             project_id=project_id.strip(),
+            include_preview=include_preview,
         )
     except ValueError as exc:
         return web.json_response({"ok": False, "error": str(exc)}, status=400)

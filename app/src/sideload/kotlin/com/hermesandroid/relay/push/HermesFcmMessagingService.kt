@@ -18,6 +18,7 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.hermesandroid.relay.MainActivity
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.hideNotificationContentBlocking
 import com.hermesandroid.relay.data.setFcmLastToken
 import com.hermesandroid.relay.network.upstream.GatewayKeepAliveService
 import com.hermesandroid.relay.network.upstream.ActiveTurnKeepAliveRegistry
@@ -28,7 +29,8 @@ import kotlinx.coroutines.launch
 
 /**
  * High-priority data messages wake the process so proactive WSS can reconnect
- * and drain the 24h buffer. Full message text is NOT carried on FCM.
+ * and drain the 24h buffer. Optional short ``preview`` may be shown (default);
+ * hide-content preference keeps the generic wake body.
  *
  * Uses the default [FirebaseApp] initialized by [SideloadFcmPushController].
  */
@@ -53,6 +55,7 @@ class HermesFcmMessagingService : FirebaseMessagingService() {
         val action = data["action"].orEmpty()
         val messageId = data["message_id"].orEmpty()
         val title = data["title"]?.takeIf { it.isNotBlank() }
+        val preview = data["preview"]?.trim().orEmpty()
         Log.i(
             TAG,
             "onMessageReceived type=$type action=$action message_id=$messageId keys=${data.keys}",
@@ -64,7 +67,7 @@ class HermesFcmMessagingService : FirebaseMessagingService() {
                 data.isNotEmpty()
         if (!isWake) return
 
-        postWakeNotification(title = title, messageId = messageId)
+        postWakeNotification(title = title, messageId = messageId, preview = preview)
         // Bring UI up so ConnectionViewModel reconnects + proactive.subscribe.
         kickMainActivity()
         // Best-effort keep-alive nudge when the user already opted into persistent
@@ -99,7 +102,7 @@ class HermesFcmMessagingService : FirebaseMessagingService() {
     }
 
     @SuppressLint("MissingPermission", "NotificationPermission")
-    private fun postWakeNotification(title: String?, messageId: String) {
+    private fun postWakeNotification(title: String?, messageId: String, preview: String = "") {
         if (!hasPostNotificationsPermission()) {
             Log.i(TAG, "POST_NOTIFICATIONS not granted — skip wake notification")
             return
@@ -119,16 +122,26 @@ class HermesFcmMessagingService : FirebaseMessagingService() {
         )
         val resolvedTitle = title?.takeIf { it.isNotBlank() }
             ?: getString(R.string.proactive_fcm_wake_title)
-        val body = getString(R.string.proactive_fcm_wake_body)
+        val hideContent = hideNotificationContentBlocking()
+        val genericBody = getString(R.string.proactive_fcm_wake_body)
+        val body = if (hideContent || preview.isBlank()) genericBody else preview
+        val publicVersion = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(getString(R.string.proactive_fcm_wake_title))
+            .setContentText(genericBody)
+            .build()
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(resolvedTitle)
             .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(pending)
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setDefaults(NotificationCompat.DEFAULT_ALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
             .build()
         runCatching {
             NotificationManagerCompat.from(this).notify(NOTIFICATION_ID_BASE + (requestCode % 1000), notification)

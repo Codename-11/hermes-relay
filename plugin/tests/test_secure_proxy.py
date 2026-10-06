@@ -62,17 +62,30 @@ class SecureProxyRouteTests(AioHTTPTestCase):
             "/dashboard",
         )
 
-        for path in (
-            "/relay/voice/config",
-            "/relay/desktop/_ping", "/relay/pairing/register", "/health",
-        ):
-            response = await self.client.get(path)
-            self.assertEqual(response.status, 404, path)
+        # Bare non-namespaced paths stay closed.
+        self.assertEqual((await self.client.get("/health")).status, 404)
+
+        # /relay/* HTTP (except health/ws) reverse-proxies to loopback relay.
+        from aiohttp import ClientConnectionError, web as aiohttp_web
+        with patch(
+            "plugin.relay.secure_proxy._proxy_http",
+            new=AsyncMock(return_value=aiohttp_web.Response(status=401, text="auth")),
+        ) as mock_relay_http:
+            for path in (
+                "/relay/sessions",
+                "/relay/voice/config",
+                "/relay/push/token",
+                "/relay/phone/threads",
+                "/relay/pairing/register",
+            ):
+                response = await self.client.get(path) if path != "/relay/push/token" else await self.client.post(path, json={})
+                self.assertEqual(response.status, 401, path)
+            self.assertGreaterEqual(mock_relay_http.await_count, 5)
 
         # Deterministic failures; never depend on a developer's local services.
-        from aiohttp import ClientConnectionError
         with patch("plugin.relay.secure_proxy._proxy_http", new=AsyncMock(side_effect=ClientConnectionError)):
             self.assertEqual((await self.client.get("/api/health")).status, 502)
+            self.assertEqual((await self.client.post("/relay/push/token", json={})).status, 502)
         self.assertEqual((await self.client.get("/dashboard")).status, 503)
         self.assertEqual((await self.client.get("/dashboard/")).status, 503)
 

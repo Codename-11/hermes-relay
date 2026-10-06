@@ -1108,6 +1108,7 @@ class RelayHttpClient(
         token: String,
         platform: String = "android",
         projectId: String = "",
+        includePreview: Boolean = true,
     ): Result<Unit> = withContext(Dispatchers.IO) {
         val relayUrl = relayUrlProvider()?.trim().orEmpty()
         if (relayUrl.isEmpty()) {
@@ -1132,6 +1133,9 @@ class RelayHttpClient(
             append(",\"platform\":").append(jsonString(platform))
             if (projectId.isNotBlank()) {
                 append(",\"project_id\":").append(jsonString(projectId))
+            }
+            if (token.isNotBlank()) {
+                append(",\"include_preview\":").append(if (includePreview) "true" else "false")
             }
             append('}')
         }

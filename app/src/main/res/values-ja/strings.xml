@@ -1475,7 +1475,7 @@
     <string name="proactive_fcm_clear">FCM 設定をクリア</string>
     <string name="proactive_fcm_token_status">デバイストークン: %1$s</string>
     <string name="proactive_fcm_not_paired">ホストにデバイストークンを登録するには Relay をペアリングしてください。</string>
-    <string name="proactive_fcm_mac_note">Mac では RELAY_FCM_SERVICE_ACCOUNT_JSON に Firebase サービスアカウントのパス（または JSON）を設定します。サービスアカウントをアプリに入れないでください。</string>
+    <string name="proactive_fcm_mac_note">この Hermes ホスト: Dashboard → Hermes-Relay → Settings → Push wake で Firebase Admin サービスアカウント JSON を選択（または python -m plugin.relay.fcm_sender install ./sa.json）。サービスアカウントをアプリに入れないでください。端末にはクライアント google-services.json のみ。</string>
     <string name="proactive_fcm_wake_title">Hermes</string>
     <string name="proactive_fcm_wake_body">Hermes にメッセージがあります — 開いて再接続し配信します。</string>
     <string name="proactive_fcm_wake_channel">プッシュ起床</string>
