@@ -105,6 +105,8 @@
     <!-- Chat input bar -->
     <string name="chat_input_live_voice_hint">Live voice conversation</string>
     <string name="chat_input_add_attachment">Add attachment</string>
+    <string name="chat_input_sheet_model">Model</string>
+    <string name="chat_input_sheet_reasoning">Reasoning</string>
     <string name="chat_input_browse_commands">Browse commands</string>
     <string name="chat_input_add_attachment_hold">Add attachment; hold for commands</string>
     <string name="chat_input_photos">Photos</string>

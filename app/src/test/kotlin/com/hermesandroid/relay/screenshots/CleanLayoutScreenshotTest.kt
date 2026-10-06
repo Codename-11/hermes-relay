@@ -21,6 +21,10 @@ import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.ui.components.ChatInputBar
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
+import com.hermesandroid.relay.ui.components.ChatInputPickerOption
+import com.hermesandroid.relay.ui.components.CHAT_INPUT_ATTACH_TEST_TAG
+import androidx.compose.ui.test.onNodeWithTag
+import org.junit.Assert.assertEquals
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.screens.AppearanceLivePreview
@@ -144,6 +148,62 @@ class CleanLayoutScreenshotTest {
         compose.onNodeWithText(assistant.content).performClick()
         compose.onAllNodesWithText("Demo").assertCountEquals(1)
         compose.onRoot().captureRoboImage("build/ui-regression/clean-chat-revealed.png")
+    }
+
+    @Test
+    fun `clean composer keeps pickers in the plus sheet`() {
+        var modelOpened = 0
+        var commandsOpened = 0
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "clean", themePreference = "light", layoutStyleId = LayoutStyle.CLEAN.id) {
+                Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                    ChatInputBar(
+                        value = "",
+                        onValueChange = {},
+                        placeholder = "Message…",
+                        trailing = ChatInputTrailing.VOICE,
+                        onSend = {},
+                        onVoice = {},
+                        onStop = {},
+                        onAttachPhotos = {},
+                        onAttachFiles = {},
+                        onAttachCamera = {},
+                        onPasteImage = {},
+                        onLongPressAttach = {},
+                        charLimit = 4_000,
+                        caption = null,
+                        voiceReady = true,
+                        showVoiceHint = false,
+                        onVoiceHintShown = {},
+                        isDarkTheme = false,
+                        modelControl = ChatInputPickerControl(
+                            value = "gpt-5.6-sol",
+                            contentDescription = "Model",
+                            options = listOf(ChatInputPickerOption(label = "gpt-5.6-sol", value = "gpt-5.6-sol", selected = true)),
+                        ),
+                        onModelPickerClick = { modelOpened++ },
+                        effortControl = ChatInputPickerControl(
+                            value = "High",
+                            contentDescription = "Reasoning",
+                            options = listOf(ChatInputPickerOption(label = "High", value = "high", selected = true)),
+                        ),
+                        onEffortPickerClick = {},
+                        onCommands = { commandsOpened++ },
+                    )
+                }
+            }
+        }
+        // The bar itself carries no picker labels.
+        compose.onAllNodesWithText("gpt-5.6-sol").assertCountEquals(0)
+        compose.onRoot().captureRoboImage("build/ui-regression/clean-composer-bar.png")
+        compose.onNodeWithTag(CHAT_INPUT_ATTACH_TEST_TAG).performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText("gpt-5.6-sol").assertExists()
+        compose.onNodeWithText("High").assertExists()
+        compose.onRoot().captureRoboImage("build/ui-regression/clean-composer-sheet.png")
+        compose.onNodeWithText("Model").performClick()
+        compose.waitForIdle()
+        assertEquals(1, modelOpened)
     }
 
     @Test

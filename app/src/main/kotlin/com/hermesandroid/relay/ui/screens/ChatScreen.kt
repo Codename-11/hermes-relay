@@ -4846,6 +4846,11 @@ fun ChatScreen(
                             supervisedPolicy.capabilities.attachmentCategories
                         )) pasteImageFromClipboard else ({ }),
                 onLongPressAttach = { if (!supervised) showCommandPalette = true },
+                onCommands = if (!supervised) {
+                    { showCommandPalette = true }
+                } else {
+                    null
+                },
                 modifier = Modifier
                     .align(Alignment.CenterHorizontally)
                     .then(

@@ -105,6 +105,8 @@ enum class ChatInputTrailing { SEND, VOICE, STOP, STEER, QUEUE }
 
 internal const val CHAT_INPUT_FIELD_TEST_TAG = "chat-input-field"
 
+const val CHAT_INPUT_ATTACH_TEST_TAG = "chat-input-attach"
+
 data class ChatInputPickerOption(
     val label: String,
     val value: String?,
@@ -204,6 +206,8 @@ fun ChatInputBar(
     busyAction: BusyMessageAction? = null,
     correctionAvailable: Boolean = true,
     onBusyActionChange: (BusyMessageAction) -> Unit = {},
+    /** Clean "+" sheet's Commands row; null hides it. */
+    onCommands: (() -> Unit)? = null,
 ) {
     val canSubmit = enabled && submitEnabled && trailing in setOf(
         ChatInputTrailing.SEND,
@@ -459,13 +463,33 @@ fun ChatInputBar(
                         // "+" tap opens the attach menu (Photos / Files / Camera /
                         // Paste image); long-press opens the command palette.
                         var attachMenuExpanded by remember { mutableStateOf(false) }
+                        // Clean: "+" opens one sheet with attach sources, model,
+                        // reasoning, and commands; Classic keeps the dropdown.
+                        var actionSheetOpen by remember { mutableStateOf(false) }
+                        if (actionSheetOpen) {
+                            ComposerActionSheet(
+                                onDismiss = { actionSheetOpen = false },
+                                onAttachCamera = onAttachCamera,
+                                onAttachPhotos = onAttachPhotos,
+                                onAttachFiles = onAttachFiles,
+                                onPasteImage = onPasteImage,
+                                modelControl = modelControl,
+                                onModelClick = onModelPickerClick,
+                                effortControl = effortControl,
+                                onEffortClick = onEffortPickerClick,
+                                onCommands = onCommands,
+                            )
+                        }
                         Box {
                             Box(
                                 modifier = Modifier
                                     .size(48.dp)
                                     .clip(CircleShape)
+                                    .testTag(CHAT_INPUT_ATTACH_TEST_TAG)
                                     .combinedClickable(
-                                        onClick = { attachMenuExpanded = true },
+                                        onClick = {
+                                            if (cleanComposer) actionSheetOpen = true else attachMenuExpanded = true
+                                        },
                                         onClickLabel = stringResource(R.string.chat_input_add_attachment),
                                         onLongClick = onLongPressAttach,
                                         onLongClickLabel = stringResource(R.string.chat_input_browse_commands),
@@ -693,9 +717,9 @@ fun ChatInputBar(
                     }
                     val showModelPicker = modelControl != null && (!cleanComposer || modelControl.isUsable)
                     val showEffortPicker = effortControl != null && (!cleanComposer || effortControl.isUsable)
-                    // Clean with no pickers to show collapses to one row, the
-                    // ChatGPT/Messages pill: attach, field, and one action.
-                    if (cleanComposer && !showModelPicker && !showEffortPicker) {
+                    // Clean is one row, the ChatGPT/Messages pill: attach,
+                    // field, and one action. Pickers live in the "+" sheet.
+                    if (cleanComposer) {
                         Row(
                             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                             verticalAlignment = Alignment.Bottom,

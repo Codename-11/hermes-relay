@@ -17,6 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Android uses the Clean layout by default; Classic remains available in Appearance.
 - Android Clean layout: a plain chat background, a header with the agent name and one new-chat action, a borderless pill composer with a filled send button, a chat list led by search, and no status strip in demo mode.
 - Android Appearance puts the layout choice first and previews the selected layout.
+- Android Clean composer is one row (+, message, send or voice); attachments, model, reasoning, and commands open from the + button.
 
 ### Fixed
 

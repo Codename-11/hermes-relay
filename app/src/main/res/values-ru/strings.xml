@@ -87,6 +87,8 @@
     <string name="chat_input_live_voice_hint">Голосовой разговор в реальном времени</string>
     <string name="input_live_voice">Живой голосовой разговор</string>
     <string name="chat_input_add_attachment">Добавить вложение</string>
+    <string name="chat_input_sheet_model">Модель</string>
+    <string name="chat_input_sheet_reasoning">Рассуждение</string>
     <string name="chat_input_browse_commands">Просмотреть команды</string>
     <string name="chat_input_add_attachment_hold">Добавить вложение; удерживайте для команд</string>
     <string name="chat_input_photos">Фото</string>

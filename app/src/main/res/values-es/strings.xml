@@ -70,6 +70,8 @@
     <string name="onboarding_finish">Finalizar configuración</string>
     <string name="chat_input_live_voice_hint">Conversación de voz en vivo</string>
     <string name="chat_input_add_attachment">Agregar archivo adjunto</string>
+    <string name="chat_input_sheet_model">Modelo</string>
+    <string name="chat_input_sheet_reasoning">Razonamiento</string>
     <string name="chat_input_browse_commands">Comandos de exploración</string>
     <string name="chat_input_add_attachment_hold">Agregar archivo adjunto; mantener presionado para recibir comandos</string>
     <string name="chat_input_photos">Fotos</string>
