@@ -189,6 +189,7 @@ class VoiceOverlayHost(context: Context) {
             onStartListening = guarded(session.onStartListening),
             onStopListening = guarded(session.onStopListening),
             onInterrupt = guarded(session.onInterrupt),
+            onStopSpeaking = guarded(session.onStopSpeaking),
             onPauseAutoMode = guarded(session.onPauseAutoMode),
             onReturnToHermes = guarded {
                 session.onReturnToHermes()
@@ -352,6 +353,7 @@ data class VoiceOverlaySession(
     val onStartListening: () -> Unit,
     val onStopListening: () -> Unit,
     val onInterrupt: () -> Unit,
+    val onStopSpeaking: () -> Unit = onInterrupt,
     val onPauseAutoMode: () -> Unit,
     val onReturnToHermes: () -> Unit,
     val onDismissOverlay: () -> Unit,
@@ -395,6 +397,7 @@ internal fun VoiceFloatingOverlayPill(
                     onExpand = { minimized = false },
                     onStartListening = session.onStartListening,
                     onStopListening = session.onStopListening,
+                    onStopSpeaking = session.onStopSpeaking,
                     onInterrupt = session.onInterrupt,
                     onPauseAutoMode = session.onPauseAutoMode,
                     onDragBy = onDragBy,
@@ -521,6 +524,7 @@ private fun VoiceOverlayHeader(
             uiState = uiState,
             onStartListening = session.onStartListening,
             onStopListening = session.onStopListening,
+            onStopSpeaking = session.onStopSpeaking,
             onInterrupt = session.onInterrupt,
             onPauseAutoMode = session.onPauseAutoMode,
             size = 50.dp,
@@ -761,16 +765,24 @@ internal fun VoiceFloatingOverlayBubble(
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
     onInterrupt: () -> Unit,
+    onStopSpeaking: () -> Unit = onInterrupt,
     onPauseAutoMode: () -> Unit,
     onDragBy: (Float, Float) -> Unit,
 ) {
     val isHot = uiState.state == VoiceState.Listening || uiState.state == VoiceState.Speaking
     val stateLabel = overlayBubbleStateLabel(uiState.state)
-    val tapAction = when (uiState.state) {
+    val tapAction = if (
+        uiState.interactionMode == InteractionMode.HoldToTalk &&
+        (uiState.state == VoiceState.Speaking ||
+            uiState.state == VoiceState.Transcribing ||
+            uiState.state == VoiceState.Thinking)
+    ) {
+        stringResource(R.string.voice_overlay_tap_action_idle)
+    } else when (uiState.state) {
         VoiceState.Idle, VoiceState.Error -> stringResource(R.string.voice_overlay_tap_action_idle)
         VoiceState.Listening -> stringResource(R.string.voice_overlay_tap_action_listening)
         VoiceState.Speaking ->
-            if (uiState.interactionMode == InteractionMode.Continuous) stringResource(R.string.voice_overlay_tap_action_pause) else stringResource(R.string.voice_overlay_tap_action_interrupt)
+            if (uiState.interactionMode == InteractionMode.Continuous) stringResource(R.string.voice_overlay_tap_action_pause) else stringResource(R.string.voice_overlay_tap_action_stop_speaking)
         VoiceState.Transcribing, VoiceState.Thinking ->
             if (uiState.interactionMode == InteractionMode.Continuous) stringResource(R.string.voice_overlay_tap_action_pause) else stringResource(R.string.voice_overlay_tap_action_interrupt)
     }
@@ -814,6 +826,7 @@ internal fun VoiceFloatingOverlayBubble(
                     uiState = uiState,
                     onStartListening = onStartListening,
                     onStopListening = onStopListening,
+                    onStopSpeaking = onStopSpeaking,
                     onInterrupt = onInterrupt,
                     onPauseAutoMode = onPauseAutoMode,
                 )
@@ -1019,6 +1032,7 @@ internal fun MicControlButton(
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
     onInterrupt: () -> Unit,
+    onStopSpeaking: () -> Unit = onInterrupt,
     onPauseAutoMode: () -> Unit,
     size: Dp = 44.dp,
 ) {
@@ -1026,7 +1040,14 @@ internal fun MicControlButton(
         uiState.state == VoiceState.Speaking ||
         uiState.state == VoiceState.Transcribing ||
         uiState.state == VoiceState.Thinking
-    val actionDescription = when (uiState.state) {
+    val actionDescription = if (
+        uiState.interactionMode == InteractionMode.HoldToTalk &&
+        (uiState.state == VoiceState.Speaking ||
+            uiState.state == VoiceState.Transcribing ||
+            uiState.state == VoiceState.Thinking)
+    ) {
+        stringResource(R.string.voice_overlay_tap_action_idle)
+    } else when (uiState.state) {
         VoiceState.Idle, VoiceState.Error -> stringResource(R.string.voice_overlay_tap_action_idle)
         VoiceState.Listening ->
             if (uiState.interactionMode == InteractionMode.Continuous) {
@@ -1034,7 +1055,13 @@ internal fun MicControlButton(
             } else {
                 stringResource(R.string.voice_overlay_tap_action_listening)
             }
-        VoiceState.Transcribing, VoiceState.Thinking, VoiceState.Speaking ->
+        VoiceState.Speaking ->
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                stringResource(R.string.voice_overlay_tap_action_pause)
+            } else {
+                stringResource(R.string.voice_overlay_tap_action_stop_speaking)
+            }
+        VoiceState.Transcribing, VoiceState.Thinking ->
             if (uiState.interactionMode == InteractionMode.Continuous) {
                 stringResource(R.string.voice_overlay_tap_action_pause)
             } else {
@@ -1065,6 +1092,7 @@ internal fun MicControlButton(
                 uiState = uiState,
                 onStartListening = onStartListening,
                 onStopListening = onStopListening,
+                onStopSpeaking = onStopSpeaking,
                 onInterrupt = onInterrupt,
                 onPauseAutoMode = onPauseAutoMode,
             )

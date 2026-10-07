@@ -141,6 +141,7 @@ fun VoiceModeOverlay(
     onMicTap: () -> Unit,
     onMicRelease: () -> Unit,
     onInterrupt: () -> Unit,
+    onStopSpeaking: () -> Unit = onInterrupt,
     onPauseAutoMode: () -> Unit = {},
     onDismiss: () -> Unit,
     // Navigates to the full Voice Settings screen from the overlay's gear
@@ -223,6 +224,7 @@ fun VoiceModeOverlay(
                 } catch (_: Exception) { /* ignore */ }
                 onMicRelease()
             },
+            onStopSpeaking = onStopSpeaking,
             onInterrupt = onInterrupt,
             onPauseAutoMode = onPauseAutoMode,
         )
@@ -312,6 +314,7 @@ fun VoiceModeOverlay(
                 onMicTap = onMicTap,
                 onMicRelease = onMicRelease,
                 onInterrupt = onInterrupt,
+                onStopSpeaking = onStopSpeaking,
                 onPauseAutoMode = onPauseAutoMode,
                 onOverlayRequest = onOverlayRequest,
                 systemOverlayAvailable = systemOverlayAvailable,
@@ -813,7 +816,13 @@ private fun VoiceMicButton(
             } else {
                 stringResource(R.string.voice_overlay_tap_action_listening)
             }
-        VoiceState.Transcribing, VoiceState.Thinking, VoiceState.Speaking ->
+        VoiceState.Speaking ->
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                stringResource(R.string.voice_overlay_tap_action_pause)
+            } else {
+                stringResource(R.string.voice_overlay_tap_action_stop_speaking)
+            }
+        VoiceState.Transcribing, VoiceState.Thinking ->
             if (uiState.interactionMode == InteractionMode.Continuous) {
                 stringResource(R.string.voice_overlay_tap_action_pause)
             } else {
@@ -835,9 +844,9 @@ private fun VoiceMicButton(
     // `colorScheme.error` role resolves to a soft pink (#F2B8B5) which reads
     // as "pale" rather than "STOP" on a circular mic button — the universal
     // "record/stop" language is a saturated red, so bypass the role and use
-    // Material Red 600. Speaking needs the same red because tapping it
-    // interrupts TTS; the old tertiary (green-ish) read as "playing" and
-    // users didn't realize they could stop the agent.
+    // Material Red 600. Speaking needs the same red because tapping it silences
+    // TTS; the old tertiary (green-ish) read as "playing" and users didn't
+    // realize they could stop the agent audio.
     val containerColor = when (uiState.state) {
         VoiceState.Listening -> Color(0xFFE53935)
         VoiceState.Speaking -> Color(0xFFE53935)
@@ -858,7 +867,15 @@ private fun VoiceMicButton(
     val gestureModifier = when (uiState.interactionMode) {
         InteractionMode.HoldToTalk -> Modifier.voiceHoldGesture(
             state = uiState.state,
-            inactiveActionLabel = micActionDescription,
+            inactiveActionLabel = if (
+                uiState.state == VoiceState.Speaking ||
+                uiState.state == VoiceState.Transcribing ||
+                uiState.state == VoiceState.Thinking
+            ) {
+                stringResource(R.string.voice_overlay_tap_action_idle)
+            } else {
+                micActionDescription
+            },
             activeActionLabel = stringResource(R.string.voice_overlay_tap_action_listening),
             onPress = onHoldPress,
             onRelease = onHoldRelease,
@@ -1048,6 +1065,7 @@ fun ConversationVoiceDock(
     onMicTap: () -> Unit,
     onMicRelease: () -> Unit,
     onInterrupt: () -> Unit,
+    onStopSpeaking: () -> Unit = onInterrupt,
     onPauseAutoMode: () -> Unit,
     onModeChange: (InteractionMode) -> Unit,
     onFocusRequest: () -> Unit,
@@ -1210,6 +1228,7 @@ fun ConversationVoiceDock(
                 onMicTap = onMicTap,
                 onMicRelease = onMicRelease,
                 onInterrupt = onInterrupt,
+                onStopSpeaking = onStopSpeaking,
                 onPauseAutoMode = onPauseAutoMode,
                 baseSize = 52,
                 iconSize = 24,
@@ -1288,6 +1307,7 @@ private fun VoiceSessionPill(
     onMicTap: () -> Unit,
     onMicRelease: () -> Unit,
     onInterrupt: () -> Unit,
+    onStopSpeaking: () -> Unit,
     onPauseAutoMode: () -> Unit,
     onOverlayRequest: () -> Unit,
     systemOverlayAvailable: Boolean,
@@ -1360,6 +1380,7 @@ private fun VoiceSessionPill(
                         onMicTap = onMicTap,
                         onMicRelease = onMicRelease,
                         onInterrupt = onInterrupt,
+                        onStopSpeaking = onStopSpeaking,
                         onPauseAutoMode = onPauseAutoMode,
                     )
                 }
@@ -1503,6 +1524,7 @@ private fun ConversationVoiceMicButton(
     onMicTap: () -> Unit,
     onMicRelease: () -> Unit,
     onInterrupt: () -> Unit,
+    onStopSpeaking: () -> Unit,
     onPauseAutoMode: () -> Unit,
     baseSize: Int = 40,
     iconSize: Int = 20,
@@ -1515,6 +1537,7 @@ private fun ConversationVoiceMicButton(
                 uiState = uiState,
                 onStartListening = onMicTap,
                 onStopListening = onMicRelease,
+                onStopSpeaking = onStopSpeaking,
                 onInterrupt = onInterrupt,
                 onPauseAutoMode = onPauseAutoMode,
             )
@@ -1540,6 +1563,7 @@ internal fun dispatchVoiceMicTap(
     uiState: VoiceUiState,
     onStartListening: () -> Unit,
     onStopListening: () -> Unit,
+    onStopSpeaking: () -> Unit,
     onInterrupt: () -> Unit,
     onPauseAutoMode: () -> Unit,
 ) {
@@ -1555,7 +1579,7 @@ internal fun dispatchVoiceMicTap(
             if (uiState.interactionMode == InteractionMode.Continuous) {
                 onPauseAutoMode()
             } else {
-                onInterrupt()
+                onStopSpeaking()
             }
         }
         VoiceState.Transcribing, VoiceState.Thinking -> {

@@ -1750,6 +1750,7 @@ fun ChatScreen(
                         onStartListening = { voiceViewModel.startListening() },
                         onStopListening = { voiceViewModel.stopListening() },
                         onInterrupt = { voiceViewModel.interruptSpeaking() },
+                        onStopSpeaking = { voiceViewModel.stopSpeakingPlayback() },
                         onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
                         onReturnToHermes = {
                             if (!openHermesFromOverlay(context)) voiceOverlayHost.exitVoiceSession()
@@ -4869,6 +4870,7 @@ fun ChatScreen(
                         onMicTap = { voiceViewModel.startListening() },
                         onMicRelease = { voiceViewModel.stopListening() },
                         onInterrupt = { voiceViewModel.interruptSpeaking() },
+                        onStopSpeaking = { voiceViewModel.stopSpeakingPlayback() },
                         onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
                         onModeChange = { voiceViewModel.setInteractionMode(it) },
                         onFocusRequest = {
@@ -5036,6 +5038,7 @@ fun ChatScreen(
                 onMicTap = { voiceViewModel.startListening() },
                 onMicRelease = { voiceViewModel.stopListening() },
                 onInterrupt = { voiceViewModel.interruptSpeaking() },
+                onStopSpeaking = { voiceViewModel.stopSpeakingPlayback() },
                 onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
                 onDismiss = { voiceViewModel.exitVoiceMode() },
                 onModeChange = { voiceViewModel.setInteractionMode(it) },
