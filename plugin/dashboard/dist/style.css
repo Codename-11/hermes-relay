@@ -1017,22 +1017,47 @@
 /* Pairing uses the host Dialog primitive; these rules only compose its body. */
 
 .hermes-relay-plugin.hr-pair-dialog {
-  width: min(72rem, calc(100vw - 2rem));
-  max-width: 72rem;
+  display: flex;
+  flex-direction: column;
+  width: min(64rem, calc(100vw - 2rem));
+  max-width: 64rem;
   max-height: min(90vh, 52rem);
-  overflow-x: hidden;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .hermes-relay-plugin.hr-pair-dialog [data-slot="dialog-header"] {
   padding-right: 3rem;
+  flex-shrink: 0;
+}
+
+.hermes-relay-plugin.hr-pair-dialog [data-slot="dialog-footer"] {
+  flex-shrink: 0;
+  border-top: 1px solid var(--hr-border);
 }
 
 .hermes-relay-plugin .hr-pair-body {
   display: grid;
-  grid-template-columns: minmax(34rem, 1.05fr) minmax(22rem, 0.95fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 1rem;
   padding: 1rem;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.hermes-relay-plugin .hr-relay-address {
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.hermes-relay-plugin .hr-pair-invite-text {
+  width: 100%;
+  min-height: 6rem;
+  padding: 0.5rem;
+  border: 1px solid var(--hr-border);
+  background: var(--hr-bg);
+  color: var(--hr-text);
+  font-family: var(--theme-font-mono, monospace);
+  font-size: 0.75rem;
 }
 
 .hermes-relay-plugin .hr-pair-qr-column,
@@ -1356,6 +1381,10 @@
 
 .hermes-relay-plugin .hr-pairing-qr {
   overflow-x: auto;
+}
+
+.hermes-relay-plugin .hr-pairing-qr[hidden] {
+  display: none;
 }
 
 .hermes-relay-plugin .hr-pairing-qr canvas {

@@ -8,11 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- CLI+UI imports full pairing invites from the Dashboard, preserving route candidates and Secure Link certificate trust. Dashboard pairing offers an explicit CLI+UI client choice.
 - Android marks unread completed conversations in the session drawer and shows unread conversation counts on profiles and the chat header.
 - Reply notifications show the owning agent's official profile name and cached avatar, plus the conversation title.
 
 ### Fixed
 
+- Pairing shows internal and remote addresses with protocols and ports, includes direct Tailscale Relay routes for CLI+UI, and avoids inferring public Relay listeners from Dashboard URLs. The Dashboard handles expired and oversized invites and distinguishes plugin activation from discovery.
 - Android avoids a startup crash when profile state arrives during connection setup.
 - Android refreshes background-alert permission defaults after onboarding and keeps notification delivery tied to the original connection, profile, and conversation across navigation.
 - Replies from conversations left running get separate notification slots; opening one conversation preserves alerts from others.
