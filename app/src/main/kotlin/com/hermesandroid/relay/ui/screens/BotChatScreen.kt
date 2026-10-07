@@ -64,6 +64,10 @@ import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.ui.components.ChatMediaViewerHost
 import com.hermesandroid.relay.ui.components.MessageBubble
+import com.hermesandroid.relay.ui.components.ProvideChatTextScale
+import com.hermesandroid.relay.ui.components.chatTextScaleGesture
+import com.hermesandroid.relay.ui.components.chatTextScaleSemantics
+import com.hermesandroid.relay.ui.components.rememberChatTextScale
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -152,6 +156,7 @@ internal fun BotChatScreen(
     val iconPath by profileIconFlow(route.connectionId, route.profileName)
         .collectAsState(initial = null)
     val listState = rememberLazyListState()
+    val chatTextScale = rememberChatTextScale()
     var composer by remember(route.key, sessionId) { mutableStateOf("") }
     var editingQueuedMessage by remember(route.key, sessionId) { mutableStateOf(false) }
     var busyActionOverride by remember(route.key, sessionId, busyMessageAction) {
@@ -376,9 +381,19 @@ internal fun BotChatScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                else -> LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
+                else -> ProvideChatTextScale(chatTextScale) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .chatTextScaleGesture(chatTextScale)
+                            .chatTextScaleSemantics(
+                                state = chatTextScale,
+                                description = stringResource(R.string.chat_text_scale_description),
+                                increaseLabel = stringResource(R.string.chat_text_scale_increase),
+                                decreaseLabel = stringResource(R.string.chat_text_scale_decrease),
+                                resetLabel = stringResource(R.string.chat_text_scale_reset),
+                            )
+                            .fillMaxSize(),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
                         horizontal = 14.dp,
                         vertical = 10.dp,
@@ -399,6 +414,7 @@ internal fun BotChatScreen(
                             onCardInput = chatViewModel::answerAsk,
                         )
                     }
+                }
                 }
             }
             error?.takeIf(String::isNotBlank)?.let { message ->
