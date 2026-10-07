@@ -130,9 +130,17 @@ certification:
 
 Dense Android QRs retain whole-pixel modules and the four-module quiet zone;
 they fit the available panel or offer copying when the panel is too narrow.
-The complete native management-window Paste-to-pair check remains pending.
+The complete native management-window Paste-to-pair check passed on the installed
+Windows CLI+UI against a disposable loopback Relay. Native clipboard paste,
+installed-CLI invocation and authenticated pairing produced a saved host; the
+one-use code was absent from storage. The test host was removed afterward and
+the existing daemon remained connected to its original server.
 
 ![Dense Android QR preview](assets/pairing/android-qr-demo.png)
+
+Installed native UI at 125% Windows display scaling, using a disposable test invite:
+
+![Native invite paste verification](assets/pairing/native-invite-verified.png)
 
 ## Upstream sources
 
