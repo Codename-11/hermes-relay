@@ -723,6 +723,36 @@ def _recommended_tailscale_listener(status: Optional[dict[str, Any]]) -> int:
     return _RECOMMENDED_DASHBOARD_LISTENER_PORT
 
 
+def _tailscale_direct_relay_endpoint(
+    status: dict[str, Any],
+    relay_port: int,
+    relay_tls: bool,
+    priority: int,
+) -> Optional[dict[str, Any]]:
+    """Advertise the Relay listener over a verified tailnet address after opt-in."""
+    raw = status.get("tailscale_ip") or status.get("ip") or status.get("address")
+    if not isinstance(raw, str):
+        return None
+    try:
+        address = ipaddress.ip_address(raw.strip())
+    except ValueError:
+        return None
+    if (
+        address not in ipaddress.ip_network("100.64.0.0/10")
+        and address not in ipaddress.ip_network("fd7a:115c:a1e0::/48")
+    ):
+        return None
+    host = f"[{address}]" if address.version == 6 else str(address)
+    scheme = "wss" if relay_tls else "ws"
+    return {
+        "role": "tailscale",
+        "priority": priority,
+        "recommended": True,
+        "legacy": True,
+        "relay": {"url": f"{scheme}://{host}:{relay_port}", "transport_hint": scheme},
+    }
+
+
 def _tailscale_endpoint(
     status: dict[str, Any],
     api_port: int,
@@ -1183,6 +1213,12 @@ def build_endpoint_candidates(
     if want_tailscale:
         tailscale_status = _tailscale_status()
         if tailscale_status is not None:
+            if legacy_direct_relay:
+                _emit(
+                    _tailscale_direct_relay_endpoint(
+                        tailscale_status, relay_port, relay_tls, next_priority,
+                    )
+                )
             _emit(
                 _tailscale_endpoint(
                     tailscale_status,

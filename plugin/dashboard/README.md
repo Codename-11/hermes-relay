@@ -139,6 +139,11 @@ in the local UI. The computer uses Relay pairing; it does not need a Hermes
 Dashboard sign-in. Dashboard ingress routes remain available to Android and
 are not presented as CLI connection candidates.
 
+When the host is connected to Tailscale, CLI+UI invites also include the direct
+Relay listener on its tailnet IP, using the configured Relay protocol and port.
+This route does not require Dashboard Serve or Dashboard authentication; traffic
+is encrypted by Tailscale. The default Android invite retains Dashboard ingress.
+
 Android pairing renders a QR when the signed payload fits. Certificate-bearing
 invites with many routes can exceed QR capacity; the dialog explains that limit
 and retains the complete copyable invite rather than showing a blank canvas.
