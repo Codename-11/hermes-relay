@@ -23,6 +23,16 @@ test("pairing QR keeps integer modules and a four-module quiet zone", () => {
   assert.equal(Object.hasOwn(pairingQrRenderOptions(), "width"), false);
 });
 
+test("dense QR uses whole modules that fit the panel or offers copying", () => {
+  const options = pairingQrRenderOptions({ modules: 177, availableWidth: 420 });
+  assert.equal(options.scale, 2);
+  assert.ok((177 + 2 * options.margin) * options.scale <= 420);
+  assert.throws(() => pairingQrRenderOptions({ modules: 177, availableWidth: 300 }), (error) => {
+    assert.match(pairingQrErrorMessage(error), /wider window/);
+    return true;
+  });
+});
+
 test("certificate-bearing pairing invite fits the Dashboard QR renderer", () => {
   const payload = JSON.stringify({
     hermes: 2,

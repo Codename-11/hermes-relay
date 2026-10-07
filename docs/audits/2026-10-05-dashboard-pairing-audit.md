@@ -100,6 +100,40 @@ optional transport feature recorded in
 [the project TODO](../project/TODO.md#optional-dashboard-transport-support-for-cliui),
 not as blockers for the current Relay connection model.
 
+## Follow-up verification — 2026-10-07
+
+The initial audit above predates the testing installations. Subsequent checks
+used the compiled Windows CLI and an authenticated Dashboard with real signed
+invites. Dashboard copying populated the Windows clipboard, the CLI decoded the
+complete invite, and its stored Secure Link certificate matched the advertised
+SPKI pin. Direct Relay over Tailscale passed both its health probe and WebSocket
+upgrade; the normal Android invite retained Dashboard ingress.
+
+Certificate-bearing multi-route payloads can exceed QR capacity. CLI+UI pairing
+now uses a copy-and-paste layout; Android reports an oversized QR explicitly and
+keeps the complete invite available. Expired invites disable copying and offer
+a new invite. Header and footer actions remain visible while route details
+scroll. HTTP Dashboard copying has a browser fallback and exposes a selectable
+invite when both clipboard paths are blocked.
+
+CLI compatibility now adds an explicit direct tailnet Relay candidate and
+preserves it through signing exactly once. A Dashboard-only public origin no
+longer generates an assumed public Relay port: public direct candidates require
+an explicit Relay path or listener port.
+
+These are synthetic previews of the rendered UI, not network or native IPC
+certification:
+
+![Dashboard CLI pairing preview](assets/pairing/dashboard-cli-demo.png)
+
+![Management UI invite import preview](assets/pairing/desktop-invite-demo.png)
+
+Dense Android QRs retain whole-pixel modules and the four-module quiet zone;
+they fit the available panel or offer copying when the panel is too narrow.
+The complete native management-window Paste-to-pair check remains pending.
+
+![Dense Android QR preview](assets/pairing/android-qr-demo.png)
+
 ## Upstream sources
 
 - [SDK registry and UI contract](https://github.com/NousResearch/hermes-agent/blob/e473f5a9c976a0b5bc292aa415dae28c638a47c3/web/src/plugins/registry.ts)

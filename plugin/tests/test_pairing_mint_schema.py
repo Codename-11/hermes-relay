@@ -735,16 +735,27 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "legacy-direct-relay"):
             self._build(mode="public", public_url="https://public.example/relay")
 
-    def test_explicit_legacy_mode_keeps_public_and_lan_direct_last(self) -> None:
+    def test_cli_compatibility_does_not_infer_public_relay_from_dashboard_origin(self) -> None:
         endpoints = self._build(legacy_direct_relay=True)
 
         self.assertEqual(
             [candidate["role"] for candidate in endpoints],
-            ["tailscale", "tailscale", "public", "lan", "public_legacy", "legacy_direct"],
+            ["tailscale", "tailscale", "public", "lan", "legacy_direct"],
         )
-        self.assertEqual(endpoints[-2]["relay"]["url"], "wss://example.com:8767")
+        self.assertNotIn("wss://example.com:8767", json.dumps(endpoints))
         self.assertEqual(endpoints[-1]["relay"]["url"], "ws://10.0.0.42:8767")
-        self.assertTrue(all(candidate.get("recommended") is False for candidate in endpoints[-2:]))
+        self.assertFalse(endpoints[-1]["recommended"])
+
+    def test_explicit_public_relay_path_or_port_is_preserved_for_cli_compatibility(self) -> None:
+        for public_url, relay_url in (
+            ("https://relay.example.com/relay", "wss://relay.example.com/relay"),
+            ("https://relay.example.com:8767", "wss://relay.example.com:8767"),
+        ):
+            with self.subTest(public_url=public_url):
+                endpoints = self._build(mode="public", public_url=public_url, legacy_direct_relay=True)
+                public = next(c for c in endpoints if c["role"] == "public_legacy")
+                self.assertEqual(public["relay"]["url"], relay_url)
+                self.assertFalse(any(c["role"] == "public" for c in endpoints))
 
     def test_tailscale_uses_raw_ip_for_direct_tailnet_ports(self) -> None:
         endpoints = self._build(mode="tailscale", public_url=None)

@@ -144,6 +144,11 @@ Relay listener on its tailnet IP, using the configured Relay protocol and port.
 This route does not require Dashboard Serve or Dashboard authentication; traffic
 is encrypted by Tailscale. The default Android invite retains Dashboard ingress.
 
+A public Dashboard origin does not establish a public Relay listener. CLI+UI
+compatibility never derives a public `:8767` route from that origin. A public
+direct Relay candidate requires an explicitly configured Relay path or port;
+its TLS and reachability are checked independently.
+
 Android pairing renders a QR when the signed payload fits. Certificate-bearing
 invites with many routes can exceed QR capacity; the dialog explains that limit
 and retains the complete copyable invite rather than showing a blank canvas.

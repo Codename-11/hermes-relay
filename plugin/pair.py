@@ -1130,17 +1130,13 @@ def _legacy_public_relay_endpoint(
     relay_port: int,
     priority: int,
 ) -> dict[str, Any]:
-    """Build the old public direct-Relay route after explicit opt-in."""
+    """Preserve an explicitly configured public Relay path or listener port."""
     dashboard_url = normalize_public_url(public_url)
     parsed = urlparse(dashboard_url)
     scheme = "wss" if parsed.scheme == "https" else "ws"
-    host = parsed.hostname or ""
-    url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
-    relay_url = (
-        f"{scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
-        if is_explicit_relay_url(dashboard_url)
-        else f"{scheme}://{url_host}:{relay_port}"
-    )
+    if not is_explicit_relay_url(dashboard_url) and parsed.port != relay_port:
+        raise ValueError("a public Relay route needs an explicit Relay path or port")
+    relay_url = f"{scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
     return {
         "role": "public_legacy",
         "priority": priority,
@@ -1267,8 +1263,10 @@ def build_endpoint_candidates(
                 effective_public_url = detected
 
         if effective_public_url:
-            explicit_relay_url = is_explicit_relay_url(
-                normalize_public_url(effective_public_url)
+            normalized_public_url = normalize_public_url(effective_public_url)
+            explicit_relay_url = (
+                is_explicit_relay_url(normalized_public_url)
+                or urlparse(normalized_public_url).port == relay_port
             )
             if explicit_relay_url and not legacy_direct_relay:
                 raise ValueError(
@@ -1306,7 +1304,10 @@ def build_endpoint_candidates(
         )
 
     if legacy_direct_relay:
-        if effective_public_url:
+        if effective_public_url and (
+            is_explicit_relay_url(normalize_public_url(effective_public_url))
+            or urlparse(effective_public_url).port == relay_port
+        ):
             _emit(
                 _legacy_public_relay_endpoint(
                     effective_public_url,

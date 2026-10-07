@@ -840,6 +840,27 @@ class PairingRouteTests(PluginApiTestCase):
         direct = [route for route in forwarded["endpoints"] if route["role"] == "legacy_direct"]
         self.assertEqual(direct[0]["relay"]["url"], "ws://192.168.1.50:8767")
 
+    def test_cli_ui_invite_does_not_infer_public_relay_from_dashboard_origin(self) -> None:
+        proxy = AsyncMock(return_value={"ok": True})
+        with patch.object(plugin_api, "_proxy", proxy), patch(
+            "plugin.pair.read_server_config",
+            return_value={"enabled": False, "host": "192.168.1.50", "port": 8642, "tls": False},
+        ), patch(
+            "plugin.pair.read_relay_config",
+            return_value={"host": "192.168.1.50", "port": 8767, "tls": False},
+        ), patch("plugin.pair._tailscale_status", return_value=None):
+            response = self.client.post("/pairing", json={
+                "mode": "auto", "legacy_direct_relay": True,
+                "dashboard_url": "https://dashboard.example.com",
+                "public_url": "https://dashboard.example.com",
+            })
+        self.assertEqual(response.status_code, 200)
+        endpoints = proxy.await_args.kwargs["json"]["endpoints"]
+        urls = [route["relay"]["url"] for route in endpoints]
+        self.assertIn("wss://dashboard.example.com/api/plugins/hermes-relay/transport", urls)
+        self.assertIn("ws://192.168.1.50:8767", urls)
+        self.assertNotIn("wss://dashboard.example.com:8767", urls)
+
     def test_dashboard_origin_and_public_route_flow_to_relay_mint(self) -> None:
         proxy = AsyncMock(return_value={"ok": True})
         with patch.object(plugin_api, "_proxy", proxy), patch(

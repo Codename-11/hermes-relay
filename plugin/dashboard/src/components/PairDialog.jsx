@@ -239,11 +239,14 @@ export default function PairDialog({ open, onClose }) {
     }
     let cancelled = false;
     setQrState({ status: "loading" });
-    QRCode.toCanvas(
-      canvasRef.current,
-      state.data.qr_payload,
-      pairingQrRenderOptions(),
-    ).then(() => {
+    Promise.resolve().then(() => {
+      if (cancelled || !canvasRef.current) return undefined;
+      const qr = QRCode.create(state.data.qr_payload, pairingQrRenderOptions());
+      const column = canvasRef.current.closest(".hr-pair-qr-column");
+      const availableWidth = (column ? column.clientWidth : 280) - 26;
+      return QRCode.toCanvas(canvasRef.current, state.data.qr_payload,
+        pairingQrRenderOptions({ modules: qr.modules.size, availableWidth }));
+    }).then(() => {
       if (!cancelled) setQrState({ status: "ok" });
     }).catch((error) => {
       if (!cancelled) setQrState({ status: "error", error: pairingQrErrorMessage(error) });
