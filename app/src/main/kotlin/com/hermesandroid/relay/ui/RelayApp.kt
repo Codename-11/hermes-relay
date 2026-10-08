@@ -3325,7 +3325,14 @@ fun RelayApp() {
                                 }
                             },
                             onRequestRepair = {
-                                navController.navigate(Screen.Pair.route())
+                                navController.navigate(
+                                    Screen.Pair.route(
+                                        connectionId = activeConnectionId,
+                                        autoStart = "relay",
+                                    ),
+                                ) {
+                                    launchSingleTop = true
+                                }
                             }
                         )
                     } else {
