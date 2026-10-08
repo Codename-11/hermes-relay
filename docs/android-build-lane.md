@@ -46,6 +46,25 @@ Android workflow from the selected `dev` ref.
 
 ## Local use
 
+### Startup appearance regression
+
+Run `StartupLoadingThemeTest` through the lane for loading-cover palette and
+system-bar contrast changes:
+
+```powershell
+.\scripts\android-lane.ps1 gradle :app:testSideloadDebugUnitTest `
+  --tests "*StartupLoadingThemeTest" --console=plain
+```
+
+This API 36 Robolectric render test exercises the production navigation cover
+and pre-runtime loading screen with Light, Auto (system light and dark), Dark,
+a fixed dark preset, and a custom light palette. It repeats hydration and
+route-denial transitions without recomposing the outer theme, then recreates
+the loading/app composition roots. PNGs are written to `app/build/ui-evidence`.
+These checks prove composition handoff and window contrast flags; actual
+close/reopen and force-stop behavior still require an emulator or an explicitly
+selected physical device.
+
 ### Message appearance previews
 
 In a development build, open Developer settings → Message previews to exercise

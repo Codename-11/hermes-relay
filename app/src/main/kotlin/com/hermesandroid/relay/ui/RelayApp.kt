@@ -696,20 +696,44 @@ sealed class Screen(
 }
 
 @Composable
-private fun SupervisedStartupLoadingScreen() {
+internal fun SupervisedStartupLoadingScreen() {
     HermesRelayTheme(themePreference = "dark") {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "Loading protected settings…",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        SupervisedStartupLoadingContent()
+    }
+}
+
+@Composable
+internal fun RelayNavigationLoadingCover(
+    navigationHydrated: Boolean,
+    routeContentAllowed: Boolean,
+    currentRoute: String?,
+) {
+    if (shouldCoverRelayNavigation(navigationHydrated, routeContentAllowed, currentRoute)) {
+        // Keep the graph mounted while covering restored parent-only content
+        // and policy-owner hydration with an opaque fail-closed surface.
+        SupervisedStartupLoadingContent()
+    }
+}
+
+/**
+ * Loading cover for use inside the app theme. It must not open a nested
+ * [HermesRelayTheme]: that would overwrite the global [RelayRefresh] palette and
+ * system-bar contrast with a hardcoded dark scheme, leaving legacy call sites
+ * dark after the cover is removed while Material surfaces follow Appearance.
+ */
+@Composable
+private fun SupervisedStartupLoadingContent() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "Loading protected settings…",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -3814,17 +3838,11 @@ fun RelayApp() {
                     )
                 }
             }
-                if (shouldCoverRelayNavigation(
-                        navigationHydrated = relayNavigationHydrated,
-                        routeContentAllowed = routeContentAllowed,
-                        currentRoute = currentRoute,
-                    )
-                ) {
-                    // Keep the graph mounted so the redirect can complete, but
-                    // cover restored parent-only content and policy-owner
-                    // hydration with an opaque fail-closed surface.
-                    SupervisedStartupLoadingScreen()
-                }
+                RelayNavigationLoadingCover(
+                    navigationHydrated = relayNavigationHydrated,
+                    routeContentAllowed = routeContentAllowed,
+                    currentRoute = currentRoute,
+                )
                 }
             } // end bridge-return wrapper column
             } // end CompositionLocalProvider

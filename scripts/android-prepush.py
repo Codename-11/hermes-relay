@@ -29,6 +29,7 @@ FOCUSED_TESTS = (
     "com.hermesandroid.relay.notifications.InteractionRequestNotifierTest",
     "com.hermesandroid.relay.ui.ChatNotificationNavigationTest",
     "com.hermesandroid.relay.ui.ChatNotificationNavigationUiTest",
+    "com.hermesandroid.relay.ui.StartupLoadingThemeTest",
     "com.hermesandroid.relay.viewmodel.ConnectionViewModelChatAlertsTest",
     "com.hermesandroid.relay.screenshots.ChatComposerProgressScreenshotTest",
     "com.hermesandroid.relay.screenshots.UnreadConversationsScreenshotTest",

@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Android refreshes background-alert permission defaults after onboarding and keeps notification delivery tied to the original connection, profile, and conversation across navigation.
 - Replies from conversations left running get separate notification slots; opening one conversation preserves alerts from others.
 - Chat progress stays above the composer while scrolling and disappears when the turn finishes or waits for input.
+- Android keeps the selected Appearance palette after the startup loading screen instead of leaving parts of the UI dark. (#678)
 
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
 
