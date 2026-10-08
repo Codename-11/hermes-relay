@@ -62,7 +62,7 @@ class VoiceOverlayForegroundService : Service() {
         val id = intent?.getLongExtra(EXTRA_SESSION_ID, -1L) ?: -1L
         val host = VoiceOverlayHost.peek()
         if (intent?.action == ACTION_STOP) {
-            if (id == activeSessionId) endSession()
+            if (id == activeSessionId) stopSessionFromNotification()
             else if (activeSessionId == null && host?.sessionId == null) stopSelfResult(startId)
             return START_NOT_STICKY
         }
@@ -92,6 +92,17 @@ class VoiceOverlayForegroundService : Service() {
         activeSessionId = null
         handler.removeCallbacks(accessMonitor)
         if (id != null) VoiceOverlayHost.peek()?.exitVoiceSession(id)
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    /** Explicit user Stop preserves an already accepted response. Lifecycle,
+     * permission, and screen-off teardown continue to use [endSession]. */
+    private fun stopSessionFromNotification() {
+        val id = activeSessionId
+        activeSessionId = null
+        handler.removeCallbacks(accessMonitor)
+        if (id != null) VoiceOverlayHost.peek()?.stopVoiceSession(id)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

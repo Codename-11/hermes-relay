@@ -241,7 +241,7 @@ class VoiceModeOverlayStateTest {
     }
 
     @Test
-    fun micTap_interruptsBusyNonContinuousTurns() {
+    fun micTap_stopsVoiceWithoutCancellingThinkingResponse() {
         val calls = mutableListOf<String>()
 
         dispatchVoiceMicTap(
@@ -256,7 +256,7 @@ class VoiceModeOverlayStateTest {
             onPauseAutoMode = { calls += "pause" },
         )
 
-        assertEquals(listOf("interrupt"), calls)
+        assertEquals(listOf("stop-speaking"), calls)
     }
 
     @Test

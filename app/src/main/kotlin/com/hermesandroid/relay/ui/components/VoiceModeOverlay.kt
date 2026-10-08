@@ -532,9 +532,10 @@ fun VoiceModeOverlay(
         // Mic button — dispatch by current voice state.
         //
         // Listening → tap stops recording (feeds the audio to STT)
-        // Speaking  → tap interrupts TTS and starts fresh recording
+        // Speaking  → tap ends voice playback but preserves the accepted reply
         // Idle/Error → tap starts recording
-        // Transcribing/Thinking → tap cancels the in-flight realtime turn
+        // Transcribing → tap cancels before submission completes
+        // Thinking → tap leaves voice mode but preserves the accepted response
         //
         // The bug before was that Listening fell through to the else branch
         // which called onMicTap (= startListening) a second time instead of
@@ -1582,7 +1583,14 @@ internal fun dispatchVoiceMicTap(
                 onStopSpeaking()
             }
         }
-        VoiceState.Transcribing, VoiceState.Thinking -> {
+        VoiceState.Thinking -> {
+            if (uiState.interactionMode == InteractionMode.Continuous) {
+                onPauseAutoMode()
+            } else {
+                onStopSpeaking()
+            }
+        }
+        VoiceState.Transcribing -> {
             if (uiState.interactionMode == InteractionMode.Continuous) {
                 onPauseAutoMode()
             } else {

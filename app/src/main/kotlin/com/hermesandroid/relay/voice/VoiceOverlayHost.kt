@@ -189,7 +189,7 @@ class VoiceOverlayHost(context: Context) {
             onStartListening = guarded(session.onStartListening),
             onStopListening = guarded(session.onStopListening),
             onInterrupt = guarded(session.onInterrupt),
-            onStopSpeaking = guarded(session.onStopSpeaking),
+            onStopSpeaking = { stopVoiceSession(id) },
             onPauseAutoMode = guarded(session.onPauseAutoMode),
             onReturnToHermes = guarded {
                 session.onReturnToHermes()
@@ -198,11 +198,13 @@ class VoiceOverlayHost(context: Context) {
                     callerLifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true
                 ) handoffToApp()
             },
+            onStopVoice = { stopVoiceSession(id) },
             onExit = { exitVoiceSession(id) },
             onDismissOverlay = { exitVoiceSession(id) },
             onResetPosition = guarded { moveTo(24, 96) },
         )
         exitCallback = session.onExit
+        stopCallback = session.onStopVoice
         callerLifecycle = lifecycle
         lifecycle.addObserver(callerObserver)
         if (!VoiceOverlayForegroundService.start(appContext, id)) {
@@ -213,6 +215,7 @@ class VoiceOverlayHost(context: Context) {
     }
 
     private var exitCallback: (() -> Unit)? = null
+    private var stopCallback: (() -> Unit)? = null
 
     private fun handoffToApp() {
         val id = sessionId ?: return
@@ -281,6 +284,7 @@ class VoiceOverlayHost(context: Context) {
     fun hide() {
         sessionId = null
         exitCallback = null
+        stopCallback = null
         callerLifecycle?.removeObserver(callerObserver)
         callerLifecycle = null
         val view = overlayView
@@ -301,6 +305,13 @@ class VoiceOverlayHost(context: Context) {
         val onExit = exitCallback
         hide()
         onExit?.invoke()
+    }
+
+    internal fun stopVoiceSession(expectedId: Long? = sessionId) {
+        if (expectedId == null || sessionId != expectedId) return
+        val onStop = stopCallback
+        hide()
+        onStop?.invoke()
     }
 
     private fun moveBy(dx: Float, dy: Float) {
@@ -358,6 +369,7 @@ data class VoiceOverlaySession(
     val onReturnToHermes: () -> Unit,
     val onDismissOverlay: () -> Unit,
     val onExit: () -> Unit,
+    val onStopVoice: () -> Unit = onExit,
     val onResetPosition: () -> Unit = {},
     val connectionLabel: String? = null,
 )
@@ -402,7 +414,7 @@ internal fun VoiceFloatingOverlayPill(
                     onPauseAutoMode = session.onPauseAutoMode,
                     onDragBy = onDragBy,
                 )
-                TextButton(onClick = session.onExit) {
+                TextButton(onClick = session.onStopVoice) {
                     Text(stringResource(R.string.voice_overlay_notification_stop))
                 }
             }
@@ -529,7 +541,7 @@ private fun VoiceOverlayHeader(
             onPauseAutoMode = session.onPauseAutoMode,
             size = 50.dp,
         )
-        IconButton(onClick = session.onExit, modifier = Modifier.size(48.dp)) {
+        IconButton(onClick = session.onStopVoice, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Filled.Close, stringResource(R.string.voice_overlay_notification_stop))
         }
     }
@@ -600,7 +612,7 @@ private fun ExpandedVoiceOverlayBody(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            IconButton(onClick = session.onExit, modifier = Modifier.size(36.dp)) {
+            IconButton(onClick = session.onStopVoice, modifier = Modifier.size(36.dp)) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = stringResource(R.string.voice_overlay_exit_a11y),

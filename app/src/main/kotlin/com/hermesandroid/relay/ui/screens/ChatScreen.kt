@@ -1750,13 +1750,14 @@ fun ChatScreen(
                         onStartListening = { voiceViewModel.startListening() },
                         onStopListening = { voiceViewModel.stopListening() },
                         onInterrupt = { voiceViewModel.interruptSpeaking() },
-                        onStopSpeaking = { voiceViewModel.stopSpeakingPlayback() },
+                        onStopSpeaking = { voiceViewModel.stopVoiceMode() },
                         onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
                         onReturnToHermes = {
                             if (!openHermesFromOverlay(context)) voiceOverlayHost.exitVoiceSession()
                         },
                         onDismissOverlay = { voiceOverlayHost.exitVoiceSession() },
                         onExit = { voiceViewModel.exitVoiceMode() },
+                        onStopVoice = { voiceViewModel.stopVoiceMode() },
                     ),
                     lifecycleOwner.lifecycle,
                 )
@@ -4870,7 +4871,7 @@ fun ChatScreen(
                         onMicTap = { voiceViewModel.startListening() },
                         onMicRelease = { voiceViewModel.stopListening() },
                         onInterrupt = { voiceViewModel.interruptSpeaking() },
-                        onStopSpeaking = { voiceViewModel.stopSpeakingPlayback() },
+                        onStopSpeaking = { voiceViewModel.stopVoiceMode() },
                         onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
                         onModeChange = { voiceViewModel.setInteractionMode(it) },
                         onFocusRequest = {
@@ -4879,7 +4880,7 @@ fun ChatScreen(
                         onOverlayRequest = showVoiceSystemOverlay,
                         systemOverlayAvailable = voiceSystemOverlayAvailable,
                         onOpenSettings = onNavigateToVoiceSettings,
-                        onExit = { voiceViewModel.exitVoiceMode() },
+                        onExit = { voiceViewModel.stopVoiceMode() },
                     )
                 },
                 topContentVisible = conversationVoiceDockVisible,
@@ -5038,9 +5039,9 @@ fun ChatScreen(
                 onMicTap = { voiceViewModel.startListening() },
                 onMicRelease = { voiceViewModel.stopListening() },
                 onInterrupt = { voiceViewModel.interruptSpeaking() },
-                onStopSpeaking = { voiceViewModel.stopSpeakingPlayback() },
+                onStopSpeaking = { voiceViewModel.stopVoiceMode() },
                 onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
-                onDismiss = { voiceViewModel.exitVoiceMode() },
+                onDismiss = { voiceViewModel.stopVoiceMode() },
                 onModeChange = { voiceViewModel.setInteractionMode(it) },
                 onClearError = { voiceViewModel.clearError() },
                 onBackgroundRunCancel = { voiceViewModel.cancelBackgroundRun() },

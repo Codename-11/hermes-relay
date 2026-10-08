@@ -3522,6 +3522,14 @@ class RealtimeAgentSessionControl(
     fun cancel(): Boolean =
         webSocket.send("""{"type":"response.cancel"}""")
 
+    /**
+     * Leave the voice client without cancelling the provider response. Relay
+     * keeps the native session alive inside its bounded resume window so
+     * server-side transcript/chat delivery can finish after the UI closes.
+     */
+    fun detach(): Boolean =
+        webSocket.close(1000, "voice client detached")
+
     /** Ask the relay to respeak the last delivered background result
      *  (DONE-chip tap). The relay answers with a hermes-sourced response
      *  rendered via relay TTS, or `hermes.result.respeak_unavailable`. */

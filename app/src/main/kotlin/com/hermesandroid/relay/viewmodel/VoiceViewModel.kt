@@ -918,6 +918,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * audio and jitter during long Hermes tool work.
      */
     private val providerRealtimeAgentTurnActive = AtomicBoolean(false)
+    /** True only after the current voice prompt crossed its transport boundary. */
+    private val voiceTurnTransportAccepted = AtomicBoolean(false)
+    /** Hidden voice UI that is retaining its response socket until response.done. */
+    private val detachedVoiceResponse = AtomicBoolean(false)
 
     /**
      * Sentences that have been [Channel.trySend]-enqueued to [ttsQueue] but
@@ -1946,7 +1950,41 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** User-facing Stop voice action: leave voice UI without killing a reply
+     * that has already been accepted by chat or the realtime provider. */
+    fun stopVoiceMode() {
+        var preserveAcceptedResponse = false
+        synchronized(realtimeSessionStateLock) {
+            val state = _uiState.value.state
+            val responseAccepted = voiceTurnTransportAccepted.get() ||
+                _uiState.value.backgroundRun != null
+            preserveAcceptedResponse =
+                (state == VoiceState.Thinking || state == VoiceState.Speaking) && responseAccepted
+            val retainRealtimeDelivery = preserveAcceptedResponse &&
+                providerRealtimeAgentTurnActive.get() && realtimeAgentControl != null
+            if (retainRealtimeDelivery) {
+                detachedVoiceResponse.set(true)
+                interruptSpeaking(cancelActiveTurn = false)
+                _uiState.update {
+                    it.copy(
+                        voiceMode = false,
+                        state = VoiceState.Idle,
+                        amplitude = 0f,
+                        outputAudioActive = false,
+                    )
+                }
+                return
+            }
+            exitVoiceMode(cancelActiveTurn = !preserveAcceptedResponse)
+            return
+        }
+    }
+
     fun exitVoiceMode() {
+        exitVoiceMode(cancelActiveTurn = true)
+    }
+
+    private fun exitVoiceMode(cancelActiveTurn: Boolean) {
         voiceOutputEpoch++
         retireInboundSpeech()
         cancelPendingListeningStart()
@@ -1970,7 +2008,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // If a caller ever needs unconditional teardown (e.g. onCleared), they
         // can bypass this guard by calling the primitives directly — or we
         // add a separate `forceExitVoiceMode()` when that need materializes.
-        if (!_uiState.value.voiceMode) return
+        if (!_uiState.value.voiceMode && !detachedVoiceResponse.get()) return
 
         assistantActivationId?.let { id ->
             viewModelScope.launch(Dispatchers.IO) {
@@ -1994,13 +2032,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             // this session. A late promotion/cancellation callback must land
             // either wholly before this decision or be rejected afterward.
             val currentRun = _uiState.value.backgroundRun
-            if (currentRun == null) {
+            if (currentRun == null && cancelActiveTurn) {
                 cancelRealtimeAgentTurn("exit voice mode")
+            } else if (!cancelActiveTurn) {
+                // A UI stop is not a response cancel. Close only the client
+                // side; Relay's bounded detached-session window lets the
+                // accepted response finish and sync into chat.
+                realtimeAgentControl?.detach()
             }
             deliveringChipClearJob?.cancel()
             deliveringChipClearJob = null
             retireBackgroundCancelWatchdogLocked()
             providerRealtimeAgentTurnActive.set(false)
+            voiceTurnTransportAccepted.set(false)
+            detachedVoiceResponse.set(false)
             realtimeAgentControl = null
             realtimeConfirmationControl = null
             closeRealtimeSession()
@@ -2190,6 +2235,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         bargeInCapture: Boolean = false,
     ): Boolean {
         return try {
+            synchronized(realtimeSessionStateLock) {
+                voiceTurnTransportAccepted.set(false)
+                detachedVoiceResponse.set(false)
+            }
             rec.startRecording()
             listeningStartedAtMs = System.currentTimeMillis()
             _uiState.update {
@@ -3239,7 +3288,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         when (action) {
-            VoiceCommandAction.EndVoiceChat -> exitVoiceMode()
+            VoiceCommandAction.EndVoiceChat -> stopVoiceMode()
             VoiceCommandAction.StopResponse -> interruptSpeaking()
             VoiceCommandAction.CancelBackgroundTask -> cancelBackgroundRun()
             VoiceCommandAction.PauseContinuousListening -> pauseContinuousMode()
@@ -3621,10 +3670,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             gatewayAttachments = turnPayload.gatewayAttachments,
             hasScreenContext = stagedContext != null,
             onTransportAccepted = {
-                assistantContextRetryAvailable = false
-                if (contextDisposition.consumeOnTransportAcceptance && contextActivationId != null) {
-                    viewModelScope.launch(Dispatchers.IO) {
-                        assistantContextStore(getApplication()).consume(contextActivationId)
+                synchronized(realtimeSessionStateLock) {
+                    voiceTurnTransportAccepted.set(true)
+                    assistantContextRetryAvailable = false
+                    if (contextDisposition.consumeOnTransportAcceptance && contextActivationId != null) {
+                        viewModelScope.launch(Dispatchers.IO) {
+                            assistantContextStore(getApplication()).consume(contextActivationId)
+                        }
                     }
                 }
             },
@@ -3910,6 +3962,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         return@runRealtimeAgent
                     }
                     realtimeAgentControl = control
+                    if (event.type == "voice.input_audio.received" ||
+                        event.type == "voice.input_transcript.final" ||
+                        event.type == "voice.response.started"
+                    ) {
+                        voiceTurnTransportAccepted.set(true)
+                    }
                     val providerResponseEvent = event.type == "voice.response.started" ||
                         event.type == "voice.response.delta" ||
                         event.type == "voice.playback_drain.requested" ||
@@ -4371,6 +4429,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                     providerRealtimeAgentTurnActive.set(false)
+                    voiceTurnTransportAccepted.set(false)
+                    if (detachedVoiceResponse.get()) {
+                        viewModelScope.launch {
+                            exitVoiceMode(cancelActiveTurn = false)
+                        }
+                    }
                 }
                 "voice.error" -> {
                     realtimeConfirmationControl = null
@@ -4390,6 +4454,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         java.io.IOException(rawDetail),
                         context = "voice_config",
                     )
+                    if (detachedVoiceResponse.get()) {
+                        viewModelScope.launch {
+                            exitVoiceMode(cancelActiveTurn = false)
+                        }
+                    }
                     }
                 }
             }
@@ -4570,6 +4639,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 assistantMessageId = assistantMessageId,
                 detail = delivered.exceptionOrNull()?.message ?: "Realtime voice connection was interrupted",
             )
+        } else {
+            synchronized(realtimeSessionStateLock) {
+                voiceTurnTransportAccepted.set(true)
+            }
         }
     }
 
@@ -4580,6 +4653,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         Log.w(TAG, "Realtime persistent turn delivery failed: $detail")
         providerRealtimeAgentTurnActive.set(false)
+        voiceTurnTransportAccepted.set(false)
         if (!assistantMessageId.isNullOrBlank()) {
             chatVm.failRealtimeAgentTurn(
                 assistantMessageId,
@@ -4627,6 +4701,23 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             realtimeAgentControl = control
             providerRealtimeAgentTurnActive.set(true)
             _uiState.update { it.copy(backgroundRun = run) }
+        }
+    }
+
+    internal fun seedActiveRealtimeTurnForTest(
+        control: RealtimeAgentSessionControl,
+    ) {
+        synchronized(realtimeSessionStateLock) {
+            realtimeAgentControl = control
+            providerRealtimeAgentTurnActive.set(true)
+            voiceTurnTransportAccepted.set(true)
+            _uiState.update {
+                it.copy(
+                    voiceMode = true,
+                    state = VoiceState.Thinking,
+                    backgroundRun = null,
+                )
+            }
         }
     }
 
