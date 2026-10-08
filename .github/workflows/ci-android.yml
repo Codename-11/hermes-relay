@@ -213,6 +213,9 @@ jobs:
             --tests com.hermesandroid.relay.ui.components.ProfileShelfPolicyTest \
             --tests com.hermesandroid.relay.viewmodel.VoiceInboundCompletionTest \
             --tests com.hermesandroid.relay.voice.VoiceViewModelBargeInTest \
+            --tests com.hermesandroid.relay.wake.WakeWordCoreTest \
+            --tests com.hermesandroid.relay.wake.WakeWordRecognitionTest \
+            --tests com.hermesandroid.relay.wake.WakeWordServiceHandoffTest \
             --tests com.hermesandroid.relay.voice.VoiceOutputFallbackTest \
             --tests com.hermesandroid.relay.voice.LegacyTtsTimingTest \
             --tests com.hermesandroid.relay.voice.VoiceViewModelPipelineTest \

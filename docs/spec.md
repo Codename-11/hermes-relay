@@ -1280,7 +1280,15 @@ utilities.
   retain a generic retry notice instead of collapsing to an unexplained Ready
   state. The
   wake recorder is released before the established voice recorder opens, and
-  assistant listening resumes only after the session exits. This mode is
+  assistant listening resumes only after the session exits. Manual chat, full
+  voice, and assistant entry share a process-wide voice reservation: both wake
+  modes pause, capture awaits the retiring wake reader's AudioRecord and detector
+  teardown, and wake acquisition stays blocked between utterances and during
+  playback. Hold release or exit cancels a pending capture; a stale wake callback
+  or prior session's teardown cannot start capture or resume a newer session.
+  Voice exit resumes the enabled listener only after capture and barge-in release.
+  Permission failures retain the pause while the voice surface remains open.
+  This mode is
   mutually exclusive with the experimental notification-based foreground
   listener. Third-party assistants do not receive Google's dedicated low-power
   hotword hardware, so continuous local detection has a material battery cost.
