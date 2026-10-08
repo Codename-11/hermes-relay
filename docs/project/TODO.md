@@ -4,6 +4,47 @@ Open items that don't fit a formal Phase plan but shouldn't be lost. Items move 
 
 For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisions.md`.
 
+## Secure Link Relay session REST coverage
+
+Secure Link currently mounts `/relay/health` and `/relay/ws`, but does not mount
+Relay session listing or policy/revocation routes under `/relay/sessions`.
+Android session management can receive HTTP 404 and show an empty list on this
+transport. Add authorization-preserving REST coverage and contract tests as a
+separate change. Preserve ordinary bearer self-only policy reductions and the
+operator-approved renewal boundary.
+
+---
+
+## Optional Dashboard transport support for CLI+UI
+
+The normal CLI+UI computer-connector flow uses Relay pairing and local per-host
+permissions; it does not require Hermes Dashboard sign-in. No authentication
+redesign or mandatory sign-in is planned for that flow.
+
+Management UI import of full signed invites delegates to the existing CLI
+pairing engine. Dashboard pairing now offers an explicit CLI+UI target; manual
+URL-and-code pairing remains available alongside invite import.
+
+Supporting protected Dashboard Relay ingress would be a separate optional
+transport feature, only if that route is deliberately chosen. It requires
+upstream-compatible authentication, credential/session ownership, and reconnect
+coverage. Preserve the current rejection of unsupported Dashboard routes.
+See [Dashboard and pairing audit](../audits/2026-10-05-dashboard-pairing-audit.md).
+
+---
+
+## Investigate Node 24 Windows pairing development-runtime abort
+
+A local real-Relay invite smoke under Node 24.14.0 plus the `tsx` development
+loader aborted with `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)`
+in `src/win/async.c`. The same result reproduced on unchanged integration commit
+`79fd8a82d`, before the invite-import changes. Installed Windows CLI
+`0.4.0-beta.7` passed invite pairing, route persistence, reused-code rejection,
+and malformed-input rejection against the same isolated fixture. Determine
+whether the Node runtime, loader or fixture lifecycle owns the failure before
+changing production transport or packaging. No root cause or runtime fix is
+claimed.
+
 ---
 
 ## Measure Standard Voice fallback playback seams

@@ -48,6 +48,14 @@ class ChatTurnCheckpointStoreTest {
     }
 
     @Test
+    fun officialReplyIdentitySurvivesCheckpointRecovery() = runTest {
+        val checkpoint = sampleCheckpoint().copy(replyIdentity =
+            com.hermesandroid.relay.notifications.ReplyNotificationIdentity("research", "Researcher", "Review"))
+        store.write(checkpoint)
+        assertEquals(checkpoint.replyIdentity, store.read()?.replyIdentity)
+    }
+
+    @Test
     fun fullRichTurn_roundTrips() = runTest {
         val checkpoint = sampleCheckpoint()
 

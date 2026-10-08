@@ -5,8 +5,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Schedule
@@ -25,42 +29,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.annotation.StringRes
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.PairingPreferences
 
-/**
- * TTL picker shown after a successful QR parse and *before* the WSS auth
- * handshake kicks off. Lets the user pick how long the pairing should last.
- *
- * **Design philosophy (Bailey's explicit calls):**
- *
- *  - **Never is always selectable.** We do NOT gate "Never expire" on
- *    transport security. Users on LAN, Tailscale, VPN, or TLS all need the
- *    option, and we trust the user's judgment. A brief warning sits under
- *    the option; we do not block it.
- *
- *  - **Tailscale is informational only.** [isTailscaleDetected] changes the
- *    helper line ("Transport: Tailscale detected") and nudges the default
- *    selection for fresh installs, but does not change what's available.
- *
- *  - **Last selection persists.** The user's previous choice is seeded via
- *    [initialTtlSeconds] which the caller pulls from
- *    [PairingPreferences.getPairTtlSeconds]. On confirm the caller persists
- *    the new choice back.
- *
- * **Default selection logic** (caller should compute via
- * [defaultTtlSeconds] before opening the dialog):
- *  1. If the QR payload's relay block has `ttlSeconds`, use that
- *  2. Else if transport hint is `"wss"` OR Tailscale is detected → 30 days
- *  3. Else if `ws://` without Tailscale → 7 days
- *  4. Fall back → 30 days
- *
- * The picker always shows so the user can override — the user's trust model
- * is the only one that matters and we force a confirmation step.
- */
+/** Duration confirmation. Host-approved pairing policy remains authoritative. */
 @Composable
 fun SessionTtlPickerDialog(
     initialTtlSeconds: Long,
@@ -68,15 +46,21 @@ fun SessionTtlPickerDialog(
     transportHint: String?,
     onConfirm: (ttlSeconds: Long) -> Unit,
     onCancel: () -> Unit,
+    options: List<TtlOption> = ttlPickerOptions(),
+    @StringRes titleRes: Int = R.string.ttl_title,
+    @StringRes bodyRes: Int = R.string.ttl_body,
+    @StringRes confirmRes: Int = R.string.ttl_pair,
+    busy: Boolean = false,
+    error: String? = null,
+    onRenew: (() -> Unit)? = null,
 ) {
-    val options = ttlPickerOptions()
     val startIndex = options.indexOfFirst { it.seconds == initialTtlSeconds }
-        .coerceAtLeast(defaultOptionIndex(options))
+        .takeIf { it >= 0 } ?: defaultOptionIndex(options)
 
-    var selectedIndex by remember { mutableStateOf(startIndex) }
+    var selectedIndex by remember(options, initialTtlSeconds) { mutableStateOf(startIndex) }
 
     AlertDialog(
-        onDismissRequest = onCancel,
+        onDismissRequest = { if (!busy) onCancel() },
         icon = {
             Icon(
                 imageVector = Icons.Filled.Schedule,
@@ -86,17 +70,23 @@ fun SessionTtlPickerDialog(
         },
         title = {
             Text(
-                text = stringResource(R.string.ttl_title),
+                text = stringResource(titleRes),
                 style = MaterialTheme.typography.titleLarge
             )
         },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
             ) {
+                if (error != null) {
+                    Text(error, color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                }
+                if (busy) Text(stringResource(R.string.paired_devices_updating))
+                if (options.isEmpty()) Text(stringResource(R.string.paired_devices_no_shorter_duration))
                 Text(
-                    text = stringResource(R.string.ttl_body),
+                    text = stringResource(bodyRes),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -118,13 +108,15 @@ fun SessionTtlPickerDialog(
 
                 Spacer(Modifier.height(4.dp))
 
-                Column {
+                Column(Modifier.selectableGroup()) {
                     options.forEachIndexed { index, option ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                                 .selectable(
                                     selected = selectedIndex == index,
+                                    enabled = !busy,
                                     onClick = { selectedIndex = index },
                                     role = Role.RadioButton
                                 )
@@ -133,7 +125,8 @@ fun SessionTtlPickerDialog(
                         ) {
                             RadioButton(
                                 selected = selectedIndex == index,
-                                onClick = { selectedIndex = index }
+                                onClick = null,
+                                enabled = !busy
                             )
                             Text(
                                 text = stringResource(option.labelRes),
@@ -141,6 +134,12 @@ fun SessionTtlPickerDialog(
                                 modifier = Modifier.padding(start = 8.dp)
                             )
                         }
+                    }
+                }
+
+                if (onRenew != null) {
+                    TextButton(onClick = onRenew, enabled = !busy) {
+                        Text(stringResource(R.string.paired_devices_pair_again))
                     }
                 }
 
@@ -172,13 +171,14 @@ fun SessionTtlPickerDialog(
         },
         confirmButton = {
             TextButton(
+                enabled = !busy && options.isNotEmpty(),
                 onClick = { onConfirm(options[selectedIndex].seconds) }
             ) {
-                Text(stringResource(R.string.ttl_pair))
+                Text(stringResource(confirmRes))
             }
         },
         dismissButton = {
-            TextButton(onClick = onCancel) {
+            TextButton(onClick = onCancel, enabled = !busy) {
                 Text(stringResource(R.string.ttl_cancel))
             }
         }

@@ -112,6 +112,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.SupervisedSessionActions
@@ -260,6 +261,8 @@ fun SessionDrawerContent(
     loadMoreFailed: Boolean = false,
     isOpen: Boolean = true,
     activityStates: Map<String, SessionActivityState> = emptyMap(),
+    unreadSessionIds: Set<String> = emptySet(),
+    unreadProfileSessions: Set<Pair<String, String>> = emptySet(),
     animationEnabled: Boolean = true,
     autoTitlesSupported: Boolean = true,
     archiveSupported: Boolean = true,
@@ -959,6 +962,9 @@ fun SessionDrawerContent(
                             provisional = provisional,
                             isActive = !showAllProfiles && session.sessionId == currentSessionId,
                             activityState = activityState,
+                            unread = if (showAllProfiles) {
+                                (AgentDisplay.profileSessionKey(row.profile) to session.sessionId) in unreadProfileSessions
+                            } else session.sessionId in unreadSessionIds,
                             animationEnabled = animationEnabled && isOpen,
                             pinned = session.pinned,
                             archived = session.archived,
@@ -1595,6 +1601,7 @@ private fun SessionItem(
     provisional: Boolean,
     isActive: Boolean,
     activityState: SessionActivityState?,
+    unread: Boolean = false,
     animationEnabled: Boolean,
     pinned: Boolean,
     archived: Boolean,
@@ -1612,6 +1619,7 @@ private fun SessionItem(
     val context = LocalContext.current
     val untitledLabel = stringResource(R.string.drawer_untitled)
     val activityLabel = activityState?.let { stringResource(sessionActivityLabelResource(it)) }
+    val unreadLabel = stringResource(R.string.chat_unread_reply)
     val motion = rememberAccessibleMotionState()
     val backgroundColor = if (isActive) {
         MaterialTheme.colorScheme.secondaryContainer
@@ -1628,12 +1636,16 @@ private fun SessionItem(
                 animated = animationEnabled && motion.osAnimations && !motion.touchExploration,
             )
             .semantics {
-                activityLabel?.let { stateDescription = it }
+                listOfNotNull(activityLabel, unreadLabel.takeIf { unread }).takeIf { it.isNotEmpty() }
+                    ?.let { stateDescription = it.joinToString(". ") }
             }
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (unread) {
+            androidx.compose.material3.Badge(modifier = Modifier.padding(end = 8.dp))
+        }
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -1641,6 +1653,7 @@ private fun SessionItem(
         ) {
             Text(
                 text = session.title ?: untitledLabel,
+                fontWeight = if (unread) androidx.compose.ui.text.font.FontWeight.SemiBold else null,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

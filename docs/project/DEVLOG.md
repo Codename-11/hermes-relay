@@ -1,5 +1,18 @@
 # Hermes-Relay — Dev Log
 
+
+## 2026-10-07 — Plugin 1.13.0 release preparation
+
+Prepared Plugin 1.13.0 with explicit Dashboard client selection, complete CLI invites, connection route guidance, expired/oversized invite handling, and QR layout fixes. Full-invite CLI import requires a compatible companion newer than published CLI+UI 0.4.0-beta.8. Android and CLI+UI versions remain unchanged.
+
+Focused pairing, route, Secure Link, and Dashboard API checks passed; Dashboard frontend tests and production bundle build passed. Physical Android scanning is not certified by these checks.
+
+## 2026-10-02 — CLI+UI beta.8 installer patch verified
+
+Published [Hermes-Relay CLI+UI 0.4.0-beta.8](https://github.com/Codename-11/hermes-relay/releases/tag/desktop-v0.4.0-beta.8). The Windows bootstrap enumerates Releases API array responses before filtering product tracks and counting pages, fixing the `Cannot convert value "android" to type "System.Int32"` installation failure. The release also includes reusable tray management windows and validated desktop screenshot attachments.
+
+All ten installer regression cases passed across Windows PowerShell 5.1 and PowerShell 7; the focused installer hotfix's full CLI suite passed 197 tests. Exact-head desktop checks and release-asset smoke passed, including the Windows installer lifecycle. All six published payload hashes match `SHA256SUMS.txt`, and the downloaded Windows CLI passed `--version` and `--help`. The public bootstrap resolves beta.8. Android 1.18.1 and Plugin 1.12.0 remain unchanged; no fresh physical UI certification is claimed.
+
 ## 2026-09-14 — Android 1.17.0 and Plugin 1.11.3 publication verified
 
 Published [Hermes-Relay Android 1.17.0](https://github.com/Codename-11/hermes-relay/releases/tag/android-v1.17.0) (versionCode 57) and [Hermes-Relay Plugin 1.11.3](https://github.com/Codename-11/hermes-relay/releases/tag/server-v1.11.3) from `52f3f7565811828824d42bc9b432296271a2f9c3`. Both immutable tags retain tree `b366c9567759e509d39b6495197ffd35b3eeb430`. Android public APK/AAB bytes match the signed Play preflight artifact; Plugin wheel/sdist metadata and checksums were independently verified.

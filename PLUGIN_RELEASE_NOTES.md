@@ -1,24 +1,23 @@
 # Hermes-Relay Plugin v__VERSION__
 
-**Release Date:** September 28, 2026
+**Release Date:** October 7, 2026
 
 ## Summary
 
-Secure Link gains guided host checks and pairing, Android screenshot tools deliver captured images to host vision, and OpenAI Realtime sessions use the required output audio rate.
+Dashboard pairing provides separate Android and CLI+UI choices, clearer connection addresses, and more reliable QR invites.
 
 ## Added
 
-- Guided Secure Link setup in Dashboard and the Desktop Relay pane uses read-only host checks, restart instructions, and a signed pairing handoff.
-- Provider usage reports SuperGrok subscription windows, product usage, and on-demand credit state for hosts signed in with `xai-oauth`.
+- CLI+UI pairing invites include route candidates and Secure Link certificate trust.
 
 ## Fixed
 
-- Authentication failures no longer write client-supplied envelope fields to service logs.
-- OpenAI Realtime Agent sessions include the output PCM sample rate required by the current API. (#644)
-- Android screenshot and navigation tools resolve authenticated media tokens into bounded images for host vision while retaining legacy inline-image compatibility. (#593)
-- Relay-owned media uploads are removed on token expiry, eviction, and shutdown, and media logs omit sensitive tokens and file paths.
-- Secure Link preserves Gateway ticket authentication and Dashboard sign-in, bounds proxied responses, and leaves ordinary Relay available when optional Secure Link configuration fails.
-- Dashboard pairing QR codes support certificate-bearing invites, and health/status checks avoid extra loopback probes.
+- Connection guidance shows protocols and ports, includes direct Tailscale Relay routes, and avoids assuming a public Relay listener from a Dashboard address.
+- Expired and oversized invites show actionable errors. QR codes remain fully visible, and setup distinguishes Plugin activation from discovery.
+
+## Compatibility
+
+Full-invite CLI import requires a compatible CLI build newer than the currently published 0.4.0-beta.8. This Plugin release does not publish that companion. Existing Android pairing and legacy CLI connection settings remain supported.
 
 ## Install / update
 

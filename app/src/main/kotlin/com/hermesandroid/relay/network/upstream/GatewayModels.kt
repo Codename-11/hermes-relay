@@ -180,6 +180,7 @@ data class GatewayBackgroundTurnCompletion(
     val liveSessionId: String,
     val profile: String?,
     val expectedAssistantText: String?,
+    val successful: Boolean = false,
 )
 
 /** Input lifecycle from a deliberately detached Gateway turn. */

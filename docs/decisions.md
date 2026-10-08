@@ -2141,6 +2141,14 @@ CLI until an equally narrow native pairing dialog exists. The Windows installer
 places one CLI binary and the tray binary beside each other under
 `~/.hermes/bin`; there is no private bundled sidecar.
 
+**2026-10-05 pairing amendment.** The management form accepts full signed
+pairing invites alongside direct URL-and-code entry. It invokes the installed
+CLI's existing invite flow with a bounded child-process environment value,
+keeping invite contents out of command arguments and activity records. The
+Dashboard's explicit CLI+UI pairing target adds existing direct Relay
+compatibility routes. Neither flow adds mandatory Hermes sign-in, publishes a
+listener, or changes device approval and local per-host access policy.
+
 **2026-08-11 access and host amendment.** Stored relay URLs represent distinct
 Hermes hosts, not peer devices on one relay. The compact host selector lists
 those local pairings and places **Pair another host...** inside the selector;

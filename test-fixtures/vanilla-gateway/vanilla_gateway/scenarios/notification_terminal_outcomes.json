@@ -1,0 +1,71 @@
+{
+  "name": "notification_terminal_outcomes",
+  "live_session_id": "fixture-live-1",
+  "stored_session_id": "20260929_notification_fixture",
+  "profile": "default",
+  "contract_requirements": [
+    "gateway.message_complete"
+  ],
+  "turns": [
+    {
+      "steps": [
+        {
+          "op": "event",
+          "type": "message.start"
+        },
+        {
+          "op": "set_running",
+          "value": false
+        },
+        {
+          "op": "event",
+          "type": "message.complete",
+          "payload": {
+            "text": "Synthetic terminal",
+            "status": "complete"
+          }
+        }
+      ]
+    },
+    {
+      "steps": [
+        {
+          "op": "event",
+          "type": "message.start"
+        },
+        {
+          "op": "set_running",
+          "value": false
+        },
+        {
+          "op": "event",
+          "type": "message.complete",
+          "payload": {
+            "text": "Synthetic terminal",
+            "status": "error"
+          }
+        }
+      ]
+    },
+    {
+      "steps": [
+        {
+          "op": "event",
+          "type": "message.start"
+        },
+        {
+          "op": "set_running",
+          "value": false
+        },
+        {
+          "op": "event",
+          "type": "message.complete",
+          "payload": {
+            "text": "Synthetic terminal",
+            "status": "interrupted"
+          }
+        }
+      ]
+    }
+  ]
+}

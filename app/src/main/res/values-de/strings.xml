@@ -725,7 +725,7 @@
     <string name="settings_bridge_desc">Vom Relay gewährte Bridge-Steuerung des Smartphones</string>
     <string name="settings_bridge_core_desc">Relay-Funktionen ohne Sideload-Gerätesteuerung</string>
     <string name="settings_relay_sessions">Relay-Sitzungen</string>
-    <string name="settings_relay_sessions_desc">Mit diesem Server gekoppelte Smartphones widerrufen oder verlängern</string>
+    <string name="settings_relay_sessions_desc">Gekoppelte Telefone, Sitzungsdauer und Zugriff verwalten</string>
     <string name="settings_notification_companion">Benachrichtigungsassistent</string>
     <string name="settings_notification_companion_desc">Geteilte Smartphone-Benachrichtigungen für gekoppelte Relay-Werkzeuge</string>
     <string name="settings_media">Medien</string>
@@ -2655,7 +2655,7 @@
 
     <!-- SessionTtlPickerDialog -->
     <string name="ttl_title">Diese Kopplung behalten für&#8230;</string>
-    <string name="ttl_body">Dein Smartphone verbindet sich in diesem Zeitraum automatisch erneut. Nach Ablauf musst du es erneut koppeln, um Relay-Funktionen zu verwenden.</string>
+    <string name="ttl_body">Der Betreiber des Hosts genehmigt die tatsächliche Dauer und Funktionsberechtigungen. Deine Auswahl kann diese Genehmigung nicht erweitern. Kopple nach Ablauf des Zugriffs erneut mit einem neuen, vom Betreiber genehmigten Code.</string>
     <string name="ttl_pair">Koppeln</string>
     <string name="ttl_cancel">Abbrechen</string>
     <string name="ttl_option_1d">1 Tag</string>
@@ -4622,4 +4622,14 @@
     <string name="voice_streaming_stopped_basic_next">Die Streaming-Sprachausgabe wurde unterbrochen. Der restliche Text nutzt die einfache Sprachausgabe. Prüfe die Einstellungen des Sprachanbieters.</string>
     <string name="stats_tts_queue_wait">Wartezeit auf Audio</string>
     <string name="stats_tts_player_start">Startverzögerung des Players</string>
+    <string name="chat_unread_reply">Ungelesene Antwort</string>
+    <string name="chat_unread_conversations">Ungelesene Unterhaltungen: %1$d</string>
+    <string name="paired_devices_lifetime">Sitzungsdauer</string>
+    <string name="paired_devices_shorten_title">Diese Kopplung verkürzen</string>
+    <string name="paired_devices_shorten_body">Du kannst die Sitzung dieses Telefons verkürzen. Zum Verlängern oder Erneuern brauchst du einen neuen, vom Betreiber genehmigten Kopplungscode. Kopple das Telefon damit erneut. Funktionsberechtigungen können früher ablaufen: Bridge-Zugriff ist bei befristeten Sitzungen standardmäßig auf 7 Tage begrenzt. Verkürzen erneuert weder Berechtigungen noch die Bildschirmfreigabe auf dem Telefon.</string>
+    <string name="paired_devices_shorten">Verkürzen</string>
+    <string name="paired_devices_pair_again">Erneut koppeln</string>
+    <string name="paired_devices_policy_failed">Die Sitzung konnte nicht verkürzt werden. Aktualisiere die Relay-Sitzungen und versuche eine kürzere Dauer, oder kopple erneut mit einem neuen, vom Betreiber genehmigten Code, um den Zugriff zu erneuern.</string>
+    <string name="paired_devices_updating">Sitzung wird aktualisiert…</string>
+    <string name="paired_devices_no_shorter_duration">Keine kürzere Vorgabe verfügbar. Du kannst diese Sitzung widerrufen oder zur Erneuerung erneut koppeln.</string>
 </resources>

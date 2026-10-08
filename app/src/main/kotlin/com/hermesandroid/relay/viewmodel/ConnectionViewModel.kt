@@ -930,6 +930,12 @@ internal fun migratedBackgroundAvatar(
 
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
+    // Eager Main.immediate collectors can rebuild clients during construction.
+    // Their non-null topology input must exist before any collector starts.
+    private var topologyConnectionId: String? = null
+    private var topologyGatewayMode: String? = null
+    private var topologyProfiles: List<String> = emptyList()
+
     private val ctx: Context get() = getApplication()
 
     companion object {
@@ -3237,16 +3243,20 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // are on until POST_NOTIFICATIONS is actually granted.
     // ChatViewModel.notifyOnTurnComplete; ChatSettingsScreen owns the toggle
     // + the POST_NOTIFICATIONS runtime request on first enable.
-    private val defaultNotifyTurnComplete: Boolean = defaultChatAlertsEnabled(
+    private fun defaultNotifyTurnComplete(): Boolean = defaultChatAlertsEnabled(
         sdkInt = Build.VERSION.SDK_INT,
         notificationsPermitted = androidx.core.content.ContextCompat.checkSelfPermission(
-                application,
+                getApplication<Application>(),
                 android.Manifest.permission.POST_NOTIFICATIONS,
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED,
     )
-    val notifyTurnComplete: StateFlow<Boolean> = application.relayDataStore.data
-        .map { it[KEY_NOTIFY_TURN_COMPLETE] ?: defaultNotifyTurnComplete }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, defaultNotifyTurnComplete)
+    private val notificationPermissionDefault = MutableStateFlow(defaultNotifyTurnComplete())
+    val notifyTurnComplete: StateFlow<Boolean> = combine(
+        application.relayDataStore.data,
+        notificationPermissionDefault,
+    ) { preferences, permitted ->
+        preferences[KEY_NOTIFY_TURN_COMPLETE] ?: permitted
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, notificationPermissionDefault.value)
 
     fun setNotifyTurnComplete(enabled: Boolean) {
         viewModelScope.launch {
@@ -4497,6 +4507,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             profileController.profileSessionStore.clearConnection(connectionId)
             profileController.profileDisplayAliasStore.clearConnection(connectionId)
             profileController.profileIconStore.clearConnection(connectionId)
+            com.hermesandroid.relay.data.ChatUnreadStore(getApplication<Application>()).removeConnection(connectionId)
             com.hermesandroid.relay.data.BridgeCapabilityPolicyRepository(getApplication())
                 .clearConnection(connectionId)
         } finally {
@@ -5566,6 +5577,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      *   that can't measure it (or want to force a probe) pass [Long.MAX_VALUE].
      */
     fun revalidateOnResume(awayMs: Long) {
+        // Onboarding and Android Settings can grant permission after this VM
+        // was created. Refresh before the brief-resume network early return;
+        // an explicit chat-alert preference still wins over this default.
+        notificationPermissionDefault.value = defaultNotifyTurnComplete()
         // Relay recovery is independent of standard API health. Even a brief
         // resume should replace ordinary WSS backoff with an immediate attempt.
         reconnectIfStale()
@@ -5900,9 +5915,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
-    private var topologyConnectionId: String? = null
-    private var topologyGatewayMode: String? = null
-    private var topologyProfiles: List<String> = emptyList()
 
     fun selectedProfileUsesIsolatedApiRoute(): Boolean {
         val profile = profileController.selectedProfile.value ?: return false
@@ -8756,6 +8768,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 authManager.clearSession()
                 authManager.clearApiKey()
                 check(dataManager.resetAppData()) { "App data store reset failed" }
+                com.hermesandroid.relay.data.ChatUnreadStore(getApplication<Application>()).clear()
                 profileController.profileSelectionStore.clearAll()
                 profileController.profileLockStore.clearAll()
                 com.hermesandroid.relay.data.SupervisedModeStore(getApplication<Application>())

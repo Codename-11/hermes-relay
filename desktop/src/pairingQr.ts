@@ -441,7 +441,7 @@ export function assertDesktopCompatibleRelayUrl(raw: string): void {
   if (isDashboardRelayIngressUrl(raw)) {
     throw new Error(
       'Desktop cannot use Dashboard Relay ingress until Dashboard WebSocket ticket support is available; ' +
-        'select a direct Relay fallback',
+        'on the host run hermes pair --legacy-direct-relay and select a reachable direct Relay fallback',
     )
   }
 }
@@ -616,7 +616,9 @@ export async function probeCandidatesByPriority(
   if (selectableCandidates.length === 0) {
     throw new Error(
       'no Desktop-compatible endpoint candidates to probe — ' +
-        'Dashboard Relay ingress requires Dashboard WebSocket ticket support',
+        'Dashboard Relay ingress requires Dashboard WebSocket ticket support. ' +
+        'On the host run hermes pair --legacy-direct-relay, then use the full invite ' +
+        'or a deliberately reachable direct Relay WebSocket URL with its protocol and port',
     )
   }
   const now = Date.now()

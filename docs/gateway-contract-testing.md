@@ -68,6 +68,7 @@ the upstream contract identifiers it depends on.
 |---|---|
 | `initial_history_bind` | Durable, profile-scoped history is already available when the client resumes and first binds its rendered transcript |
 | `ordinary_turn` | Normal message start, deltas, completion, and persisted history |
+| `notification_terminal_outcomes` | Successful, failed, and interrupted terminal envelopes remain distinguishable for detached-turn alerts |
 | `unsolicited_voice_completions` | One submitted turn followed by live same-session process, watch, and delegation answers, including duplicate start/terminal frames; Standard Voice receives each admitted answer once |
 | `clarify_legacy` | Top-level single question and unkeyed `clarify.respond` |
 | `clarify_normalized_single` | Native request with one normalized question, capability advertisement and exact `clarify.lock` |

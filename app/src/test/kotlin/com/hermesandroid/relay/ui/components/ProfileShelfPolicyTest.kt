@@ -10,6 +10,16 @@ import org.junit.Test
 
 class ProfileShelfPolicyTest {
     @Test
+    fun unreadServerDefaultRemainsDiscoverableBesideItsNamedProfile() {
+        val roster = listOf(Profile("research", "fixture"))
+        val choices = ProfileShelfPolicy.choices(roster, ProfilePresentation(), "research", "research",
+            unreadProfileKeys = setOf(AgentDisplay.SERVER_DEFAULT_PROFILE_KEY))
+        assertEquals(setOf(AgentDisplay.SERVER_DEFAULT_PROFILE_KEY, "research"), choices.map { it.key }.toSet())
+        val readChoices = ProfileShelfPolicy.choices(roster, ProfilePresentation(), "research", "research")
+        assertEquals(listOf("research"), readChoices.map { it.key })
+    }
+
+    @Test
     fun resolvedDefaultGroupsOnlyExactIdentityAndRetainsSelectedRequestKey() {
         val victor = Profile("victor", "", displayName = "Victor")
         val duplicate = Profile("other", "", displayName = "Victor")

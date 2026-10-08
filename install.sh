@@ -478,7 +478,9 @@ if [ -d "$RELAY_HOME/plugin/dashboard" ]; then
                 mv "$DASHBOARD_MANIFEST_DISABLED" "$DASHBOARD_MANIFEST_ACTIVE"
             fi
             if [ -f "$DASHBOARD_MANIFEST_ACTIVE" ]; then
-                ok "Dashboard plugin enabled — relay tab will appear in the hermes-agent dashboard"
+                ok "Dashboard plugin files installed"
+                info "  Activate with: hermes plugins enable hermes-relay"
+                info "  Then restart the Dashboard process to mount its backend and refresh the browser."
             else
                 info "  Dashboard plugin manifest missing — skipped (expected when installing an older branch)"
             fi
@@ -490,8 +492,9 @@ if [ -d "$RELAY_HOME/plugin/dashboard" ]; then
             ok "Dashboard plugin disabled — hermes-agent dashboard will not load the relay tab"
             ;;
     esac
-    # Best-effort rescan so the toggle takes effect without a dashboard
-    # restart. Silent if the dashboard isn't running, or binds somewhere
+    # Best-effort discovery rescan. A newly installed Python backend still
+    # needs a Dashboard process restart after explicit plugin activation.
+    # Silent if the dashboard isn't running, or binds somewhere
     # we can't see from here.
     #
     # The dashboard may bind to 127.0.0.1, localhost, 0.0.0.0, or a
@@ -519,7 +522,7 @@ if [ -d "$RELAY_HOME/plugin/dashboard" ]; then
             for port in "$_dash_port" 9119 9100 9000; do
                 url="http://${host}:${port}/api/dashboard/plugins/rescan"
                 if curl -sf -m 2 -X GET "$url" >/dev/null 2>&1; then
-                    info "  Triggered dashboard rescan at ${host}:${port}"
+                    info "  Refreshed dashboard discovery at ${host}:${port}; new backend routes require a Dashboard restart"
                     _rescan_hit=1
                     break 2
                 fi

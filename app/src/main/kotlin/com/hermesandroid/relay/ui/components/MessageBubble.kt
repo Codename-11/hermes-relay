@@ -114,6 +114,8 @@ fun MessageBubble(
     showAgentIdentity: Boolean = true,
     showTimestamps: Boolean = true,
     showWorkingStatus: Boolean = true,
+    // ChatScreen owns a fixed progress rail; other surfaces retain inline status.
+    showStreamingStatus: Boolean = true,
     showUsage: Boolean = true,
     showTechnicalBadges: Boolean = true,
     showAssistantImages: Boolean = true,
@@ -439,8 +441,8 @@ fun MessageBubble(
         // is rendered directly in the conversation
         // lane below, without an opaque bubble. Standalone cards own their own
         // surface; wrapping those in another filled bubble duplicates the chrome.
-        streamingStatusLabel?.takeIf { showWorkingStatus }?.let { streamingStatus ->
-            StandaloneStreamingStatus(
+        streamingStatusLabel?.takeIf { showWorkingStatus && showStreamingStatus }?.let { streamingStatus ->
+            ChatWorkingStatus(
                 status = streamingStatus,
                 accessibilityDescription = a11yDescription,
                 textColor = textColor,
@@ -1173,9 +1175,9 @@ private fun MessagePathBadge(text: String, leadingIcon: ImageVector? = null) {
     }
 }
 
-/** First-token progress rendered in the conversation lane, not inside a message bubble. */
+/** Shared progress presentation for chat chrome and standalone message previews. */
 @Composable
-private fun StandaloneStreamingStatus(
+internal fun ChatWorkingStatus(
     status: String,
     accessibilityDescription: String,
     textColor: Color,
@@ -1197,6 +1199,7 @@ private fun StandaloneStreamingStatus(
             )
             ThinkingIndicatorStyle.Dots -> StreamingDots(
                 color = textColor.copy(alpha = 0.6f),
+                animated = thinkingIndicator.animated,
             )
         }
         Text(
@@ -1215,8 +1218,13 @@ private fun StandaloneStreamingStatus(
 @Composable
 fun StreamingDots(
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+    animated: Boolean = true,
 ) {
+    if (!animated) {
+        Text(text = "• • •", fontSize = 14.sp, color = color, modifier = modifier)
+        return
+    }
     val transition = rememberInfiniteTransition(label = "streaming")
 
     val dot1Alpha by transition.animateFloat(
