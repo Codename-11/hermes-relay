@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Android Relay sessions distinguish shortening from operator-approved renewal, retain actionable update failures, and expose accessible pairing duration controls. (#659)
+
 - Pairing shows internal and remote addresses with protocols and ports, includes direct Tailscale Relay routes for CLI+UI, and avoids inferring public Relay listeners from Dashboard URLs. The Dashboard handles expired and oversized invites and distinguishes plugin activation from discovery.
 - Android avoids a startup crash when profile state arrives during connection setup.
 - Android refreshes background-alert permission defaults after onboarding and keeps notification delivery tied to the original connection, profile, and conversation across navigation.
