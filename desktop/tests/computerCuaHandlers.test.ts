@@ -50,7 +50,7 @@ class FakeCuaSession {
     this.calls.push({ name: 'snapshot', args })
     return {
       snapshot_id: `s0000000${this.snapshotNumber}`,
-      elements: [{ element_index: 7, element_token: 'e1234abcd', role: 'button', label: 'Seven' }],
+      elements: [{ element_index: 7, element_token: `s0000000${this.snapshotNumber}:7`, role: 'button', label: 'Seven' }],
       tree_markdown: '[7] button Seven',
       screenshot_base64: 'aW1hZ2U=',
       screenshot_mime_type: 'image/png'
@@ -162,6 +162,9 @@ test('CUA handlers issue a Hermes token, execute once, and verify with a fresh s
     assert.equal(acted.ok, true)
     assert.equal(acted.backend, 'cua')
     assert.equal(acted.verification_snapshot.snapshot_id, 's00000002')
+    assert.deepEqual(item.session.calls.find(call => call.name === 'clickElement')?.args, {
+      pid: 100, windowId: 200, elementToken: 's00000001:7'
+    })
     assert.deepEqual(item.session.calls.map(call => call.name), [
       'listWindows', 'snapshot', 'listWindows', 'clickElement', 'snapshot'
     ])

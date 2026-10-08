@@ -8,13 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- CLI+UI imports full pairing invites from the Dashboard, preserving route candidates and Secure Link certificate trust.
 - Android marks unread completed conversations in the session drawer and shows unread conversation counts on profiles and the chat header.
 - Reply notifications show the owning agent's official profile name and cached avatar, plus the conversation title.
 
 ### Fixed
 
 - Android's All Profiles session list shows each profile's configured display name without changing its canonical session ownership.
+- Desktop computer control accepts the current CUA Driver element token format. Element actions such as click, set value, and scroll no longer fail with a transport error when CUA Driver 0.20 or newer returns `<snapshot>:<index>` element handles; the legacy token form remains accepted.
+- Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
 - Android Relay sessions distinguish shortening from operator-approved renewal, retain actionable update failures, and expose accessible pairing duration controls. (#659)
 
 - Android avoids a startup crash when profile state arrives during connection setup.
@@ -23,6 +24,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Chat progress stays above the composer while scrolling and disappears when the turn finishes or waits for input.
 
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
+
+## [0.4.0-beta.9] - 2026-10-07
+
+### Added
+
+- The Windows management UI imports full Dashboard pairing invites through a native Paste invite control, preserving route candidates and Secure Link certificate trust.
+
+### Changed
+
+- CLI pairing displays advertised routes with protocols and ports and gives actionable direct-route guidance when Dashboard authentication is unsupported.
 
 ## [Plugin 1.13.0] - 2026-10-07
 
