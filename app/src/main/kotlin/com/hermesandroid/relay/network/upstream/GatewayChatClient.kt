@@ -143,9 +143,9 @@ class GatewayChatClient(
         private const val BOT_CHAT_TITLE = "Bot Chat"
 
         /**
-         * Quiet-reporting interval for the idle-progress watchdog. Reset on
-         * every received gateway event, so it only trips after this long with
-         * no events at all. Tripping only logs the quiet; nothing acts on it.
+         * Quiet-period interval for a read-only liveness check. Silence never
+         * interrupts or fails a turn; exact server Idle can recover a lost final
+         * frame through the existing authoritative history reconciliation.
          */
         private const val TURN_TIMEOUT_MS = 180_000L
 
@@ -591,6 +591,8 @@ class GatewayChatClient(
         val storedSessionId: String,
         val liveSessionId: String,
         val progressGeneration: Long,
+        val socket: WebSocket,
+        val profile: String?,
     )
 
     /**
@@ -1206,7 +1208,7 @@ class GatewayChatClient(
                 // this resume. Unknown gateway sessions captured during the
                 // narrow ack race remain foreign and are discarded.
                 val replay = pending.closeAndTake(liveChildId)
-                if (replay.truncated) dispatchedCallbacks.onReconcileRequired()
+                if (replay.truncated) dispatchedCallbacks.onReconcileRequired(false)
                 replay.events.forEach { event ->
                     if (childWatches[liveChildId] === registration) {
                         registration.mapper.onEvent(event.type, event.payload)
@@ -2716,16 +2718,16 @@ class GatewayChatClient(
     }
 
     /**
-     * Capture only a locally submitted/recovered turn. Merely observing an
-     * exact session through the shared Gateway socket never grants Android
-     * authority to settle Desktop/TUI work.
+     * Capture a locally admitted stream, including an exact unsolicited turn.
+     * Settling its UI from read-only state does not attach or stop the runtime.
      */
     private fun captureActiveTurnLivenessProbe(): ActiveTurnLivenessProbe? {
         val turn = activeTurn ?: return null
         val generation = turn.captureLivenessGeneration() ?: return null
         val storedId = storedSessionId ?: return null
         val liveId = liveSessionId ?: return null
-        return ActiveTurnLivenessProbe(turn, storedId, liveId, generation)
+        val socket = webSocket ?: return null
+        return ActiveTurnLivenessProbe(turn, storedId, liveId, generation, socket, liveSessionProfile)
     }
 
     /**
@@ -2740,6 +2742,8 @@ class GatewayChatClient(
     ) {
         probe ?: return
         if (activeTurn !== probe.turn ||
+            webSocket !== probe.socket ||
+            liveSessionProfile != probe.profile ||
             storedSessionId != probe.storedSessionId ||
             liveSessionId != probe.liveSessionId
         ) return
@@ -3147,7 +3151,9 @@ class GatewayChatClient(
     }
 
     fun shutdown() {
-        activeTurn?.cancel()
+        activeTurn?.let { turn ->
+            if (turn.androidOwned) turn.cancel() else turn.detach()
+        }
         activeTurn = null
         backgroundTurns.clear()
         cancelledTurnDrain = null
@@ -4511,6 +4517,25 @@ class GatewayChatClient(
                 }
                 if (preservedLiveId == null) {
                     true
+                } else if (!turn.androidOwned) {
+                    // Restore/retire asks without attaching the producer's runtime.
+                    liveSessionId = preservedLiveId
+                    val ready = readySignal ?: throw GatewayRpcException("gateway connection changed")
+                    val socket = webSocket ?: throw GatewayRpcException("gateway socket changed")
+                    val snapshot = rpc("session.events.since", buildJsonObject {
+                        put("session_id", preservedLiveId)
+                        put("last_seen", Long.MAX_VALUE)
+                    }, expectedConnection = ready, expectedSocket = socket)
+                    if (readySignal !== ready || webSocket !== socket || activeTurn !== turn ||
+                        liveSessionId != preservedLiveId
+                    ) {
+                        false
+                    } else if (snapshot.isSuccess) {
+                        replayServerRequests(snapshot.getOrThrow(), preservedLiveId)
+                        true
+                    } else {
+                        snapshot.exceptionOrNull().isMethodNotFound()
+                    }
                 } else {
                     // Bind before activation so a tail event racing the RPC ack
                     // still matches the original active turn.
@@ -4564,8 +4589,8 @@ class GatewayChatClient(
                     "Gateway socket rejoined mid-turn (session=$storedSessionId) — " +
                         "rebound live session, awaiting tail",
                 )
-                // The fresh socket won't replay the in-flight turn; the watchdog
-                // only logs the quiet, so no shorter lease is needed.
+                // A quiet tail is checked through read-only state. Route changes
+                // do not shorten a healthy turn's lifetime.
                 turn.armWatchdog()
                 return
             }
@@ -4801,7 +4826,7 @@ class GatewayChatClient(
         val callbacks: GatewayTurnCallbacks,
         dedupeAdjacentMessageStarts: Boolean = false,
         deferEvents: Boolean = false,
-        private val androidOwned: Boolean = false,
+        val androidOwned: Boolean = false,
         private val onTransportAccepted: () -> Unit = { },
     ) : ActiveTurnHandle {
         private val mapper = GatewayEventMapper(callbacks, dedupeAdjacentMessageStarts)
@@ -4937,7 +4962,7 @@ class GatewayChatClient(
             // marshalled through the same dispatcher, preserving callback order
             // even when the WebSocket reader and reconnect coroutine differ.
             if (type == "message.complete" && reconcileRequired) {
-                callbacks.onReconcileRequired()
+                callbacks.onReconcileRequired(false)
             }
             mapper.onEvent(type, payload)
             if (mapper.turnEnded) {
@@ -4946,7 +4971,7 @@ class GatewayChatClient(
                 handoffQueuedSuccessor()
             } else {
                 // Map first: native asks own their deadline, including across unrelated events.
-                // Rearm on every event; the duration only paces the log line.
+                // Rearm the read-only check after progress.
                 armWatchdog()
             }
         }
@@ -4957,7 +4982,7 @@ class GatewayChatClient(
          * heartbeat can race `prompt.submit` and is not a completion boundary.
          */
         fun captureLivenessGeneration(): Long? =
-            if (androidOwned && started && !ended) progressGeneration.get() else null
+            if (started && !ended) progressGeneration.get() else null
 
         fun settleFromAuthoritativeSessionState(
             running: Boolean?,
@@ -4982,7 +5007,7 @@ class GatewayChatClient(
             disarmWatchdog()
             armSettledTurnDrain()
             Log.i(TAG, "Gateway turn settled from $source after missing terminal frame")
-            callbacks.onReconcileRequired()
+            callbacks.onReconcileRequired(true)
             callbacks.onComplete()
             tracer.done("history-reconcile")
             handoffQueuedSuccessor()
@@ -5063,10 +5088,11 @@ class GatewayChatClient(
             watchdog = scope.launch {
                 while (true) {
                     delay(turnIdleTimeoutMs)
-                    if (ended) break
-                    // A healthy turn can be quiet for minutes (slow prefill, long
-                    // tool); log it and keep waiting. The server owns liveness.
-                    Log.w(TAG, "Gateway turn quiet for ${turnIdleTimeoutMs}ms; still waiting (no interrupt)")
+                    if (ended || activeTurn !== this@GatewayTurn) break
+                    // Missing/unsupported/failed snapshots remain unknown. Only
+                    // exact Idle with no intervening progress settles the stream.
+                    Log.i(TAG, "Gateway turn quiet; checking authoritative state (no interrupt)")
+                    listActiveSessions()
                 }
             }
         }
@@ -5112,6 +5138,9 @@ class GatewayChatClient(
 
         private fun interruptServerSide() {
             val sid = liveSessionId ?: return
+            // This path is explicit handle cancellation, never idle expiry.
+            // Upstream rejects arbitrary reason/source keys on the wire.
+            Log.i(TAG, "session.interrupt requested reason=client_cancel")
             scope.launch {
                 // Best-effort: unblocks the server (also releases blocked
                 // interactive asks). Failure is fine — socket may be gone.
@@ -5256,7 +5285,9 @@ class GatewayChatClient(
         onToolCallFailed = { a, b -> dispatchIfCurrent(stillCurrent) { callbacks.onToolCallFailed(a, b) } },
         onToolOutputRisk = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onToolOutputRisk(v) } },
         onTurnComplete = { dispatchIfCurrent(stillCurrent) { callbacks.onTurnComplete() } },
-        onReconcileRequired = { dispatchIfCurrent(stillCurrent) { callbacks.onReconcileRequired() } },
+        onReconcileRequired = { authoritative ->
+            dispatchIfCurrent(stillCurrent) { callbacks.onReconcileRequired(authoritative) }
+        },
         onComplete = { dispatchIfCurrent(stillCurrent) { callbacks.onComplete() } },
         onUsage = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onUsage(v) } },
         onError = { v -> dispatchIfCurrent(stillCurrent) { callbacks.onError(v) } },

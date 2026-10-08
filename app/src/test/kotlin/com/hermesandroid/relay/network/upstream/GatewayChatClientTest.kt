@@ -931,6 +931,10 @@ class GatewayChatClientTest {
         delay(800)
         assertTrue(client.hasActiveTurn())
         assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+        harness.activeSessionListPayload = exactActiveSessionPayload("idle")
+        client.listActiveSessions()
+        assertTrue("pending request must prevent premature settlement", client.hasActiveTurn())
+        assertEquals(0, r.completions.get())
         client.respondAsk(r.interactions.single(), "answer").getOrThrow()
         ws.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "Done") }, "live-1"))
     }
@@ -1719,6 +1723,161 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `quiet unsolicited turn survives silence and settles from exact idle state`() = runBlocking {
+        rebuildClient(turnIdleTimeoutMs = 150L)
+        val r = Recorder()
+        client.setUnsolicitedTurnProvider { GatewayInboundTurnRegistration(r.callbacks) { true } }
+        assertTrue(client.prewarmAwait("stored-session"))
+        val ws = harness.awaitServerSocket()
+        harness.activeSessionListPayload = exactActiveSessionPayload("working", "live-resumed", "stored-session")
+        ws.send(harness.eventFrame("message.start", null, "live-resumed"))
+        awaitCondition { r.starts.get() == 1 }
+        Thread.sleep(650)
+        assertTrue("silence failed observer: ${r.errors}", r.errors.isEmpty())
+        assertEquals(0, r.completions.get())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+        harness.activeSessionListPayload = exactActiveSessionPayload("idle", "live-resumed", "stored-session")
+        assertTrue("quiet probe did not settle observer", r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(1, r.reconcileRequests.get())
+        assertEquals(1, r.completions.get())
+        assertTrue(harness.rpcLog.none { it.first in setOf("session.interrupt", "session.activate", "prompt.submit") })
+    }
+
+    @Test
+    fun `quiet owned tool and provider wait accepts late completion`() {
+        rebuildClient(turnIdleTimeoutMs = 150L)
+        val r = Recorder()
+        client.sendTurn(null, "quiet tools", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        harness.activeSessionListPayload = exactActiveSessionPayload("working")
+        ws.send(harness.eventFrame("tool.start", buildJsonObject { put("tool_id", "t1"); put("name", "terminal") }, "live-1"))
+        awaitCondition { r.toolStarts.isNotEmpty() }
+        Thread.sleep(500)
+        ws.send(harness.eventFrame("tool.complete", buildJsonObject { put("tool_id", "t1"); put("name", "terminal") }, "live-1"))
+        Thread.sleep(500)
+        assertTrue("silence failed owner: ${r.errors}", r.errors.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+        ws.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "late answer") }, "live-1"))
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("late answer"), r.textDeltas.toList())
+        assertEquals(1, r.completions.get())
+    }
+
+    @Test
+    fun `quiet unknown state never implies failure and explicit Stop still interrupts`() {
+        rebuildClient(turnIdleTimeoutMs = 150L)
+        val r = Recorder()
+        val handle = client.sendTurn(null, "wait", null, r.callbacks) { r.preflightFailures += it }
+        val ws = harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+        ws.send(harness.eventFrame("message.start", null, "live-1"))
+        for (code in listOf(5000, -32601)) {
+            harness.rpcErrors["session.active_list"] = code to "unavailable"
+            Thread.sleep(500)
+            assertTrue(r.errors.isEmpty())
+            assertTrue(client.hasActiveTurn())
+            assertEquals(0, r.completions.get())
+        }
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+        handle.cancel()
+        harness.awaitRpc("session.interrupt")
+        assertEquals(1, harness.rpcLog.count { it.first == "session.interrupt" })
+    }
+
+    @Test
+    fun `quiet unsolicited reconnect observes without activating producer and recovers idle`() = runBlocking {
+        rebuildClient(turnIdleTimeoutMs = 200L)
+        val r = Recorder()
+        client.setUnsolicitedTurnProvider { GatewayInboundTurnRegistration(r.callbacks) { true } }
+        assertTrue(client.prewarmAwait("stored-session"))
+        val ws = harness.awaitServerSocket()
+        harness.activeSessionListPayload = exactActiveSessionPayload("working", "live-resumed", "stored-session")
+        ws.send(harness.eventFrame("message.start", null, "live-resumed"))
+        awaitCondition { r.starts.get() == 1 }
+        ws.close(1012, "fixture reconnect")
+        harness.awaitServerSocket()
+        Thread.sleep(650)
+        assertTrue(r.errors.isEmpty())
+        assertEquals(0, r.completions.get())
+        assertTrue(harness.rpcLog.none { it.first in setOf("session.activate", "session.interrupt", "prompt.submit") })
+        assertEquals(1, harness.rpcLog.count { it.first == "session.resume" })
+        harness.activeSessionListPayload = exactActiveSessionPayload("idle", "live-resumed", "stored-session")
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(1, r.reconcileRequests.get())
+    }
+
+    @Test
+    fun `unsolicited reconnect restores pending native request without activation`() =
+        verifyUnsolicitedRequestRejoin(stillPending = true)
+
+    @Test
+    fun `unsolicited reconnect retires request answered elsewhere without activation`() =
+        verifyUnsolicitedRequestRejoin(stillPending = false)
+
+    private fun verifyUnsolicitedRequestRejoin(stillPending: Boolean): Unit = runBlocking {
+        rebuildClient(turnIdleTimeoutMs = 200L)
+        val r = Recorder()
+        client.setUnsolicitedTurnProvider { GatewayInboundTurnRegistration(r.callbacks) { true } }
+        assertTrue(client.prewarmAwait("stored-session"))
+        val ws = harness.awaitServerSocket()
+        harness.activeSessionListPayload = exactActiveSessionPayload("working", "live-resumed", "stored-session")
+        ws.send(harness.eventFrame("message.start", null, "live-resumed"))
+        awaitCondition { r.starts.get() == 1 }
+        nativeRequest(ws, JsonPrimitive("srq-inbound"), "clarify", """{"session_id":"live-resumed","question":"Choose?"}""")
+        awaitCondition { r.interactions.size == 1 }
+        harness.recoveryOpenRequests = buildJsonArray {
+            if (stillPending) add(harness.json.parseToJsonElement(
+                """{"id":"srq-inbound","method":"clarify","params":{"session_id":"live-resumed","question":"Choose?"}}""",
+            ))
+        }
+        ws.close(1012, "fixture reconnect")
+        val replacement = harness.awaitServerSocket()
+        harness.awaitRpc("session.events.since")
+        if (stillPending) {
+            // Replay refreshes socket ownership without duplicating the same card.
+            var lastReplyFailure: String? = null
+            var replyAccepted = false
+            val answered = runCatching {
+                awaitCondition {
+                    if (!replyAccepted) {
+                        val result = runBlocking { client.respondAsk(r.interactions.last(), "answer") }
+                        lastReplyFailure = result.exceptionOrNull()?.message
+                        replyAccepted = result.isSuccess
+                    }
+                    replyAccepted
+                }
+            }.isSuccess
+            assertTrue("Reply rejected: $lastReplyFailure; expiries=${r.interactionExpiries}; errors=${r.errors}", answered)
+            assertEquals(JsonPrimitive("srq-inbound"), harness.serverResponses.poll(5, TimeUnit.SECONDS)?.get("id"))
+            assertEquals(1, r.interactions.size)
+        } else {
+            awaitCondition { r.interactionExpiries.size == 1 }
+            assertTrue(client.respondAsk(r.interactions.single(), "late").isFailure)
+        }
+        replacement.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "done") }, "live-resumed"))
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertTrue(r.errors.isEmpty())
+        assertTrue(harness.rpcLog.none { it.first in setOf("session.activate", "session.interrupt", "prompt.submit") })
+    }
+
+    @Test
+    fun `unsolicited client shutdown detaches without sending Stop`() = runBlocking {
+        client.shutdown()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        client = buildClient()
+        val r = Recorder()
+        client.setUnsolicitedTurnProvider { GatewayInboundTurnRegistration(r.callbacks) { true } }
+        assertTrue(client.prewarmAwait("stored-session"))
+        val ws = harness.awaitServerSocket()
+        ws.send(harness.eventFrame("message.start", null, "live-resumed"))
+        awaitCondition { r.starts.get() == 1 }
+        client.shutdown()
+        Thread.sleep(200)
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
     fun `unsolicited assistant turn for resumed session streams without sendTurn`() = runBlocking {
         val r = Recorder()
         val registrations = ConcurrentLinkedQueue<String>()
@@ -2370,6 +2529,8 @@ class GatewayChatClientTest {
     @Test
     fun `active route retarget replaces socket policy and preserves the live turn`() {
         val replacement = GatewayClientHarness()
+        replacement.recoveryRunning = true
+        replacement.activeSessionListPayload = exactActiveSessionPayload("working")
         fun dashboardFor(target: GatewayClientHarness): DashboardApiClient = DashboardApiClient(
             baseUrl = target.server.url("/").toString(),
             okHttpClient = OkHttpClient.Builder().addInterceptor { chain ->
@@ -2386,18 +2547,25 @@ class GatewayChatClientTest {
             scope = scope,
             callbackDispatcher = { it() },
             midTurnRejoinWindowMs = 3_000L,
+            turnIdleTimeoutMs = 200L,
         )
         try {
             val recorder = Recorder()
             client.sendTurn(null, "follow the route", null, recorder.callbacks) {
                 recorder.preflightFailures += it
             }
-            harness.awaitServerSocket()
+            val original = harness.awaitServerSocket()
             harness.awaitRpc("prompt.submit")
+            original.send(harness.eventFrame("message.start", null, "live-1"))
+            awaitCondition { recorder.starts.get() == 1 }
             client.retarget(dashboardFor(replacement))
             val moved = replacement.awaitServerSocket()
             val activation = replacement.awaitRpc("session.activate")
             assertEquals("live-1", activation["session_id"]?.jsonPrimitive?.content)
+            Thread.sleep(650)
+            assertEquals(0, recorder.completions.get())
+            assertTrue(recorder.errors.isEmpty())
+            assertFalse(replacement.rpcLog.any { it.first == "session.interrupt" })
             moved.send(replacement.eventFrame("message.complete", buildJsonObject {
                 put("text", "Finished on the new route")
             }, "live-1"))
@@ -5382,7 +5550,7 @@ class GatewayChatClientTest {
     }
 
     @Test
-    fun `active session idle never settles passively observed turn`() = runBlocking {
+    fun `active session idle settles admitted unsolicited stream without runtime control`() = runBlocking {
         val recorder = Recorder()
         client.setUnsolicitedTurnProvider {
             GatewayInboundTurnRegistration(recorder.callbacks) { true }
@@ -5405,7 +5573,8 @@ class GatewayChatClientTest {
         )
 
         client.listActiveSessions()
-        assertFalse(recorder.completeLatch.await(250, TimeUnit.MILLISECONDS))
+        assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(1, recorder.reconcileRequests.get())
         assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
 
         serverWs.send(
@@ -5416,6 +5585,29 @@ class GatewayChatClientTest {
             ),
         )
         assertTrue(recorder.completeLatch.await(5, TimeUnit.SECONDS))
+        Thread.sleep(150)
+        assertEquals(1, recorder.completions.get())
+    }
+
+    @Test
+    fun `unsolicited progress invalidates delayed idle snapshot`() = runBlocking {
+        val r = Recorder()
+        client.setUnsolicitedTurnProvider { GatewayInboundTurnRegistration(r.callbacks) { true } }
+        assertTrue(client.prewarmAwait("stored-session"))
+        val ws = harness.awaitServerSocket()
+        ws.send(harness.eventFrame("message.start", null, "live-resumed"))
+        awaitCondition { r.starts.get() == 1 }
+        harness.suppressAckMethods += "session.active_list"
+        val snapshot = scope.async { client.listActiveSessions() }
+        val ack = harness.awaitPendingAck()
+        ws.send(harness.eventFrame("message.delta", buildJsonObject { put("text", "new progress") }, "live-resumed"))
+        awaitCondition { r.textDeltas.isNotEmpty() }
+        harness.releaseAck(ack, exactActiveSessionPayload("idle", "live-resumed", "stored-session"))
+        assertTrue(snapshot.await() is GatewayActiveSessionsResult.Success)
+        assertEquals(0, r.completions.get())
+        assertEquals(0, r.reconcileRequests.get())
+        ws.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "new progress") }, "live-resumed"))
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
     }
 
     @Test

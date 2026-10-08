@@ -68,6 +68,7 @@ the upstream contract identifiers it depends on.
 |---|---|
 | `initial_history_bind` | Durable, profile-scoped history is already available when the client resumes and first binds its rendered transcript |
 | `ordinary_turn` | Normal message start, deltas, completion, and persisted history |
+| `quiet_turn_recovery` | Quiet tool and provider waits retain the local stream; a subsequent unsolicited turn missing its final frame settles from exact server state and HTTP history |
 | `notification_terminal_outcomes` | Successful, failed, and interrupted terminal envelopes remain distinguishable for detached-turn alerts |
 | `unsolicited_voice_completions` | One submitted turn followed by live same-session process, watch, and delegation answers, including duplicate start/terminal frames; Standard Voice receives each admitted answer once |
 | `clarify_legacy` | Top-level single question and unkeyed `clarify.respond` |
@@ -181,6 +182,16 @@ history read, and authoritative settled state. Evidence output is bounded and
 redacted.
 
 ## Current-upstream conformance
+
+For quiet-turn regression coverage, run the `quiet_turn_recovery` fixture and
+select `GatewayExternalFixtureInstrumentedTest#quietTurns_surviveToolAndProviderSilenceAndRecoverUnsolicitedHistory`
+on `standardPhoneApi36`, with `gatewayFixtureBaseUrl` pointing to the host fixture
+(for example `http://10.0.2.2:8765` on the emulator). The adapter shortens only
+the diagnostic/probe interval, observes streaming across multiple quiet windows,
+then verifies final HTTP history, one submit, and zero interrupts or activations.
+The focused `GatewayChatClientTest` wire suite additionally covers read-only Idle
+settlement of exact unsolicited streams, delayed/stale snapshots, pending asks,
+explicit Stop, and route replacement. These lanes make no physical-device claim.
 
 The `secure_link_gateway_auth` scenario exercises query and subprotocol ticket
 admission through the real Secure Link proxy, single-use rejection, a completed

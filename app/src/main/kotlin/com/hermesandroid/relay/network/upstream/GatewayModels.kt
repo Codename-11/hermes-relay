@@ -734,8 +734,10 @@ class GatewayTurnCallbacks(
      * Fired before [onComplete] when this turn rejoined after a socket gap.
      * Events emitted while the socket was unavailable are not replayed, so
      * the caller must reconcile the durable transcript after completion.
+     * [authoritativeSettlement] is true when server state replaced a missing
+     * terminal frame: the live text is partial, and no final-text match is known.
      */
-    val onReconcileRequired: () -> Unit,
+    val onReconcileRequired: (authoritativeSettlement: Boolean) -> Unit,
     val onComplete: () -> Unit,
     val onUsage: (UsageInfo?) -> Unit,
     val onError: (String) -> Unit,

@@ -218,6 +218,11 @@ class GatewayScenarioConformanceTest(unittest.TestCase):
         contract.write_text(contract.read_text().replace("'clarify'", "'clarify.future'"), encoding="utf-8")
         self.assertFalse(module.audit_sources(self.root, [module.SERVER_REQUESTS])[0].passed)
 
+    def test_native_contract_allows_additive_request_methods(self):
+        contract = self.root / "tui_gateway/contracts/server_requests.py"
+        contract.write_text(contract.read_text() + '\nserver_request("setup_choose", params=Params, result=Result)\n', encoding="utf-8")
+        self.assertTrue(module.audit_sources(self.root, [module.SERVER_REQUESTS])[0].passed)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -351,6 +356,16 @@ def resume(rid, params):
 
         self.assertFalse(result.passed)
         self.assertIn("before settled", result.problem)
+
+    def test_decomposed_settlement_retains_ordering_check(self):
+        helper = self.root / "tui_gateway/session_workdir.py"
+        helper.write_text('def _emit_settled_session_info(sid, session, agent):\n    _emit("session.info", sid, _session_info(agent, session))\n', encoding="utf-8")
+        prompt = self.root / "tui_gateway/prompt_turn.py"
+        source = 'def _run_prompt_submit():\n    try:\n        pass\n    finally:\n        session["running"] = False\n        _emit_settled_session_info(sid, session, agent)\n'
+        prompt.write_text(source, encoding="utf-8")
+        self.assertTrue(module.audit_sources(self.root, (module.GATEWAY_SETTLED_INFO,))[0].passed)
+        prompt.write_text(source.replace('session["running"] = False', 'session["running"] = True'), encoding="utf-8")
+        self.assertFalse(module.audit_sources(self.root, (module.GATEWAY_SETTLED_INFO,))[0].passed)
 
     def test_manifest_selects_known_contract_subset(self):
         manifest = self.root / "scenario.json"
