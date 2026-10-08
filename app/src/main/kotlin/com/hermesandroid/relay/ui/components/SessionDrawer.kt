@@ -306,6 +306,7 @@ fun SessionDrawerContent(
     allProfileSessionsLoading: Boolean = false,
     allProfileSessionsLoadFailed: Boolean = false,
     profileColors: Map<String, String> = emptyMap(),
+    profileDisplayNames: Map<String, String> = emptyMap(),
     onProfileColorChange: ((String, String?) -> Unit)? = null,
     onRefreshAllProfiles: (() -> Unit)? = null,
     onSelectProfileSession: ((String, String) -> Unit)? = null,
@@ -399,8 +400,10 @@ fun SessionDrawerContent(
         .filter { row ->
             val session = row.session
             val needle = trimmedQuery
+            val displayProfile = profileDisplayNames[AgentDisplay.profileSessionKey(row.profile)]
             needle.isBlank() ||
                 row.profile.contains(needle, ignoreCase = true) ||
+                displayProfile?.contains(needle, ignoreCase = true) == true ||
                 session.sessionId.contains(needle, ignoreCase = true) ||
                 session.title.orEmpty().contains(needle, ignoreCase = true) ||
                 session.model.orEmpty().contains(needle, ignoreCase = true) ||
@@ -937,13 +940,18 @@ fun SessionDrawerContent(
                         val session = row.session
                         val provisional = session.sessionId.startsWith(PROVISIONAL_THREAD_PREFIX)
                         val activityState = scopedActivityStates[sessionRowKey(row)]
+                        val displayProfile = profileDisplayNames[AgentDisplay.profileSessionKey(row.profile)]
+                            ?.trim()
+                            ?.takeIf(String::isNotEmpty)
+                            ?: row.profile
                         SessionItem(
                             modifier = if (isProjectGroup) Modifier.padding(start = 42.dp) else Modifier,
                             session = session,
                             hideProjectBadge = isProjectGroup,
-                            profileLabel = row.profile.takeIf {
+                            profileLabel = displayProfile.takeIf {
                                 showAllProfiles || viewOptions.showProfile
                             },
+                            profileKey = row.profile,
                             profileColors = profileColors,
                             showUpdated = viewOptions.showUpdated,
                             showTokens = viewOptions.showTokens,
@@ -1415,7 +1423,7 @@ private fun ProfileColorEditor(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    ProfileBadge(profile, colors)
+                    ProfileBadge(profile, profile, colors)
                     Spacer(Modifier.weight(1f))
                     TextButton(
                         enabled = selectedHex != null,
@@ -1592,6 +1600,7 @@ private fun SessionItem(
     session: ChatSession,
     hideProjectBadge: Boolean = false,
     profileLabel: String?,
+    profileKey: String,
     profileColors: Map<String, String>,
     showUpdated: Boolean,
     showTokens: Boolean,
@@ -1677,7 +1686,7 @@ private fun SessionItem(
                     maxLines = 2,
                     modifier = Modifier.padding(top = 4.dp),
                 ) {
-                    profileLabel?.let { ProfileBadge(it, profileColors) }
+                    profileLabel?.let { ProfileBadge(profileKey, it, profileColors) }
                     workBadges.forEach { badge -> SessionWorkBadgeChip(badge) }
                 }
             }
@@ -1916,10 +1925,11 @@ private fun SessionWorkBadgeChip(badge: SessionWorkBadge) {
 /** Compact owning-profile mark: identity color and initial, never a status signal. */
 @Composable
 private fun ProfileBadge(
-    profile: String,
+    profileKey: String,
+    profileLabel: String,
     colors: Map<String, String>,
 ) {
-    val accent = resolveProfileAccent(profile, colors)
+    val accent = resolveProfileAccent(profileKey, colors)
     val isDefault = accent == null
     val foreground = accent ?: MaterialTheme.colorScheme.onSurfaceVariant
     Surface(
@@ -1959,7 +1969,7 @@ private fun ProfileBadge(
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
-                        text = profile.filter(Char::isLetterOrDigit).firstOrNull()?.uppercase() ?: "?",
+                        text = profileLabel.filter(Char::isLetterOrDigit).firstOrNull()?.uppercase() ?: "?",
                         color = foreground,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
@@ -1967,7 +1977,7 @@ private fun ProfileBadge(
                 }
             }
             Text(
-                text = profile,
+                text = profileLabel,
                 style = relayMetadataStyle(),
                 color = foreground,
                 fontWeight = FontWeight.SemiBold,
