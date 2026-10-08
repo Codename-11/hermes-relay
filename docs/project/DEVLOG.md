@@ -1,5 +1,13 @@
 # Hermes-Relay — Dev Log
 
+## 2026-10-08 — CLI+UI beta.10 released and verified
+
+Published [Hermes-Relay CLI+UI 0.4.0-beta.10](https://github.com/Codename-11/hermes-relay/releases/tag/desktop-v0.4.0-beta.10) from immutable commit `95b74c91e5503fdb607ab793d74c2d99fef96ecc`. Structured CUA element actions accept current handles, including hexadecimal snapshot generations, and Activity distinguishes recorded CUA, system capture, compatibility, and missing backend metadata. Android and Plugin versions and the Bun 1.3.14 pin are unchanged.
+
+Release preparation passed 205 local CLI tests, type-check/build, compiled Windows smoke, tray formatting/frontend build, and website asset checks. Exact-head hosted Required checks and Website CI passed. The release workflow passed cross-platform CLI build/smoke, native Windows tray checks, tray launch, and packaged installer lifecycle tests. All six downloaded payload hashes match both `SHA256SUMS.txt` and GitHub asset digests. The published Windows CLI passed 12 isolated help/version launches on Windows 26200.9550 with system-CA bootstrap enabled and unset. Native CUA interaction and rendered Activity evidence remain recorded in #696 and #697; these release checks do not certify the reporters' exact environments.
+
+Approved release-linked replies were posted and #680/#682 were closed. The Windows Insider 26200.8875 startup report (#496) remains open and is identified as a known issue in the release notes. No local CLI/tray installation was performed.
+
 ## 2026-10-07 — CLI+UI beta.9 released and verified
 
 Published [Hermes-Relay CLI+UI 0.4.0-beta.9](https://github.com/Codename-11/hermes-relay/releases/tag/desktop-v0.4.0-beta.9) from immutable commit `3c8dbef14fe51fa4afae4e97104308231b12edb9` with native Windows invite paste/import and explicit CLI route protocols, ports, and compatibility guidance. Plugin 1.13.0 supplies Dashboard CLI invites; existing command-line invite import and direct pairing remain supported. Android and Plugin versions are unchanged.
