@@ -1040,6 +1040,12 @@ fun ChatScreen(
     // has been made (the /api/config fallback is more useful than the bare
     // connection label).
     val agentProfiles by connectionViewModel.agentProfiles.collectAsState()
+    val profileDisplayNames = remember(agentProfiles) {
+        agentProfiles.associate { profile ->
+            AgentDisplay.profileSessionKey(profile.name) to
+                (AgentDisplay.profileDisplayName(profile) ?: profile.name)
+        }
+    }
     var allProfileSessions by remember { mutableStateOf<List<ProfileSessionRow>>(emptyList()) }
     var allProfileSessionsLoading by remember { mutableStateOf(false) }
     var allProfileSessionsUnavailable by remember { mutableStateOf(false) }
@@ -2710,6 +2716,7 @@ fun ChatScreen(
                 allProfileSessionsLoading = allProfileSessionsLoading,
                 allProfileSessionsLoadFailed = allProfileSessionsUnavailable,
                 profileColors = profilePresentation.colors,
+                profileDisplayNames = profileDisplayNames,
                 onProfileColorChange = connectionViewModel::setProfileColor,
                 onRefreshAllProfiles = {
                     if (!isProfileLocked && !allProfileSessionsLoading) scope.launch {

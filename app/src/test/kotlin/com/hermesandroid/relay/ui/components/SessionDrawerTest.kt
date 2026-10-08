@@ -418,6 +418,39 @@ class SessionDrawerTest {
     }
 
     @Test
+    fun `all profiles shows presentation name while actions keep canonical profile identity`() {
+        var selected: Pair<String, String>? = null
+        compose.setContent {
+            MaterialTheme {
+                SessionDrawerContent(
+                    sessions = emptyList(),
+                    currentSessionId = null,
+                    allProfilesSupported = true,
+                    allProfileSessions = listOf(
+                        ProfileSessionRow("default", ChatSession("jarvis-chat", "Jarvis chat", null)),
+                    ),
+                    profileDisplayNames = mapOf("default" to "Jarvis"),
+                    onRefreshAllProfiles = {},
+                    onSelectProfileSession = { profile, sessionId -> selected = profile to sessionId },
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+
+        compose.onNodeWithText("All Profiles").performClick()
+        compose.onNodeWithText("Jarvis").assertIsDisplayed()
+        compose.onNodeWithText("default").assertDoesNotExist()
+        compose.onNodeWithText("Jarvis chat").performClick()
+
+        compose.runOnIdle {
+            assertEquals("default" to "jarvis-chat", selected)
+        }
+    }
+
+    @Test
     fun `opening an owned session keeps all profiles browsing selected`() {
         var scopeTitle by mutableStateOf("Mizu Sessions")
         compose.setContent {
