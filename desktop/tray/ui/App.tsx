@@ -12,6 +12,7 @@ import logo from '../icons/icon-256.png'
 import type { AccessMode, Activity, AuthorizedClient, Capability, CapabilityMode, CuaHealthStatus, CuaManagementStatus, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
 import { describeTransportSecurity } from '../../src/transportSecurity'
 import { displayLabel as displayRouteLabel, inferEndpointRole } from '../../src/endpoint'
+import { computerActivityDetail } from './computerActivity'
 
 type Page = 'overview' | 'access' | 'capabilities' | 'hosts' | 'pair-host' | 'host-detail' | 'settings' | 'help' | 'activity' | 'activity-detail'
 type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'; capability: Capability; mode: CapabilityMode } | { type: 'revoke'; client: AuthorizedClient; remote: string } | { type: 'repair' | 'forget'; host: Host } | { type: 'clear-activity' } | null
@@ -137,7 +138,7 @@ function activityName(tool: string): string {
 }
 
 function isComputerControl(entry: Activity): boolean {
-  return entry.backend === 'cua' || entry.backend === 'legacy_compat' || entry.tool.startsWith('desktop_computer_')
+  return entry.backend === 'cua' || entry.backend === 'cua_driver' || entry.backend === 'legacy_compat' || entry.backend === 'system_capture' || entry.tool.startsWith('desktop_computer_')
 }
 
 function controlActionLabel(entry: Activity): string {
@@ -161,7 +162,7 @@ type ActivityStep = { title: string; detail: string; state: 'done' | 'failed' | 
 function activitySteps(entry: Activity): ActivityStep[] {
   if (isComputerControl(entry)) return [
     { title: 'Authorized session', detail: entry.control_session_id ? 'Authenticated control session' : 'Authenticated by Hermes', state: 'done' },
-    { title: controlActionLabel(entry), detail: `${entry.backend === 'cua' ? 'CUA structured engine' : 'Windows input · Compatibility'} · ${entry.dispatch ?? 'background'}`, state: entry.ok ? 'done' : 'failed' },
+    { title: controlActionLabel(entry), detail: computerActivityDetail(entry, true), state: entry.ok ? 'done' : 'failed' },
     { title: 'Verification', detail: controlVerificationLabel(entry.verification), state: entry.verification === 'failed' ? 'failed' : entry.verification ? 'done' : 'pending' }
   ]
   const category = activityCategory(entry)
@@ -850,7 +851,7 @@ function ActivityList({ entries, host, onOpen }: { entries: Activity[]; host: Ho
     const Icon = category === 'command' ? TerminalSquare : category === 'files' ? FileText : category === 'screen' ? Eye : category === 'input' ? MousePointer2 : category === 'devices' ? Usb : category === 'system' ? LogOut : ActivityIcon
     const computerControl = isComputerControl(entry)
     const target = entry.target_app ?? entry.target_title
-    const detail = entry.error ?? (computerControl ? `${entry.backend === 'cua' ? 'CUA' : 'Compatibility'} · ${entry.dispatch ?? 'background'}${target ? ` · ${target}` : ''}` : entry.summary) ?? (entry.aborted ? 'Request aborted' : 'Completed')
+    const detail = entry.error ?? (computerControl ? `${computerActivityDetail(entry)}${target ? ` · ${target}` : ''}` : entry.summary) ?? (entry.aborted ? 'Request aborted' : 'Completed')
     const eventHost = entry.host_url ? displayHost(entry.host_url) : host?.name ?? 'Local daemon'
     return <article className="activity-item" key={key}>
       <button className="activity-row" disabled={!onOpen} onClick={() => onOpen?.(entry)}>

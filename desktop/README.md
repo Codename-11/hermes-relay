@@ -744,6 +744,18 @@ Precedence for credentials: `--token` → `HERMES_RELAY_TOKEN` → `--code` → 
 
 ## Troubleshooting
 
+Activity labels describe the backend recorded for each event: `cua` and the
+historical snapshot value `cua_driver` display as **CUA**, `system_capture` as
+**System capture**, and `legacy_compat` as **Compatibility**. Entries without
+backend metadata display **Backend not recorded**, even when CUA is currently
+selected. Dispatch is shown only when recorded. Existing audit logs need no
+migration.
+
+To review the Activity list and event timeline using sanitized fixtures, run
+`npm --prefix tray run dev -- --config scripts/vite.computer-activity.config.mjs`
+from `desktop`, then open `http://127.0.0.1:1422`. This browser-only preview uses
+the real UI components and does not connect to the installed daemon.
+
 CUA element actions accept current `s<8 hexadecimal digits>:<decimal index>` driver handles and
 legacy `e<hex>` handles. Relay still requires its own one-use `snapshot_token`
 bound to the control session, grant, PID, window, and snapshot generation.
