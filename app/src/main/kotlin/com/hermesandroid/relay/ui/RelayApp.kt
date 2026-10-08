@@ -1537,7 +1537,6 @@ fun RelayApp() {
             }
             if (!appIsForeground) return@LaunchedEffect
 
-            com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
             if (activation.startNewSession) {
                 chatViewModel.createNewChat()
             }
@@ -1552,11 +1551,6 @@ fun RelayApp() {
             com.hermesandroid.relay.wake.WakeWordActivationCoordinator.consume(activation.id)
         }
 
-        LaunchedEffect(voiceUiState.voiceMode) {
-            com.hermesandroid.relay.wake.WakeWordForegroundService.setVoiceSessionActive(
-                voiceUiState.voiceMode
-            )
-        }
         val postResumeQuiet by connectionViewModel.postResumeQuiet.collectAsState()
         val apiHealth by connectionViewModel.apiServerHealth.collectAsState()
         val activeEndpoint by connectionViewModel.activeEndpoint.collectAsState()
