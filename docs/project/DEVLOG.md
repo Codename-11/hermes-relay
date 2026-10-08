@@ -1,10 +1,10 @@
 # Hermes-Relay — Dev Log
 
-## 2026-10-07 — CLI+UI beta.9 release preparation
+## 2026-10-07 — CLI+UI beta.9 released and verified
 
-Prepared CLI+UI 0.4.0-beta.9 with native Windows invite paste/import and explicit CLI route protocols, ports, and compatibility guidance. Plugin 1.13.0 supplies Dashboard CLI invites; existing command-line invite import and direct pairing remain supported. Android and Plugin versions are unchanged.
+Published [Hermes-Relay CLI+UI 0.4.0-beta.9](https://github.com/Codename-11/hermes-relay/releases/tag/desktop-v0.4.0-beta.9) from immutable commit `3c8dbef14fe51fa4afae4e97104308231b12edb9` with native Windows invite paste/import and explicit CLI route protocols, ports, and compatibility guidance. Plugin 1.13.0 supplies Dashboard CLI invites; existing command-line invite import and direct pairing remain supported. Android and Plugin versions are unchanged.
 
-CLI strict type checking, 198 tests, TypeScript build, compiled Windows runtime smoke, tray formatting, and tray frontend build passed. Hosted current-head checks own native Rust lint/check/tests and installer validation before release approval.
+CLI strict type checking, 198 tests, TypeScript build, compiled Windows runtime smoke, tray formatting, and tray frontend build passed. Hosted exact-head native Rust lint/check/tests, release-asset smoke, installer launch and installation/removal lifecycle checks passed. All six published payload hashes match the release checksums. The downloaded Windows CLI passed version/help smoke before local activation. Installed CLI and tray versions both report beta.9, the daemon reconnected without a reported error, and saved hosts, route trust, permissions, device identity, settings and startup preference were preserved. The native management Overview rendered connected; the post-update invite paste/import flow was not repeated because background-only WebView navigation was unavailable. Earlier native import verification remains recorded in #685.
 
 ## 2026-10-07 — Plugin 1.13.0 released and verified
 
