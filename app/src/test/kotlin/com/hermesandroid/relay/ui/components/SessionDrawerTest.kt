@@ -427,9 +427,9 @@ class SessionDrawerTest {
                     currentSessionId = null,
                     allProfilesSupported = true,
                     allProfileSessions = listOf(
-                        ProfileSessionRow("default", ChatSession("jarvis-chat", "Jarvis chat", null)),
+                        ProfileSessionRow("default", ChatSession("guide-chat", "Guide chat", null)),
                     ),
-                    profileDisplayNames = mapOf("default" to "Jarvis"),
+                    profileDisplayNames = mapOf("default" to "Guide"),
                     onRefreshAllProfiles = {},
                     onSelectProfileSession = { profile, sessionId -> selected = profile to sessionId },
                     onNewChat = {},
@@ -441,12 +441,12 @@ class SessionDrawerTest {
         }
 
         compose.onNodeWithText("All Profiles").performClick()
-        compose.onNodeWithText("Jarvis").assertIsDisplayed()
+        compose.onNodeWithText("Guide").assertIsDisplayed()
         compose.onNodeWithText("default").assertDoesNotExist()
-        compose.onNodeWithText("Jarvis chat").performClick()
+        compose.onNodeWithText("Guide chat").performClick()
 
         compose.runOnIdle {
-            assertEquals("default" to "jarvis-chat", selected)
+            assertEquals("default" to "guide-chat", selected)
         }
     }
 
