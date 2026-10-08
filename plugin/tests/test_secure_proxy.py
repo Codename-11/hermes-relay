@@ -63,7 +63,6 @@ class SecureProxyRouteTests(AioHTTPTestCase):
         )
 
         for path in (
-            "/relay/sessions",
             "/relay/voice/config",
             "/relay/desktop/_ping", "/relay/pairing/register", "/health",
         ):

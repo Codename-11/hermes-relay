@@ -459,8 +459,12 @@ WireGuard data plane. Public HTTPS remains the next secure fallback. The optiona
 **Hermes Secure Link** is a unified alternative: when
 explicitly enabled it listens on `:9443`, advertises the operator-reviewed
 paired endpoint's SPKI material,
-and exposes fixed `/relay`, `/api`, and `/dashboard` namespaces. Each service
-retains its native credential, and Dashboard forwarding fails closed unless
+and exposes fixed `/relay`, `/api`, and `/dashboard` namespaces. Relay session
+management uses `GET /relay/sessions`, `PATCH /relay/sessions/{token_prefix}`,
+and `DELETE /relay/sessions/{token_prefix}` with the paired Relay bearer. These
+routes reuse the ordinary session handlers, require bearer authentication even on loopback,
+and preserve self-only policy reductions and operator-approved renewal.
+Each service retains its native credential, and Dashboard forwarding fails closed unless
 its upstream OAuth/password gate is active. Clients select secure candidates
 first and may fall back to a separately configured LAN route; the existing
 plain-route acknowledgement still applies. See

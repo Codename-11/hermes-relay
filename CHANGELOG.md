@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
 - Android Relay sessions distinguish shortening from operator-approved renewal, retain actionable update failures, and expose accessible pairing duration controls. (#659)
 
 - Android avoids a startup crash when profile state arrives during connection setup.
