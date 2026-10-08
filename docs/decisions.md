@@ -3741,11 +3741,14 @@ prewarm; it did not cover this already-active turn state.
 
 **Decision.** A Gateway turn may settle from `session.activate`, exact-session
 `session.info`, or an exact live/durable `session.active_list` row only when the
-turn has already received exact-session turn-scoped activity, and upstream
-reports `running=false` or Idle. The active-list request captures the exact turn
+turn has already received exact-session turn-scoped activity or its owned
+reconnect activation confirmed `running=true` without a queued successor, and
+upstream subsequently reports `running=false` or Idle. The active-list request captures the exact turn
 and its progress generation; a session/profile switch, cancellation, newer turn,
 or intervening live event rejects the delayed snapshot. Pre-start idle snapshots
-are never eligible. Exact unsolicited turns already admitted to the local stream
+are never eligible. A lost start frame can therefore recover through positive
+running proof without treating an Idle-only startup snapshot as completion.
+Exact unsolicited turns already admitted to the local stream
 may also settle from read-only state; this grants no authority to attach or stop
 the producing client's runtime. This backstop is a
 successful server-owned settle, not cancellation or transport failure: Android

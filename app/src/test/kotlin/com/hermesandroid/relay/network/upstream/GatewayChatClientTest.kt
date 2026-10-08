@@ -2835,6 +2835,103 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `lost start recovers from scoped idle after running activation`() =
+        verifyLostStartRecovery(snapshotIdle = false)
+
+    @Test
+    fun `lost start recovers from active list idle after running activation`() =
+        verifyLostStartRecovery(snapshotIdle = true)
+
+    private fun verifyLostStartRecovery(snapshotIdle: Boolean) {
+        client.shutdown()
+        // Apply the activation response inline before reading the following
+        // session.info frame, so this test does not depend on dispatcher timing.
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        client = buildClient(turnIdleTimeoutMs = 150L)
+        harness.suppressAckMethods += "session.activate"
+        harness.activeSessionListPayload = exactActiveSessionPayload("working")
+        val r = Recorder()
+        val accepted = CountDownLatch(1)
+        client.sendTurn(null, "lost start", null, r.callbacks,
+            onTransportAccepted = { accepted.countDown() },
+        ) { r.preflightFailures += it }
+        val original = harness.awaitServerSocket()
+        assertTrue(accepted.await(5, TimeUnit.SECONDS))
+        assertEquals(0, r.starts.get())
+        original.close(1011, "start frame lost")
+        val replacement = harness.awaitServerSocket()
+        val activation = harness.awaitPendingAck()
+        assertEquals("session.activate", activation.method)
+        harness.releaseAck(activation, buildJsonObject {
+            put("session_id", "live-1")
+            put("running", true)
+        })
+        if (snapshotIdle) {
+            harness.activeSessionListPayload = exactActiveSessionPayload("idle")
+        } else {
+            replacement.send(harness.eventFrame("session.info", buildJsonObject {
+                put("running", false)
+            }, "live-1"))
+        }
+        assertTrue("authoritative completion was ignored after the lost start", r.completeLatch.await(3, TimeUnit.SECONDS))
+        assertEquals(1, r.completions.get())
+        assertEquals(1, r.reconcileRequests.get())
+        assertEquals(0, r.starts.get())
+        assertTrue(r.errors.isEmpty())
+        assertTrue(r.preflightFailures.isEmpty())
+        assertEquals(1, harness.rpcLog.count { it.first == "prompt.submit" })
+        assertTrue(harness.rpcLog.none { it.first in setOf("session.resume", "session.interrupt") })
+    }
+
+    @Test
+    fun `prestart idle activation does not invent proof of a running turn`() =
+        verifyUnprovenStart(running = false)
+
+    @Test
+    fun `foreign running activation does not invent proof of a running turn`() =
+        verifyUnprovenStart(running = true, activationSession = "foreign")
+
+    @Test
+    fun `queued running activation does not invent proof of a running turn`() =
+        verifyUnprovenStart(running = true, queued = true)
+
+    private fun verifyUnprovenStart(
+        running: Boolean,
+        activationSession: String = "live-1",
+        queued: Boolean = false,
+    ) {
+        client.shutdown()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        client = buildClient(turnIdleTimeoutMs = 150L)
+        harness.suppressAckMethods += "session.activate"
+        harness.activeSessionListPayload = exactActiveSessionPayload("idle")
+        val r = Recorder()
+        val accepted = CountDownLatch(1)
+        client.sendTurn(null, "not started yet", null, r.callbacks,
+            onTransportAccepted = { accepted.countDown() },
+        ) { r.preflightFailures += it }
+        val original = harness.awaitServerSocket()
+        assertTrue(accepted.await(5, TimeUnit.SECONDS))
+        original.close(1011, "prestart gap")
+        val replacement = harness.awaitServerSocket()
+        val activation = harness.awaitPendingAck()
+        harness.releaseAck(activation, buildJsonObject {
+            put("session_id", activationSession)
+            put("running", running)
+            if (queued) put("queued", buildJsonObject { put("user", "not started yet") })
+        })
+        replacement.send(harness.eventFrame("session.info", buildJsonObject { put("running", false) }, "live-1"))
+        assertFalse(r.completeLatch.await(650, TimeUnit.MILLISECONDS))
+        assertTrue(client.hasActiveTurn())
+        assertEquals(0, r.reconcileRequests.get())
+        replacement.send(harness.eventFrame("message.start", null, "live-1"))
+        replacement.send(harness.eventFrame("message.complete", buildJsonObject { put("text", "eventually started") }, "live-1"))
+        assertTrue(r.completeLatch.await(5, TimeUnit.SECONDS))
+        assertEquals(1, r.reconcileRequests.get())
+        assertTrue(harness.rpcLog.none { it.first == "session.interrupt" })
+    }
+
+    @Test
     fun `failed rejoin surfaces stream error`() {
         val r = Recorder()
         client.sendTurn(null, "hello", null, r.callbacks) { r.preflightFailures += it }

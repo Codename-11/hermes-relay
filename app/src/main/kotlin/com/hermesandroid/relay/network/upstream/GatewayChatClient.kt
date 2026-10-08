@@ -4540,13 +4540,27 @@ class GatewayChatClient(
                     // Bind before activation so a tail event racing the RPC ack
                     // still matches the original active turn.
                     liveSessionId = preservedLiveId
+                    val ready = readySignal ?: throw GatewayRpcException("gateway connection changed")
+                    val socket = webSocket ?: throw GatewayRpcException("gateway socket changed")
                     val activated = rpc(
                         "session.activate",
                         buildJsonObject { put("session_id", preservedLiveId) },
+                        expectedConnection = ready,
+                        expectedSocket = socket,
                     )
                     when {
+                        readySignal !== ready || webSocket !== socket || activeTurn !== turn ||
+                            liveSessionId != preservedLiveId -> false
                         activated.isSuccess -> {
                             activated.getOrNull()?.let { result ->
+                                // The start frame may have been lost on the old
+                                // socket. Exact running recovery is equivalent
+                                // proof of activity; Idle alone is not. A queued
+                                // prompt may still belong to a later turn.
+                                if (result.stringField("session_id") == preservedLiveId &&
+                                    result.booleanField("running") == true &&
+                                    (result["queued"] == null || result["queued"] == JsonNull)
+                                ) turn.markRecoveredStarted()
                                 applySessionResultInfo(result)
                                 turn.restorePendingClarify(result)
                                 replayServerRequests(result)
@@ -4922,8 +4936,8 @@ class GatewayChatClient(
         val ended: Boolean get() = mapper.turnEnded || cancelled || settledWithoutTerminalFrame
 
         /**
-         * True once any turn-scoped event has arrived — proof the server
-         * received the submit and is running the turn. `session.info` doesn't
+         * True once a turn-scoped event or exact running recovery proves the
+         * server received the submit and is running the turn. `session.info` doesn't
          * count: it's connection-level (resume/config echoes) and can arrive
          * independent of this turn, so it must not suppress a legitimate
          * preflight fallback.

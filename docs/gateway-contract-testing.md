@@ -91,6 +91,14 @@ the upstream contract identifiers it depends on.
 | `active_status_unsupported` | An older Gateway returns JSON-RPC method-not-found; the client retains Unknown rather than inventing Idle or Working |
 | `cross_client_observation` | A second client observes a Desktop-owned working session through active status and history without resume, activate, submit, or interrupt; the producing client receives the terminal event |
 
+The activation and active-list contracts also cover a start frame lost during
+socket replacement. `GatewayChatClientTest` verifies that exact running activation
+establishes activity proof before a later scoped Idle state, while Idle alone
+cannot complete a pre-start turn. The embedded real-socket fixture in
+`GatewayForegroundRecoveryInstrumentedTest#lostStartRunningActivation_recoversEndedTurnFromHistory`
+verifies that the rendered stream settles and loads the saved answer without a
+duplicate submit or an interrupt, even when no original turn frame was received.
+
 Activity receipts join canonical completion metadata by exact delegation identity
 within the connection/profile/session owner. Process notices use the canonical
 process ID; ambiguous reused process generations do not attach cached output.
