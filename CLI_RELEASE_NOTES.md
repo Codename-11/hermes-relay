@@ -1,27 +1,29 @@
 # Hermes-Relay CLI+UI v__VERSION__
 
-**Release Date:** 2026-10-07
+**Release Date:** 2026-10-08
 
 ## Summary
 
-Pair the CLI or Windows management UI with a complete Dashboard invite, retaining its connection routes and Secure Link certificate trust.
+Structured computer control accepts current CUA Driver element handles, and Windows Activity shows the backend actually recorded for each operation.
 
 **Beta phase.** Assets remain unsigned. Standalone CLI binaries ship for Windows x64, Linux x64/arm64, and macOS x64/arm64; the management UI is Windows-only.
 
-## Added
+## Fixed
 
-- Paste and import a full Dashboard pairing invite in the Windows management UI. The existing `hermes-relay pair --pair-qr` command remains available.
-- Native import preserves route candidates and Secure Link certificate trust and keeps one-use invite contents out of command arguments and activity logs.
+- CUA clicks, value changes, and element scrolling accept snapshot handles, including hexadecimal generations after the first nine snapshots. Legacy handles remain supported. (#680)
+- Activity correctly identifies CUA snapshots and system captures. Entries without backend or dispatch metadata no longer appear as compatibility input in the background. (#682)
 
-## Changed
+## Known issue
 
-- CLI pairing displays advertised routes with protocols and ports and gives actionable direct-route guidance when Dashboard authentication is unsupported.
+The startup crash reported on Windows Insider build 26200.8875 remains under investigation in #496. This release does not change the pinned Bun runtime.
 
 ## Compatibility
 
 Dashboard CLI+UI pairing requires Plugin 1.13.0 or newer. Existing direct URL-and-code pairing and saved hosts remain supported.
 
 ## Install
+
+**Windows CLI + management UI:** download [hermes-relay-windows-x64-setup.exe](https://github.com/Codename-11/hermes-relay/releases/download/__TAG__/hermes-relay-windows-x64-setup.exe). Release assets are covered by `SHA256SUMS.txt`.
 
 **Windows CLI + management tray (PowerShell):**
 
