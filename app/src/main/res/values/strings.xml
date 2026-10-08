@@ -3401,6 +3401,7 @@
     <string name="voice_overlay_tap_action_listening">stop listening</string>
     <string name="voice_overlay_tap_action_pause">pause auto mode</string>
     <string name="voice_overlay_tap_action_interrupt">interrupt</string>
+    <string name="voice_overlay_tap_action_stop_speaking">stop speaking</string>
     <string name="voice_overlay_cd_description">Voice overlay %1$s. Tap to %2$s, double tap to expand.</string>
     <string name="voice_overlay_label_default_profile">default profile</string>
     <string name="voice_overlay_provider_output_off">output off</string>

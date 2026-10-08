@@ -63,6 +63,20 @@ class VoiceViewModelRealtimeSessionFenceTest {
     }
 
     @Test
+    fun stopVoiceDuringThinkingDetachesWithoutCancellingResponse() = runTest {
+        val socket = mockk<WebSocket>(relaxed = true)
+        val viewModel = VoiceViewModel(mockk<Application>(relaxed = true))
+        viewModel.enterVoiceMode()
+        viewModel.seedActiveRealtimeTurnForTest(RealtimeAgentSessionControl(socket))
+
+        viewModel.stopVoiceMode()
+
+        verify(exactly = 0) { socket.send(match<String> { it.contains("response.cancel") }) }
+        verify(exactly = 0) { socket.close(any(), any()) }
+        assertTrue(!viewModel.uiState.value.voiceMode)
+    }
+
+    @Test
     fun staleRealtimeCallbackCannotRepopulateNewVoiceSession() = runTest {
         val viewModel = VoiceViewModel(mockk<Application>(relaxed = true))
         viewModel.enterVoiceMode()

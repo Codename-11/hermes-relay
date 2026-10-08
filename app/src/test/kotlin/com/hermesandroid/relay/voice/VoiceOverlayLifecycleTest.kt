@@ -26,6 +26,7 @@ class VoiceOverlayLifecycleTest {
         override val lifecycle = LifecycleRegistry(this)
     }
     private var exits = 0
+    private var stops = 0
     private var access = VoiceOverlayAccess(true, true, true, true)
     private val state = MutableStateFlow(VoiceUiState(voiceMode = true))
 
@@ -40,7 +41,8 @@ class VoiceOverlayLifecycleTest {
     private fun session() = VoiceOverlaySession(state, provider = null, model = null, voice = null,
         profileName = "Test", configScope = null, outputEnabled = true, fallbackEnabled = false,
         onStartListening = {}, onStopListening = {}, onInterrupt = {}, onPauseAutoMode = {},
-        onReturnToHermes = {}, onDismissOverlay = {}, onExit = { exits++ })
+        onReturnToHermes = {}, onDismissOverlay = {}, onExit = { exits++ },
+        onStopVoice = { stops++ })
 
     @Test fun backgroundCallerCannotCreateSession() {
         owner.lifecycle.currentState = Lifecycle.State.STARTED
@@ -64,6 +66,17 @@ class VoiceOverlayLifecycleTest {
         host.exitVoiceSession(id)
         assertFalse(host.onServiceReady(id))
         assertEquals(1, exits)
+    }
+
+    @Test fun explicitUserStopUsesPreservingCallbackNotLifecycleExit() {
+        assertTrue(host.show(session(), owner.lifecycle))
+        val id = host.sessionId!!
+
+        host.stopVoiceSession(id)
+
+        assertNull(host.sessionId)
+        assertEquals(1, stops)
+        assertEquals(0, exits)
     }
 
     @Test fun oldStopAndReadyCannotAffectNewSession() {

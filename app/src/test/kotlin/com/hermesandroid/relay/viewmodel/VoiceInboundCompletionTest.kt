@@ -148,6 +148,28 @@ class VoiceInboundCompletionTest {
     }
 
     @Test
+    fun stopSpeakingPlaybackKeepsChatGenerationActive() = runTest(dispatcher) {
+        runCurrent()
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "active-response",
+                role = MessageRole.ASSISTANT,
+                content = "Still working.",
+                timestamp = 1L,
+                isStreaming = true,
+            ),
+        )
+        voice.seedSpeakingStateForTest(emptyList(), 0)
+
+        assertTrue(chat.isStreaming.value)
+        assertTrue(voice.stopSpeakingPlayback())
+        runCurrent()
+
+        assertTrue(chat.isStreaming.value)
+        verify(atLeast = 1) { player.stop() }
+    }
+
+    @Test
     fun stopInvalidatesAdmittedAndQueuedCompletions() = runTest(dispatcher) {
         runCurrent()
         val late = admission()
