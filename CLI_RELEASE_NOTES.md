@@ -1,18 +1,25 @@
 # Hermes-Relay CLI+UI v__VERSION__
 
-**Release Date:** 2026-10-02
+**Release Date:** 2026-10-07
 
-This patch beta fixes Windows CLI+UI installation failing while resolving the latest release. It also restores reusable management windows and image attachments for desktop screenshots.
+## Summary
 
-**Beta phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64/arm64, and macOS x64/arm64; the management UI is Windows-only.
+Pair the CLI or Windows management UI with a complete Dashboard invite, retaining its connection routes and Secure Link certificate trust.
 
-## What's changed
+**Beta phase.** Assets remain unsigned. Standalone CLI binaries ship for Windows x64, Linux x64/arm64, and macOS x64/arm64; the management UI is Windows-only.
 
-### Fixed
+## Added
 
-- The Windows bootstrap installer correctly selects CLI+UI releases from GitHub pages containing Android and Plugin releases and continues discovery across full pages.
-- Tray notices, screenshot evidence, and grant prompts remain reusable after dismissal; screenshot evidence retains the selected image.
-- Desktop computer screenshots attach validated image bytes to host tool results instead of returning base64 as plain text.
+- Paste and import a full Dashboard pairing invite in the Windows management UI. The existing `hermes-relay pair --pair-qr` command remains available.
+- Native import preserves route candidates and Secure Link certificate trust and keeps one-use invite contents out of command arguments and activity logs.
+
+## Changed
+
+- CLI pairing displays advertised routes with protocols and ports and gives actionable direct-route guidance when Dashboard authentication is unsupported.
+
+## Compatibility
+
+Dashboard CLI+UI pairing requires Plugin 1.13.0 or newer. Existing direct URL-and-code pairing and saved hosts remain supported.
 
 ## Install
 

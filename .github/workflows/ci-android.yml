@@ -183,6 +183,8 @@ jobs:
           ./gradlew :app:testSideloadDebugUnitTest \
             --tests com.hermesandroid.relay.network.ArchitectureBoundaryTest \
             --tests com.hermesandroid.relay.network.relay.RelayUrlDeriverTest \
+            --tests com.hermesandroid.relay.data.RelayEndpointContractTest \
+            --tests com.hermesandroid.relay.network.relay.RelayHttpClientSessionPolicyTest \
             --tests com.hermesandroid.relay.network.shared.PluginProxyTransportTest \
             --tests '*GatewayChatClientTest*retarget*' \
             --tests '*RelayVoiceClientRoutingTest.proxyProviderOwnsBothVoiceSessionAndWebSocketRequests' \

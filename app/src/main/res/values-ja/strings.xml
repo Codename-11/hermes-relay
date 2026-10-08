@@ -722,7 +722,7 @@
     <string name="settings_bridge_desc">Relay によって付与された電話Bridge制御</string>
     <string name="settings_bridge_core_desc">Relay 機能 (サイドロード デバイス制御なし)</string>
     <string name="settings_relay_sessions">Relay セッション</string>
-    <string name="settings_relay_sessions_desc">このサーバーとペアリングされた電話、取り消し、延長</string>
+    <string name="settings_relay_sessions_desc">ペアリング済みの電話、セッションの有効期間、アクセスを管理</string>
     <string name="settings_notification_companion">通知コンパニオン</string>
     <string name="settings_notification_companion_desc">ペアリングされたRelayツールの共有電話通知</string>
     <string name="settings_media">メディア</string>
@@ -2663,7 +2663,7 @@
 
     <!-- SessionTtlPickerDialog -->
     <string name="ttl_title">このペアリングは&#8230;まで維持してください</string>
-    <string name="ttl_body">この期間中に電話は自動的に再接続します。有効期限が切れた後、Relay 機能を使用するには、再度ペアリングする必要があります。</string>
+    <string name="ttl_body">実際の有効期間と機能の許可はホストのオペレーターが承認します。この選択で承認範囲を広げることはできません。アクセスの期限が切れたら、オペレーターが承認した新しいコードで再度ペアリングしてください。</string>
     <string name="ttl_pair">ペア</string>
     <string name="ttl_cancel">キャンセル</string>
     <string name="ttl_option_1d">1日</string>
@@ -4619,4 +4619,12 @@
     <string name="stats_tts_player_start">プレーヤーの開始遅延</string>
     <string name="chat_unread_reply">未読の返信</string>
     <string name="chat_unread_conversations">未読の会話: %1$d</string>
+    <string name="paired_devices_lifetime">セッションの有効期間</string>
+    <string name="paired_devices_shorten_title">このペアリングの期間を短縮</string>
+    <string name="paired_devices_shorten_body">この電話のセッションの有効期間を短縮できます。更新や延長には、オペレーターが承認した新しいペアリングコードで再度ペアリングしてください。機能ごとの許可は先に期限切れになる場合があります。期限付きセッションでは、Bridge アクセスの上限は標準で7日です。期間を短縮しても、機能の許可や電話側の画面アクセス許可は更新されません。</string>
+    <string name="paired_devices_shorten">短縮</string>
+    <string name="paired_devices_pair_again">再度ペアリング</string>
+    <string name="paired_devices_policy_failed">セッションの期間を短縮できませんでした。Relay セッションを更新してより短い期間を試すか、オペレーターが承認した新しいコードで再度ペアリングしてアクセスを更新してください。</string>
+    <string name="paired_devices_updating">セッションを更新中…</string>
+    <string name="paired_devices_no_shorter_duration">これより短い選択肢はありません。このセッションを取り消すか、再度ペアリングしてアクセスを更新できます。</string>
 </resources>

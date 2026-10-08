@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Desktop computer control accepts the current CUA Driver element token format. Element actions such as click, set value, and scroll no longer fail with a transport error when CUA Driver 0.20 or newer returns `<snapshot>:<index>` element handles; the legacy token form remains accepted.
+- Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
+- Android Relay sessions distinguish shortening from operator-approved renewal, retain actionable update failures, and expose accessible pairing duration controls. (#659)
+
 - Android avoids a startup crash when profile state arrives during connection setup.
 - Android refreshes background-alert permission defaults after onboarding and keeps notification delivery tied to the original connection, profile, and conversation across navigation.
 - Replies from conversations left running get separate notification slots; opening one conversation preserves alerts from others.
@@ -20,6 +24,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Android keeps the selected Appearance palette after the startup loading screen instead of leaving parts of the UI dark. (#678)
 
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
+
+## [0.4.0-beta.9] - 2026-10-07
+
+### Added
+
+- The Windows management UI imports full Dashboard pairing invites through a native Paste invite control, preserving route candidates and Secure Link certificate trust.
+
+### Changed
+
+- CLI pairing displays advertised routes with protocols and ports and gives actionable direct-route guidance when Dashboard authentication is unsupported.
+
+## [Plugin 1.13.0] - 2026-10-07
+
+### Added
+
+- Dashboard pairing offers an explicit CLI+UI client choice and full invites containing route candidates and Secure Link certificate trust. Full-invite import requires a compatible CLI build newer than 0.4.0-beta.8.
+
+### Fixed
+
+- Pairing shows internal and remote addresses with protocols and ports, includes direct Tailscale Relay routes for CLI+UI, and avoids inferring public Relay listeners from Dashboard URLs.
+- Dashboard pairing handles expired and oversized invites, keeps QR codes fully visible, and distinguishes Plugin activation from discovery.
 
 ## [0.4.0-beta.8] - 2026-10-02
 

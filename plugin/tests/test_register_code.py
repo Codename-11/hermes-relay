@@ -493,6 +493,8 @@ class PairCommandTests(unittest.TestCase):
         ), patch.object(
             pair, "build_endpoint_candidates", return_value=[]
         ), patch.object(
+            pair, "mint_relay_pairing", return_value=None
+        ), patch.object(
             pair, "build_payload", side_effect=fake_build_payload
         ):
             out = io.StringIO()

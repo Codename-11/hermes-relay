@@ -722,7 +722,7 @@
     <string name="settings_bridge_desc">Relay 授权的手机 Bridge 控制</string>
     <string name="settings_bridge_core_desc">无需 sideload 设备控制的 Relay 功能</string>
     <string name="settings_relay_sessions">Relay 会话</string>
-    <string name="settings_relay_sessions_desc">已配对的服务器手机，撤销、延长</string>
+    <string name="settings_relay_sessions_desc">管理已配对的手机、会话有效期和访问权限</string>
     <string name="settings_notification_companion">通知助手</string>
     <string name="settings_notification_companion_desc">为已配对的 Relay 工具共享手机通知</string>
     <string name="settings_media">媒体</string>
@@ -2649,7 +2649,7 @@
 
     <!-- SessionTtlPickerDialog -->
     <string name="ttl_title">将此配对保持…</string>
-    <string name="ttl_body">您的手机将在此窗口内自动重新连接。到期后，您需要重新配对才能使用 Relay 功能。</string>
+    <string name="ttl_body">实际有效期和功能授权由主机操作员批准。你的选择不能扩大批准范围。访问权限到期后，请使用经操作员批准的新配对码重新配对。</string>
     <string name="ttl_pair">配对</string>
     <string name="ttl_cancel">取消</string>
     <string name="ttl_option_1d">1 天</string>
@@ -4548,4 +4548,12 @@
     <string name="stats_tts_player_start">播放器启动延迟</string>
     <string name="chat_unread_reply">未读回复</string>
     <string name="chat_unread_conversations">未读对话：%1$d</string>
+    <string name="paired_devices_lifetime">会话有效期</string>
+    <string name="paired_devices_shorten_title">缩短此配对的有效期</string>
+    <string name="paired_devices_shorten_body">你可以缩短此手机的会话有效期。若要续期或延长，请获取经操作员批准的新配对码并重新配对。功能授权可能更早到期：对于限时会话，Bridge 访问默认最长为7天。缩短有效期不会续期功能授权或手机上的屏幕访问权限。</string>
+    <string name="paired_devices_shorten">缩短</string>
+    <string name="paired_devices_pair_again">重新配对</string>
+    <string name="paired_devices_policy_failed">无法缩短会话有效期。请刷新 Relay 会话并尝试更短的时长，或使用经操作员批准的新配对码重新配对以续期访问权限。</string>
+    <string name="paired_devices_updating">正在更新会话…</string>
+    <string name="paired_devices_no_shorter_duration">没有更短的预设时长。你可以撤销此会话，或重新配对以续期访问权限。</string>
 </resources>

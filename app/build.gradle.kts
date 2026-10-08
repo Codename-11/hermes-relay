@@ -246,6 +246,9 @@ android {
         // worker JVM with the Robolectric suites; Gradle's 512m default OOMs
         // once both are in the same run.
         unitTests.all {
+            // Robolectric API 36 accesses FileDescriptor through SharedSecrets.
+            // Keep this export in test JVMs only so Android 16 renders run on JDK 21.
+            it.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
             it.systemProperty("roborazzi.test.record", "true")
             it.maxHeapSize = "2g"
         }

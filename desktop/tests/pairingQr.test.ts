@@ -136,3 +136,22 @@ test('legacy top-level API and direct Relay payload remains selectable', async (
     globalThis.fetch = originalFetch
   }
 })
+
+test('a Dashboard-only invite rejects before dialing and explains host-side recovery', async () => {
+  const candidates = payloadToRelayCandidates(decodePairingPayload(JSON.stringify({
+    hermes: 3,
+    relay: { url: 'wss://hermes.example.test/api/plugins/hermes-relay/transport', code: 'ABC123' },
+    endpoints: [{ role: 'public', priority: 0,
+      dashboard: { url: 'https://hermes.example.test' },
+      relay: { url: 'wss://hermes.example.test/api/plugins/hermes-relay/transport' } }],
+  })))
+  const originalFetch = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => { calls++; throw new Error('must not dial') }
+  try {
+    await assert.rejects(probeCandidatesByPriority(candidates), /hermes pair --legacy-direct-relay/)
+    assert.equal(calls, 0)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

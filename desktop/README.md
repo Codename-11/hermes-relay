@@ -24,6 +24,16 @@ Link trust. The tray and CLI use the same saved host trust; neither enables the
 server, rotates its certificate, or treats transport reachability as Dashboard
 sign-in. Generate a fresh invite and explicitly re-pair after identity changes.
 
+The Windows management UI also accepts the complete snippet under **Hosts →
+Pair host → Paste invite**. In the Dashboard's **Pair new device** dialog, choose
+**Hermes-Relay CLI+UI**, then **Copy invite**. The UI delegates import to the
+installed CLI through a child-process environment variable, keeps the invite
+out of command arguments and activity records, and does not save the form
+contents. The **Paste** button reads the local Windows clipboard only when
+clicked; Ctrl+V remains available. Manual **URL + code** pairing remains available. A compatible direct
+Relay or Secure Link route must be reachable; copying an invite does not create
+network reachability or grant desktop-tool permissions automatically.
+
 > **What this is not:** A local Hermes install. Point it at an existing Hermes-Relay server (`ws://host:8767`). For the full TUI with Ink, see the sibling package [`ui-tui`](../../hermes-agent-tui-smoke/ui-tui) in the hermes-agent fork.
 
 ## Desktop surfaces
@@ -733,6 +743,24 @@ restart --user`; both are Windows-only and mutually exclusive.
 Precedence for credentials: `--token` → `HERMES_RELAY_TOKEN` → `--code` → `HERMES_RELAY_CODE` → stored session → interactive prompt.
 
 ## Troubleshooting
+
+CUA element actions accept current `s<snapshot>:<index>` driver handles and
+legacy `e<hex>` handles. Relay still requires its own one-use `snapshot_token`
+bound to the control session, grant, PID, window, and snapshot generation.
+Driver handles are forwarded unchanged after that binding is consumed.
+
+On Windows, the optional native token-flow check uses the canonical installed
+CUA Driver and owns a disposable, non-activating test window and driver child:
+
+```powershell
+$env:HERMES_CUA_WINDOWS_TEST = '1'
+npx tsx --test tests/cuaDriverWindows.test.ts
+Remove-Item Env:HERMES_CUA_WINDOWS_TEST
+```
+
+Run from `desktop`. It verifies click and text changes, scroll dispatch, fresh
+verification snapshots, and one-use token rejection without restarting the
+shared driver daemon. The normal test suite skips this native check.
 
 - **Many `Bun` / `hermes-relay.exe` processes, or Windows error `0xc0000142` from `reg.exe`, `adb.exe`, or `hermes-relay.exe`** — quit **Hermes-Relay CLI UI** first, then run `hermes-relay daemon stop` from a fresh PowerShell. If the CLI cannot start, inspect exact executable paths before stopping only Hermes-Relay-owned processes:
 

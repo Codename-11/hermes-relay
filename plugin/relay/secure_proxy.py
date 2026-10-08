@@ -556,7 +556,16 @@ async def _proxy_websocket(
 
 
 def create_secure_proxy_app(server: "RelayServer") -> web.Application:
+    # Imported at app creation because server imports this module for startup.
+    from .server import (
+        _require_bearer_session,
+        handle_sessions_extend,
+        handle_sessions_list,
+        handle_sessions_revoke,
+    )
+
     app = web.Application(client_max_size=16 * 1024 * 1024)
+    app["server"] = server
     api_base = _loopback_http_base(server.config.webapi_url, "API")
     dashboard_base = _loopback_http_base(
         server.config.secure_proxy_dashboard_url, "Dashboard"
@@ -689,6 +698,19 @@ def create_secure_proxy_app(server: "RelayServer") -> web.Application:
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise web.HTTPBadGateway(text="Dashboard upstream unavailable") from exc
 
+    async def relay_sessions(request: web.Request) -> web.Response:
+        # Secure Link is remote ingress even when Reach connects on loopback.
+        # Never inherit the co-hosted Dashboard's no-bearer operator shortcut.
+        _require_bearer_session(request)
+        if request.method == "DELETE":
+            return await handle_sessions_revoke(request)
+        if request.method == "PATCH":
+            return await handle_sessions_extend(request)
+        return await handle_sessions_list(request)
+
+    app.router.add_get("/relay/sessions", relay_sessions)
+    app.router.add_delete("/relay/sessions/{token_prefix}", relay_sessions)
+    app.router.add_patch("/relay/sessions/{token_prefix}", relay_sessions)
     app.router.add_get("/relay/health", health, allow_head=True)
     app.router.add_get("/relay/ws", relay_ws)
     # Bare /api and /dashboard (no trailing slash) must resolve — browsers and

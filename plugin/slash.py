@@ -195,7 +195,7 @@ def _cmd_pair() -> str:
     loopback-only ``POST /pairing/register`` endpoint. The phone claims the
     code to complete pairing.
     """
-    from .pair import _generate_relay_code, register_relay_code
+    from .pair import _generate_relay_code, register_relay_code, render_host_connection_routes
 
     port = _relay_port()
     code = _generate_relay_code()
@@ -206,8 +206,13 @@ def _cmd_pair() -> str:
             f"127.0.0.1:{port}, or pairing registration failed. Is "
             "`hermes-relay` running on this host?"
         )
+    try:
+        routes = render_host_connection_routes()
+    except (OSError, ValueError):
+        routes = "Could not read connection addresses. Run `hermes pair` on the host."
     return (
         f"Pairing code: {code}\n"
+        f"{routes}\n"
         "Enter it in the Hermes-Relay app (Pair → enter code) within the "
         "pairing window. For a scannable QR, run `hermes pair` in a terminal "
         "on the relay host."

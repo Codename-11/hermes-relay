@@ -826,9 +826,10 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         lan = [candidate for candidate in existing
                if str(candidate.get("role", "")).lower() == "lan"]
         legacy = [candidate for candidate in existing
-                  if candidate.get("legacy") is True
-                  or str(candidate.get("role", "")).lower()
-                  in {"legacy_direct", "public_legacy"}]
+                  if str(candidate.get("role", "")).lower() not in {"tailscale", "public", "lan"}
+                  and (candidate.get("legacy") is True
+                       or str(candidate.get("role", "")).lower()
+                       in {"legacy_direct", "public_legacy"})]
         other = [candidate for candidate in existing
                  if str(candidate.get("role", "")).lower()
                  not in {
