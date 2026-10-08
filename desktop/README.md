@@ -756,7 +756,7 @@ To review the Activity list and event timeline using sanitized fixtures, run
 from `desktop`, then open `http://127.0.0.1:1422`. This browser-only preview uses
 the real UI components and does not connect to the installed daemon.
 
-CUA element actions accept current `s<snapshot>:<index>` driver handles and
+CUA element actions accept current `s<8 hexadecimal digits>:<decimal index>` driver handles and
 legacy `e<hex>` handles. Relay still requires its own one-use `snapshot_token`
 bound to the control session, grant, PID, window, and snapshot generation.
 Driver handles are forwarded unchanged after that binding is consumed.
@@ -772,7 +772,8 @@ Remove-Item Env:HERMES_CUA_WINDOWS_TEST
 
 Run from `desktop`. It verifies click and text changes, scroll dispatch, fresh
 verification snapshots, and one-use token rejection without restarting the
-shared driver daemon. The normal test suite skips this native check.
+shared driver daemon. It advances past generation nine before sending actions
+to cover hexadecimal snapshot IDs. The normal test suite skips this native check.
 
 - **Many `Bun` / `hermes-relay.exe` processes, or Windows error `0xc0000142` from `reg.exe`, `adb.exe`, or `hermes-relay.exe`** — quit **Hermes-Relay CLI UI** first, then run `hermes-relay daemon stop` from a fresh PowerShell. If the CLI cannot start, inspect exact executable paths before stopping only Hermes-Relay-owned processes:
 

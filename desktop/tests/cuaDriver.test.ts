@@ -186,7 +186,7 @@ test('rejects invalid tokens and keys before invoking the driver', async () => {
     const adapter = await CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner })
     const session = await adapter.openSession({ controlSessionId: 'control-2', targetDeviceId: 'desktop-1' })
     const before = runner.calls.length
-    for (const elementToken of ['../bad', 's1', 's1:', 's1:-1', 's1:1.5', 's1:2:3', 's1:2\n', ' s1:2', 'hermes-snapshot-id']) {
+    for (const elementToken of ['../bad', 's1', 's1:', 's1:2', 's0000000g:2', 's000000001:2', 's0000000a:-1', 's0000000a:1.5', 's0000000a:2:3', 's0000000a:2\n', ' s0000000a:2', 'hermes-snapshot-id']) {
       await assert.rejects(session.clickElement({ pid: 1, windowId: 2, elementToken }), /elementToken/)
       await assert.rejects(session.setElementValue({ pid: 1, windowId: 2, elementToken }, 'value'), /elementToken/)
       await assert.rejects(session.scroll({ pid: 1, windowId: 2, elementToken }, 'down', 1), /elementToken/)
@@ -205,17 +205,19 @@ test('accepts the element token format of supported CUA Driver releases', async 
     const runner = new FakeRunner(install.binary)
     const adapter = await CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner })
     const session = await adapter.openSession({ controlSessionId: 'control-token-format', targetDeviceId: 'desktop-1' })
-    const driverToken = 's00000001:3'
-    await session.clickElement({ pid: 11, windowId: 22, elementToken: driverToken })
-    await session.setElementValue({ pid: 11, windowId: 22, elementToken: driverToken }, 'value')
-    await session.scroll({ pid: 11, windowId: 22, elementToken: driverToken }, 'down', 2)
+    const tokens = ['s00000001:3', 's00000009:3', 's0000000a:3', 's0000000f:3', 's00000010:3', 'sffffffff:999']
+    for (const elementToken of tokens) {
+      await session.clickElement({ pid: 11, windowId: 22, elementToken })
+      await session.setElementValue({ pid: 11, windowId: 22, elementToken }, 'value')
+      await session.scroll({ pid: 11, windowId: 22, elementToken }, 'down', 2)
+    }
     await session.close()
     const forwarded = runner.calls
       .filter(call => call.args[0] === 'call')
       .map(call => JSON.parse(call.stdin ?? '{}') as { element_token?: unknown })
       .filter(payload => payload.element_token !== undefined)
       .map(payload => payload.element_token)
-    assert.deepEqual(forwarded, [driverToken, driverToken, driverToken])
+    assert.deepEqual(forwarded, tokens.flatMap(token => [token, token, token]))
   } finally {
     await install.cleanup()
   }

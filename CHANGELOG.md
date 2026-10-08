@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - Desktop Activity identifies structured CUA snapshots and system captures correctly, and no longer assumes compatibility input or background dispatch when an event records neither. (#682)
+- Desktop CUA element actions continue working after snapshot generations reach hexadecimal digits. (#680)
 
 - Desktop computer control accepts the current CUA Driver element token format. Element actions such as click, set value, and scroll no longer fail with a transport error when CUA Driver 0.20 or newer returns `<snapshot>:<index>` element handles; the legacy token form remains accepted.
 - Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
