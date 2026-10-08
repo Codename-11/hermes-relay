@@ -8,19 +8,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- CLI+UI imports full pairing invites from the Dashboard, preserving route candidates and Secure Link certificate trust. Dashboard pairing offers an explicit CLI+UI client choice.
+- CLI+UI imports full pairing invites from the Dashboard, preserving route candidates and Secure Link certificate trust.
 - Android marks unread completed conversations in the session drawer and shows unread conversation counts on profiles and the chat header.
 - Reply notifications show the owning agent's official profile name and cached avatar, plus the conversation title.
 
 ### Fixed
 
-- Pairing shows internal and remote addresses with protocols and ports, includes direct Tailscale Relay routes for CLI+UI, and avoids inferring public Relay listeners from Dashboard URLs. The Dashboard handles expired and oversized invites and distinguishes plugin activation from discovery.
 - Android avoids a startup crash when profile state arrives during connection setup.
 - Android refreshes background-alert permission defaults after onboarding and keeps notification delivery tied to the original connection, profile, and conversation across navigation.
 - Replies from conversations left running get separate notification slots; opening one conversation preserves alerts from others.
 - Chat progress stays above the composer while scrolling and disappears when the turn finishes or waits for input.
 
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
+
+## [Plugin 1.13.0] - 2026-10-07
+
+### Added
+
+- Dashboard pairing offers an explicit CLI+UI client choice and full invites containing route candidates and Secure Link certificate trust. Full-invite import requires a compatible CLI build newer than 0.4.0-beta.8.
+
+### Fixed
+
+- Pairing shows internal and remote addresses with protocols and ports, includes direct Tailscale Relay routes for CLI+UI, and avoids inferring public Relay listeners from Dashboard URLs.
+- Dashboard pairing handles expired and oversized invites, keeps QR codes fully visible, and distinguishes Plugin activation from discovery.
 
 ## [0.4.0-beta.8] - 2026-10-02
 

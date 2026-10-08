@@ -1,5 +1,12 @@
 # Hermes-Relay — Dev Log
 
+
+## 2026-10-07 — Plugin 1.13.0 release preparation
+
+Prepared Plugin 1.13.0 with explicit Dashboard client selection, complete CLI invites, connection route guidance, expired/oversized invite handling, and QR layout fixes. Full-invite CLI import requires a compatible companion newer than published CLI+UI 0.4.0-beta.8. Android and CLI+UI versions remain unchanged.
+
+Focused pairing, route, Secure Link, and Dashboard API checks passed; Dashboard frontend tests and production bundle build passed. Physical Android scanning is not certified by these checks.
+
 ## 2026-10-02 — CLI+UI beta.8 installer patch verified
 
 Published [Hermes-Relay CLI+UI 0.4.0-beta.8](https://github.com/Codename-11/hermes-relay/releases/tag/desktop-v0.4.0-beta.8). The Windows bootstrap enumerates Releases API array responses before filtering product tracks and counting pages, fixing the `Cannot convert value "android" to type "System.Int32"` installation failure. The release also includes reusable tray management windows and validated desktop screenshot attachments.
