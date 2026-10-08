@@ -51,6 +51,29 @@ class ProvisionalThreadRowsTest {
         assertEquals(listOf("still-local"), rows.getValue("updates").map { it.id })
     }
 
+    @Test
+    fun staleThreadMappingDoesNotSuppressAProvisionalRow() {
+        val liveChatIds = livePhoneThreadChatIds(
+            phoneThreadChatIds = mapOf(
+                "missing-session" to "morning-summaries",
+                "live-session" to "chuck-updates",
+            ),
+            realPhoneSessionIds = setOf("live-session"),
+        )
+
+        val rows = buildProvisionalThreadRows(
+            entries = listOf(
+                entry("morning", connectionId = "connection-a", chatId = "morning-summaries"),
+                entry("updates", connectionId = "connection-a", chatId = "chuck-updates"),
+            ),
+            activeConnectionId = "connection-a",
+            realThreadChatIds = liveChatIds,
+        )
+
+        assertTrue("morning-summaries" in rows)
+        assertFalse("chuck-updates" in rows)
+    }
+
     private fun entry(id: String, connectionId: String?, chatId: String?) =
         ProactiveInboxEntry(
             id = id,

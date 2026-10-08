@@ -226,6 +226,13 @@ class PayloadTests(_EnvIsolated):
         self.assertEqual(p["chat_id"], "dev-phone")
         self.assertEqual(p["title"], "Dev Phone")
 
+    def test_explicit_channel_uses_readable_slug_title(self) -> None:
+        os.environ["PHONE_HOME_CHANNEL"] = "morning-summaries"
+        os.environ["PHONE_HOME_CHANNEL_NAME"] = "Morning Summaries"
+        p = pp._build_message_payload("chuck-updates", "hi")
+        self.assertEqual(p["chat_id"], "chuck-updates")
+        self.assertEqual(p["title"], "Chuck Updates")
+
     def test_truncation(self) -> None:
         long = "x" * (pp.MAX_MESSAGE_LENGTH + 50)
         p = pp._build_message_payload("c", long)
@@ -548,23 +555,28 @@ class TypedTargetTests(_EnvIsolated):
         self.assertEqual(pp.parse_target_ref("  phone  "), ("phone", None))
         self.assertIs(pp.validate_target_ref("phone"), True)
 
-    def test_custom_home_is_the_only_accepted_ref(self) -> None:
+    def test_custom_home_and_named_threads_are_accepted(self) -> None:
         os.environ["PHONE_HOME_CHANNEL"] = "family-phone"
         self.assertEqual(
             pp.parse_target_ref("family-phone"), ("family-phone", None)
         )
-        self.assertIsNone(pp.parse_target_ref("phone"))
+        self.assertEqual(pp.parse_target_ref("phone"), ("phone", None))
+        self.assertEqual(
+            pp.parse_target_ref("chuck-updates"), ("chuck-updates", None)
+        )
         self.assertIs(pp.validate_target_ref("family-phone"), True)
-        error = pp.validate_target_ref("phone")
-        self.assertIsInstance(error, str)
-        self.assertIn("family-phone", error)
+        self.assertIs(pp.validate_target_ref("phone"), True)
+        self.assertIs(pp.validate_target_ref("chuck-updates"), True)
 
-    def test_empty_and_foreign_refs_fail_closed(self) -> None:
+    def test_empty_and_malformed_refs_fail_closed(self) -> None:
         self.assertIsNone(pp.parse_target_ref(""))
         self.assertIsNone(pp.parse_target_ref("   "))
-        self.assertIsNone(pp.parse_target_ref("another-phone"))
+        self.assertIsNone(pp.parse_target_ref("bad target"))
+        self.assertIsNone(pp.parse_target_ref("../escape"))
+        self.assertIsNone(pp.parse_target_ref("-leading-hyphen"))
+        self.assertIsNone(pp.parse_target_ref("a" * 65))
         self.assertEqual(pp.validate_target_ref(""), "Phone target cannot be empty")
-        self.assertIsInstance(pp.validate_target_ref("another-phone"), str)
+        self.assertIsInstance(pp.validate_target_ref("bad target"), str)
 
     def test_parser_and_validator_reject_wrong_types_without_raising(self) -> None:
         self.assertIsNone(pp.parse_target_ref(None))  # type: ignore[arg-type]
