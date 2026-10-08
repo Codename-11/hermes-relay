@@ -60,6 +60,8 @@ FOCUSED_TESTS = (
     "com.hermesandroid.relay.voice.VoiceOverlayPresentationTest",
     "com.hermesandroid.relay.network.ArchitectureBoundaryTest",
     "com.hermesandroid.relay.network.relay.RelayUrlDeriverTest",
+    "com.hermesandroid.relay.data.RelayEndpointContractTest",
+    "com.hermesandroid.relay.network.relay.RelayHttpClientSessionPolicyTest",
     "com.hermesandroid.relay.viewmodel.ConnectionSwitchTest",
     "com.hermesandroid.relay.util.ServerAddressTest",
     "com.hermesandroid.relay.util.IssueReportAndDiagnosticsTest",

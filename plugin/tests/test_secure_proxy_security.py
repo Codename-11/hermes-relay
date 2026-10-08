@@ -62,13 +62,17 @@ class SecureProxySecurityTests(unittest.IsolatedAsyncioTestCase):
             "/secure-link/preflight",
             "/relay/secure-link/preflight",
             "/media/inspect",
-            "/relay/ws/../sessions",
-            "/relay/%2e%2e/sessions",
         )
         for path in forbidden:
             with self.subTest(path=path):
                 denied = await self.client.get(path)
                 self.assertIn(denied.status, (404, 405))
+
+        # Client-normalized session paths still require a Relay bearer, even
+        # when the TCP peer is loopback; they cannot gain operator authority.
+        self.assertEqual((await self.client.get("/relay/sessions")).status, 401)
+        for path in ("/relay/ws/../sessions", "/relay/%2e%2e/sessions"):
+            self.assertIn((await self.client.get(path)).status, (401, 404))
 
         # Fixed API/Dashboard namespaces exist, but never expose arbitrary
         # Relay/operator routes or an unauthenticated loopback Dashboard.
