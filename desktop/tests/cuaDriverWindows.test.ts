@@ -12,6 +12,7 @@ import { ComputerControlSecurityState } from '../src/tools/computerControlSecuri
 import { cancelComputerGrant, configureComputerUseRuntime } from '../src/tools/computerGrants.js'
 import { computerActionHandler, computerScreenshotHandler } from '../src/tools/handlers/computer.js'
 import type { ToolContext } from '../src/tools/router.js'
+import { computerActivityDetail } from '../tray/ui/computerActivity.js'
 
 // On demand only: owns a disposable native window and a direct driver child.
 test('real Windows CUA handles round-trip through Relay snapshot authority', {
@@ -53,6 +54,7 @@ test('real Windows CUA handles round-trip through Relay snapshot authority', {
     const snapshot = async () => {
       const result = await computerScreenshotHandler(args, ctx) as Record<string, any>
       assert.equal(result.ok, true, JSON.stringify(result))
+      assert.equal(computerActivityDetail(result), 'CUA')
       return result
     }
     for (const [action, label, extra] of [
@@ -68,6 +70,7 @@ test('real Windows CUA handles round-trip through Relay snapshot authority', {
       const acted = await computerActionHandler(request, ctx) as Record<string, any>
       assert.equal(acted.ok, true, JSON.stringify(acted))
       assert.equal(acted.dispatch, 'background')
+      assert.equal(computerActivityDetail(acted), 'CUA · background')
       assert.ok(acted.verification_snapshot.elements.some((item: Record<string, unknown>) => /^s\d+:\d+$/.test(String(item.element_token))))
       if (action === 'click_element') assert.match(acted.verification_snapshot.tree_markdown, /Fixture clicked/)
       if (action === 'set_value') assert.match(JSON.stringify(acted.verification_snapshot), /Fixture line 0/)
