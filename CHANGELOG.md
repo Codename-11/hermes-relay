@@ -13,10 +13,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- Desktop Activity identifies structured CUA snapshots and system captures correctly, and no longer assumes compatibility input or background dispatch when an event records neither. (#682)
-- Desktop CUA element actions continue working after snapshot generations reach hexadecimal digits. (#680)
-
-- Desktop computer control accepts the current CUA Driver element token format. Element actions such as click, set value, and scroll no longer fail with a transport error when CUA Driver 0.20 or newer returns `<snapshot>:<index>` element handles; the legacy token form remains accepted.
 - Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
 - Android pauses both wake-word listener modes before voice capture and resumes listening after voice exits, preventing microphone conflicts. (#681)
 - Android Relay sessions distinguish shortening from operator-approved renewal, retain actionable update failures, and expose accessible pairing duration controls. (#659)
@@ -27,6 +23,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Chat progress stays above the composer while scrolling and disappears when the turn finishes or waits for input.
 
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
+
+## [0.4.0-beta.10] - 2026-10-08
+
+### Fixed
+
+- Structured CUA clicks, value changes, and scrolling accept current driver handles, including hexadecimal snapshot generations. (#680)
+- Windows Activity identifies CUA snapshots and system captures correctly and avoids assuming a backend or dispatch mode when neither was recorded. (#682)
 
 ## [0.4.0-beta.9] - 2026-10-07
 
