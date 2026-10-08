@@ -77,6 +77,7 @@ class WakeWordForegroundService : Service() {
     private var settingsJob: Job? = null
     private var settingsGeneration = 0L
     private var destroyed = false
+    private var started = false
     @Volatile private var currentPreferences = WakeWordPreferences()
     private var testTimeoutJob: Job? = null
     private val voiceSessionActive: Boolean
@@ -91,7 +92,7 @@ class WakeWordForegroundService : Service() {
                 WakeWordActivationCoordinator.pending,
                 MicrophoneOwnershipCoordinator.owner,
             ) { active, pending, _ -> active to pending }.collectLatest { (active, pending) ->
-                if (destroyed || runningInstance !== this@WakeWordForegroundService) return@collectLatest
+                if (!started || destroyed || runningInstance !== this@WakeWordForegroundService) return@collectLatest
                 if (active) {
                     pauseForVoice()
                 } else if (pending == null) {
@@ -122,7 +123,10 @@ class WakeWordForegroundService : Service() {
                     stopSelf()
                 }
             }
-            ACTION_START, null -> startFromPersistedSettings()
+            ACTION_START, null -> {
+                started = true
+                if (voiceSessionActive) pauseForVoice() else startFromPersistedSettings()
+            }
         }
         return START_NOT_STICKY
     }
@@ -139,7 +143,7 @@ class WakeWordForegroundService : Service() {
     }
 
     private fun startFromPersistedSettings() {
-        if (destroyed || recognition.isActive || voiceSessionActive) return
+        if (!started || destroyed || recognition.isActive || voiceSessionActive) return
         settingsJob?.cancel()
         val expected = ++settingsGeneration
         setRuntimeState(WakeWordRuntimeState.Starting)

@@ -58,6 +58,28 @@ class WakeWordServiceHandoffTest {
     @Test fun `assistant service yields to manual voice and resumes after exit`() = exerciseHandoff(true)
     @Test fun `foreground service yields to manual voice and resumes after exit`() = exerciseHandoff(false)
 
+    @Test fun `foreground creation alone does not start the microphone before its command`() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        every { anyConstructed<WakeWordPreferencesRepository>().flow } returns
+            MutableStateFlow(WakeWordPreferences(enabled = true))
+        val release = CompletableDeferred<Boolean>()
+        coEvery { anyConstructed<WakeWordAudioRecord>().detect(any(), any()) } coAnswers {
+            withContext(NonCancellable) { release.await() }
+        }
+        every { anyConstructed<WakeWordAudioRecord>().stop() } answers { }
+        every { anyConstructed<WakeWordAudioRecord>().close() } answers { }
+        val service = Robolectric.buildService(WakeWordForegroundService::class.java).create()
+        try {
+            runCurrent()
+            assertNull(MicrophoneOwnershipCoordinator.owner.value)
+        } finally {
+            service.destroy()
+            release.complete(false)
+            MicrophoneOwnershipCoordinator.awaitWakeRelease()
+            runCurrent()
+        }
+    }
+
     @Test fun `assistant disabled during voice stays stopped on exit`() = exerciseHandoff(true, ResumeBlock.Disabled)
     @Test fun `foreground disabled during voice stays stopped on exit`() = exerciseHandoff(false, ResumeBlock.Disabled)
     @Test fun `assistant cannot resume with microphone permission revoked`() = exerciseHandoff(true, ResumeBlock.Permission)
