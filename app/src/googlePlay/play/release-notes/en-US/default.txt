@@ -1,3 +1,3 @@
-v1.17.0 - Voice over other apps and clearer conversations
+v1.18.1 - Reliable browser sign-in
 
-Use optional voice controls over other apps, with clear permission setup and an immediate Stop action. Answer Clarify batches one question at a time, with progress preserved across reconnects. Enjoy cleaner chat cards, recognizable profile names, and context previews that show what your connection supports. Phone control remains sideload-only.
+Browser sign-in stays connected while you complete your provider's flow and return to Hermes-Relay. The sign-in notification ends when the attempt finishes or is canceled, and callback pages identify the selected provider.

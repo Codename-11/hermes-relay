@@ -37,10 +37,11 @@ SUBAGENT_CHILD_WATCH = "gateway.subagent_child_watch"
 SESSION_INITIALIZATION = "gateway.session_initialization"
 API_BOUNDARY = "api.fallback_boundary"
 CLARIFY = "gateway.clarify"
+SERVER_REQUESTS = "gateway.server_requests"
 TICKET_PROTOCOL = "gateway.ticket_subprotocol"
 ALL_CONTRACTS = (
     TICKET_PROTOCOL,
-    CLARIFY,
+    SERVER_REQUESTS,
     GATEWAY_TERMINAL,
     GATEWAY_SETTLED_INFO,
     SESSION_ACTIVATE,
@@ -563,6 +564,55 @@ def load_requirements(manifest: Path | None) -> tuple[str, ...]:
     return tuple(contract for contract in ALL_CONTRACTS if contract in requested)
 
 
+def _check_server_requests(root: Path) -> CheckResult:
+    requests = SourceFile(root, "tui_gateway/server_requests.py")
+    contracts = SourceFile(root, "tui_gateway/contracts/server_requests.py")
+    prompt = SourceFile(root, PROMPT_METHODS)
+    voice = SourceFile(root, "tui_gateway/methods_voice.py")
+    bridge = SourceFile(root, SERVER)
+    frame = requests.function("frame")
+    snapshot = requests.function("snapshot")
+    resolve = requests.function("resolve_response")
+    lock = requests.function("lock_answer")
+    send = requests.function("send")
+    cancel = requests.function("_emit_cancel")
+    lock_rpc = prompt.method_handler("clarify.lock")
+    capabilities = voice.method_handler("client.capabilities")
+    sessions = SourceFile(root, SESSION_METHODS)
+    replay_rpc = sessions.method_handler("session.events.since")
+    expected = {"clarify", "approval", "sudo", "secret", "vault.unlock_prompt", "vault.save_login",
+                "vault.code", "terminal.read", "preview.read", "preview.act", "window.read", "tour"}
+    declared = {node.args[0].value for node in ast.walk(contracts.tree)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "server_request" and node.args and isinstance(node.args[0], ast.Constant)}
+    passed = (
+        expected == declared
+        and {"jsonrpc", "id", "method", "params", "session_id"} <= _string_constants(frame)
+        and "answers" in _string_constants(snapshot)
+        and {"error", "result", "answers"} <= _string_constants(resolve)
+        and {"answers", "timed_out", "timeout"} <= _string_constants(send)
+        and bool(_call_lines(send, "_unanswerable"))
+        and {"request.cancel", "id", "method", "reason"} <= _string_constants(cancel)
+        and {"request_id", "question_id", "answer", "expired", "remaining"} <= _string_constants(lock_rpc)
+        and bool(_call_lines(lock_rpc, "lock_answer"))
+        and bool(_call_lines(capabilities, "advertise"))
+        and "open_requests" in _string_constants(replay_rpc)
+        and bool(_call_lines(replay_rpc, "_open_requests"))
+        and bool(_call_lines(bridge.function("_clarify_block"), "send", "clarify"))
+        and "req.locked[question_id] = answer" in requests.segment(lock)
+    )
+    return CheckResult(SERVER_REQUESTS, passed, (
+        requests.evidence(frame, "typed request envelope"),
+        requests.evidence(snapshot, "open request replay with accepted locks"),
+        requests.evidence(resolve, "result or error settlement"),
+        requests.evidence(send, "capability gate and partial timeout"),
+        requests.evidence(cancel, "scoped cancellation"),
+        prompt.evidence(lock_rpc, "per-question lock RPC"),
+        voice.evidence(capabilities, "per-transport capabilities"),
+        sessions.evidence(replay_rpc, "read-only open-request snapshot"),
+    ), None if passed else "Server request methods, envelope, capability, replay or settlement contract changed")
+
+
 def _check_clarify(server: SourceFile) -> CheckResult:
     bridge = server.function("_clarify_block")
     respond = server.function("_respond")
@@ -606,6 +656,7 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
             SourceFile(root, "hermes_cli/web_routers/chat_ws.py"),
         ),
         CLARIFY: lambda: _check_clarify(server),
+        SERVER_REQUESTS: lambda: _check_server_requests(root),
         GATEWAY_TERMINAL: lambda: _check_gateway_terminal(
             SourceFile(root, "tui_gateway/prompt_turn.py")
             if (root / "tui_gateway/prompt_turn.py").is_file() else server

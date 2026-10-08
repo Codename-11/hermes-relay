@@ -4,7 +4,7 @@
   "stored_session_id": "fixture-stored-clarify",
   "profile": "default",
   "contract_requirements": [
-    "gateway.clarify"
+    "gateway.server_requests"
   ],
   "turns": [
     {
@@ -14,9 +14,8 @@
           "type": "message.start"
         },
         {
-          "op": "clarify",
+          "op": "server_request",
           "payload": {
-            "request_id": "clarify-one",
             "questions": [
               {
                 "qid": "route/a",
@@ -28,7 +27,9 @@
                 "multi_select": false
               }
             ]
-          }
+          },
+          "id": "clarify-one",
+          "method": "clarify"
         },
         {
           "op": "event",

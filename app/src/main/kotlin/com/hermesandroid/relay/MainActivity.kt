@@ -22,8 +22,6 @@ import com.hermesandroid.relay.accessibility.ScreenCaptureRequester
 import com.hermesandroid.relay.bridge.BridgeForegroundService
 import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.data.BuildFlavor
-import com.hermesandroid.relay.notifications.TurnCompleteNotifier
-import com.hermesandroid.relay.notifications.InteractionRequestNotifier
 import com.hermesandroid.relay.ui.RelayApp
 import com.hermesandroid.relay.util.NavRouteRequest
 import com.hermesandroid.relay.util.SharedContentRequest
@@ -165,7 +163,11 @@ class MainActivity : AppCompatActivity() {
     private fun consumeNavRouteIntent(intent: Intent?) {
         val route = intent?.getStringExtra(EXTRA_NAV_ROUTE) ?: return
         if (route.isBlank()) return
-        NavRouteRequest.tryRequest(route)
+        if (NavRouteRequest.tryRequest(route)) {
+            // A configuration recreation reuses this Intent. Once queued, the
+            // notification must not redirect the user a second time.
+            intent.removeExtra(EXTRA_NAV_ROUTE)
+        }
     }
 
     private fun consumeSharedContentIntent(intent: Intent?) {
@@ -243,13 +245,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         SharedContentRequest.retryFailed()
-        // Returning to the app clears the one-slot "Hermes finished
-        // responding" notification — the chat surface is the answer.
-        TurnCompleteNotifier.cancel(this)
-        // Action-required notifications are durable across process death.
-        // Once the authenticated chat surface is visible it owns presentation;
-        // unresolved asks are re-posted if the app returns to the background.
-        InteractionRequestNotifier.cancelAll(this)
+        // Conversation destinations dismiss only their own alerts after routing.
         // v0.4.1 — register this activity as the host for
         // KeyguardManager.requestDismissKeyguard. Cleared in onPause so
         // we don't leak the Activity past its lifecycle. The unattended-

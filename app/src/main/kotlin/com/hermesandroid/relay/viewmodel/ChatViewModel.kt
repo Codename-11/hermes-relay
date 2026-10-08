@@ -134,6 +134,11 @@ import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.SessionItem
 import com.hermesandroid.relay.network.upstream.models.SkillInfo
 import com.hermesandroid.relay.network.upstream.models.UsageInfo
+import com.hermesandroid.relay.data.ChatUnreadStore
+import com.hermesandroid.relay.data.ChatCompletionReceipt
+import com.hermesandroid.relay.notifications.ReplyNotificationIdentity
+import com.hermesandroid.relay.notifications.cachedReplyAvatar
+import com.hermesandroid.relay.notifications.ChatNotificationTarget
 import com.hermesandroid.relay.notifications.TurnCompleteNotifier
 import com.hermesandroid.relay.notifications.InteractionRequestNotifier
 import com.hermesandroid.relay.reliability.ReliabilityCenter
@@ -154,6 +159,9 @@ import com.hermesandroid.relay.util.buildPromptBlock
 import com.hermesandroid.relay.util.classifyError
 import com.hermesandroid.relay.util.isConnectivityError
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -161,6 +169,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -478,6 +487,18 @@ class ChatViewModel : ViewModel() {
     private var activeTurnCheckpointSeed: ActiveTurnCheckpointSeed? = null
     /** Stable local run owner for queued sends, including unsolicited Gateway turns. */
     private var activeQueueOwnerRunId: String? = null
+    private var chatUnreadStore: ChatUnreadStore? = null
+    private var chatUnreadJob: Job? = null
+    private val _completionReceipts = MutableStateFlow<List<ChatCompletionReceipt>>(emptyList())
+    val completionReceipts: StateFlow<List<ChatCompletionReceipt>> = _completionReceipts.asStateFlow()
+
+    private fun initializeUnread(context: Context) {
+        if (chatUnreadStore != null) return
+        val store = ChatUnreadStore(context).also { chatUnreadStore = it }
+        chatUnreadJob = viewModelScope.launch {
+            store.receipts.catch { emit(emptyList()) }.collect { _completionReceipts.value = it }
+        }
+    }
     private data class TurnCheckpointKey(val contextKey: String, val sessionId: String)
     private val backgroundTurnCheckpoints =
         ConcurrentHashMap<TurnCheckpointKey, ChatTurnCheckpoint>()
@@ -626,8 +647,10 @@ class ChatViewModel : ViewModel() {
 
     private fun backgroundTurnKey(sessionId: String, profile: String?): TurnCheckpointKey? {
         val profileKey = AgentDisplay.profileSessionKey(profile)
+        val connectionId = AgentDisplay.parseProfileContextKey(activeProfileContextKey)?.connectionId ?: return null
         return backgroundTurnCheckpoints.keys.firstOrNull { key ->
             key.sessionId == sessionId &&
+                AgentDisplay.parseProfileContextKey(key.contextKey)?.connectionId == connectionId &&
                 AgentDisplay.parseProfileContextKey(key.contextKey)?.profileKey == profileKey
         }
     }
@@ -653,6 +676,7 @@ class ChatViewModel : ViewModel() {
         val priorUserMessageCount: Int,
         val baselineAssistantCount: Int,
         val startedAt: Long,
+        val replyIdentity: ReplyNotificationIdentity? = null,
     )
 
     private data class QueuedRecoveryHandoff(
@@ -2087,6 +2111,11 @@ class ChatViewModel : ViewModel() {
      * `profileName`. [profile] = the new pick; null = the default profile.
      */
     fun activateGatewayProfile(profile: Profile?, refreshModelOptions: Boolean = false) {
+        // Save the old owner before detaching/clearing its runtime. Otherwise
+        // the later context switch cannot retain its completion or input alert.
+        if (streamingEndpoint == "gateway" && activeStream != null) {
+            chatHandler?.let(::releaseTurnForNavigation)
+        }
         clearOpenedSessionOwner()
         val gateway = gatewayClient ?: return
         if (streamingEndpoint != "gateway") return
@@ -2876,6 +2905,7 @@ class ChatViewModel : ViewModel() {
             }
         }
         client?.setUnmatchedTurnCompleteListener { completion ->
+            if (gatewayClient !== client) return@setUnmatchedTurnCompleteListener
             settleBackgroundTurnCheckpoint(completion)
             scheduleGatewayHistoryReconcile(
                 storedSessionId = completion.storedSessionId,
@@ -2883,6 +2913,7 @@ class ChatViewModel : ViewModel() {
             )
         }
         client?.setBackgroundInteractionListener { event ->
+            if (gatewayClient !== client) return@setBackgroundInteractionListener
             val key = backgroundTurnKey(event.storedSessionId, event.profile)
             when (event) {
                 is GatewayBackgroundInteractionEvent.Requested -> {
@@ -2893,7 +2924,7 @@ class ChatViewModel : ViewModel() {
                         ActiveTurnKeepAliveRegistry.setWaiting(key.keepAliveKey(), true)
                         publishBackgroundSessionActivity()
                     }
-                    maybeNotifyInteraction(event.storedSessionId, event.ask, event.profile)
+                    maybeNotifyInteraction(event.storedSessionId, event.ask, event.profile, key?.contextKey)
                 }
                 is GatewayBackgroundInteractionEvent.Expired -> {
                     if (key != null) {
@@ -2901,8 +2932,7 @@ class ChatViewModel : ViewModel() {
                         val checkpointAsk = checkpoint?.pendingAsk
                         if (checkpoint != null && checkpointAsk != null &&
                             checkpointAsk.kind == event.ask.kind.name &&
-                            (event.ask.kind == GatewayAsk.Kind.APPROVAL ||
-                                checkpointAsk.requestId == event.ask.requestId)
+                            checkpointAsk.requestId == event.ask.requestId
                         ) {
                             val updated = checkpoint.copy(
                                 pendingAsk = null,
@@ -2934,7 +2964,7 @@ class ChatViewModel : ViewModel() {
                         ActiveTurnKeepAliveRegistry.setWaiting(key.keepAliveKey(), false)
                         publishBackgroundSessionActivity()
                     }
-                    cancelInteractionNotification(event.storedSessionId, event.ask, event.profile)
+                    cancelInteractionNotification(event.storedSessionId, event.ask, event.profile, key?.contextKey)
                 }
             }
         }
@@ -3036,15 +3066,28 @@ class ChatViewModel : ViewModel() {
     /** Remove the detached sibling's recovery snapshot after server completion. */
     private fun settleBackgroundTurnCheckpoint(completion: GatewayBackgroundTurnCompletion) {
         val profileKey = AgentDisplay.profileSessionKey(completion.profile)
+        val connectionId = AgentDisplay.parseProfileContextKey(activeProfileContextKey)?.connectionId ?: return
         val matching = backgroundTurnCheckpoints.keys.filter { key ->
             val checkpoint = backgroundTurnCheckpoints[key]
             key.sessionId == completion.storedSessionId &&
+                AgentDisplay.parseProfileContextKey(key.contextKey)?.connectionId == connectionId &&
                 AgentDisplay.parseProfileContextKey(key.contextKey)?.profileKey == profileKey &&
                 checkpoint?.liveSessionId == completion.liveSessionId
         }
         if (matching.isEmpty()) return
-        matching.mapNotNull(backgroundTurnCheckpoints::get)
-            .mapTo(completedQueueOwnerRuns) { it.user.id }
+        matching.mapNotNull(backgroundTurnCheckpoints::get).forEach { checkpoint ->
+            completedQueueOwnerRuns += checkpoint.user.id
+            val target = ChatNotificationTarget.from(checkpoint.contextKey, checkpoint.sessionId)
+            val context = appContext
+            if (completion.successful && target != null && context != null) {
+                val receipt = recordUnreadCompletion(target, checkpoint.user.id)
+                if (notifyOnTurnComplete && !AppForegroundTracker.isForeground.value) {
+                    postCompletedConversation(target, checkpoint.user.id, checkpoint.assistant.agentName,
+                        completion.expectedAssistantText.orEmpty().ifBlank { "Hermes finished responding." },
+                        checkpoint.replyIdentity, receipt = receipt)
+                }
+            }
+        }
         matching.forEach(backgroundTurnCheckpoints::remove)
         matching.forEach { key ->
             backgroundNeedsInputKeys -= key
@@ -3884,17 +3927,29 @@ class ChatViewModel : ViewModel() {
     )
     val openModelPicker: SharedFlow<Unit> = _openModelPicker.asSharedFlow()
 
-    /**
-     * Chat alerts setting — mirrored from
-     * ConnectionViewModel's DataStore flow by RelayApp, same pattern as
-     * [appContextSettings]. It covers background turn completion and
-     * action-required Gateway interactions. Default ON matches the DataStore
-     * default and keeps the existing preference key backward-compatible.
-     */
+    /** Background delivery observes settings in the VM, independent of Compose frames. */
+    private val pendingReplyNotifications = mutableMapOf<ChatNotificationTarget, String>()
+    private var chatAlertsSource: StateFlow<Boolean>? = null
+    private var chatAlertsJob: Job? = null
+
+    fun bindChatAlerts(settings: StateFlow<Boolean>) {
+        if (chatAlertsSource === settings) return
+        chatAlertsSource = settings
+        chatAlertsJob?.cancel()
+        notifyOnTurnComplete = settings.value
+        chatAlertsJob = viewModelScope.launch {
+            settings.collect { notifyOnTurnComplete = it }
+        }
+    }
+
     var notifyOnTurnComplete: Boolean = true
         set(value) {
             field = value
-            if (!value) appContext?.let(InteractionRequestNotifier::cancelAll)
+            if (!value) pendingReplyNotifications.clear()
+            if (!value) appContext?.let {
+                InteractionRequestNotifier.cancelAll(it)
+                TurnCompleteNotifier.cancelAll(it)
+            }
         }
 
     /**
@@ -4803,6 +4858,7 @@ class ChatViewModel : ViewModel() {
         dashboardMediaClientProvider: () -> DashboardApiClient? = { null },
     ) {
         this.appContext = context.applicationContext
+        initializeUnread(context.applicationContext)
         if (!activityStoreInitialized) setChatActivityStore(DataStoreChatActivityStore(context.applicationContext))
         if (chatTurnCheckpointStore == null) {
             chatTurnCheckpointStore = DataStoreChatTurnCheckpointStore(context.applicationContext)
@@ -4831,6 +4887,7 @@ class ChatViewModel : ViewModel() {
     /** Route-owned Gateway chat setup without borrowing the active connection's Relay/media clients. */
     fun initializeGatewayOnly(context: Context) {
         appContext = context.applicationContext
+        initializeUnread(context.applicationContext)
         if (!activityStoreInitialized) setChatActivityStore(DataStoreChatActivityStore(context.applicationContext))
         if (chatTurnCheckpointStore == null) {
             chatTurnCheckpointStore = DataStoreChatTurnCheckpointStore(context.applicationContext)
@@ -4986,12 +5043,22 @@ class ChatViewModel : ViewModel() {
     }
 
     fun openProfileSession(
-        profileName: String,
+        profileName: String?,
         profile: Profile?,
         contextKey: String,
         sessionId: String,
     ): Boolean {
         if (!selectConversationProfile(profileName, profile)) return false
+        if (activeProfileContextKey == contextKey && chatHandler?.currentSessionId?.value == sessionId &&
+            currentSessionProfileName() == profileName
+        ) {
+            // Tapping an older reply for the already-visible conversation must
+            // not detach a newer turn running in that same conversation.
+            return conversationBindingController.openExplicit(
+                contextKey, profileName, sessionId, profile, lockedProfileNameProvider(),
+                conversationBinding.value.transport,
+            )
+        }
         exitProvisionalThread()
         // Detach the old live gateway session without reading launch/global
         // model options: session.info for the resumed owner is authoritative.
@@ -6305,7 +6372,10 @@ class ChatViewModel : ViewModel() {
             } else {
                 client?.deleteSession(sessionId) == true
             }
-            if (success && contextKey != null) chatActivityController.removeSession(contextKey, sessionId)
+            if (success && contextKey != null) {
+                chatActivityController.removeSession(contextKey, sessionId)
+                runCatching { chatUnreadStore?.markRead(contextKey, sessionId) }
+            }
             if (
                 activeProfileContextKey != contextKey ||
                 currentSessionProfileName() != profileName
@@ -6792,7 +6862,7 @@ class ChatViewModel : ViewModel() {
 
     private fun dismissPendingAskNotification() {
         val pending = _pendingAsk.value ?: return
-        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
+        cancelInteractionNotification(pending)
     }
 
     /**
@@ -6826,7 +6896,7 @@ class ChatViewModel : ViewModel() {
                 updateClarifyBatchCard(handler, updated)
                 if (updated.ask.clarifyComplete) {
                     _pendingAsk.value = null
-                    updated.sessionId?.let { cancelInteractionNotification(it, updated.ask) }
+                    cancelInteractionNotification(updated)
                     activeTurnCheckpointKey()?.let { ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), false) }
                 }
                 scheduleCheckpointWrite(immediate = true)
@@ -6835,7 +6905,7 @@ class ChatViewModel : ViewModel() {
             return
         }
         existing?.let { pending ->
-            pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
+            cancelInteractionNotification(pending)
         }
         val activeKey = activeTurnCheckpointKey()
         if (activeKey != null) {
@@ -6877,6 +6947,10 @@ class ChatViewModel : ViewModel() {
                 body = ask.text,
                 accent = HermesCard.Accents.INFO,
                 id = cardKey,
+                actions = if (ask.serverRequest) listOf(HermesCardAction(
+                    label = appContext?.getString(R.string.chat_approval_skip) ?: "Skip",
+                    value = "", mode = HermesCardAction.Modes.SUBMIT_ASK,
+                )) else emptyList(),
                 input = HermesCardInput(
                     kind = if (ask.choices.isNullOrEmpty()) {
                         HermesCardInput.Kinds.TEXT
@@ -6972,6 +7046,7 @@ class ChatViewModel : ViewModel() {
                 accent = HermesCard.Accents.INFO,
                 id = pending.cardKey,
                 clarifyBatch = HermesCardClarifyBatch(
+                    allowSkip = ask.serverRequest,
                     questions = ask.questions.map { question ->
                         val key = clarifyQuestionCardKey(pending.cardKey, question.qid)
                         HermesCardClarifyQuestion(
@@ -7007,16 +7082,9 @@ class ChatViewModel : ViewModel() {
             return
         }
         viewModelScope.launch {
-            val response: Result<GatewayAskResponse>? = when (ask.kind) {
-                GatewayAsk.Kind.APPROVAL -> gateway.respondApproval(choice = "deny")
-                GatewayAsk.Kind.CLARIFY -> ask.requestId?.let {
-                    gateway.respondClarify(it, "This supervised client cannot answer interactive requests.")
-                }
-                GatewayAsk.Kind.SUDO -> ask.requestId?.let { gateway.respondSudo(it, "") }
-                GatewayAsk.Kind.SECRET -> ask.requestId?.let { gateway.respondSecret(it, "") }
-            }
+            val response = gateway.respondAsk(ask, if (ask.kind == GatewayAsk.Kind.APPROVAL) "deny" else "", cancel = true)
             handler.addSystemNotice("An interactive request was denied by supervised mode.")
-            if (response == null || response.isFailure) cancelStream()
+            if (response.isFailure) cancelStream() else gateway.advanceServerRequests()
         }
     }
 
@@ -7030,7 +7098,7 @@ class ChatViewModel : ViewModel() {
                 if (ask.smartDenied) choices.filter { it == "once" || it == "deny" } else choices
             }
         val choices = advertised.ifEmpty {
-            if (ask.smartDenied) listOf("once", "deny") else listOf("approve", "deny")
+            if (ask.smartDenied) listOf("once", "deny") else if (ask.serverRequest) listOf("deny") else listOf("approve", "deny")
         }
         return choices.map { choice ->
             val label = when (choice) {
@@ -7078,7 +7146,8 @@ class ChatViewModel : ViewModel() {
             handler.addSystemNotice("This request is no longer active.")
             return
         }
-        if (pending.ask.kind == GatewayAsk.Kind.CLARIFY && value.isBlank()) return
+        if (pending.ask.kind == GatewayAsk.Kind.CLARIFY && value.isBlank() &&
+            !(pending.ask.serverRequest && value.isEmpty())) return
         if (pending.ask.kind == GatewayAsk.Kind.CLARIFY && pending.ask.timeoutSeconds > 0 &&
             System.currentTimeMillis() >= pending.receivedAt + pending.ask.timeoutSeconds * 1_000L
         ) {
@@ -7114,19 +7183,7 @@ class ChatViewModel : ViewModel() {
                 answeredAskIds.remove(flightKey)
                 return@launch
             }
-            val requestId = ask.requestId
-            val result = when (ask.kind) {
-                GatewayAsk.Kind.APPROVAL -> gateway.respondApproval(choice = value)
-                GatewayAsk.Kind.CLARIFY ->
-                    requestId?.let { gateway.respondClarify(it, value.trim(), question?.qid) }
-                        ?: Result.failure(GatewayRpcException("ask has no request id"))
-                GatewayAsk.Kind.SUDO ->
-                    requestId?.let { gateway.respondSudo(it, value) }
-                        ?: Result.failure(GatewayRpcException("ask has no request id"))
-                GatewayAsk.Kind.SECRET ->
-                    requestId?.let { gateway.respondSecret(it, value) }
-                        ?: Result.failure(GatewayRpcException("ask has no request id"))
-            }
+            val result = gateway.respondAsk(ask, if (ask.kind == GatewayAsk.Kind.CLARIFY) value.trim() else value, question?.qid)
             result.fold(
                 onSuccess = { response ->
                     answeredAskIds.remove(flightKey)
@@ -7145,7 +7202,7 @@ class ChatViewModel : ViewModel() {
                         val updated = current.copy(ask = current.ask.copy(answers = current.ask.answers + (question.qid to value.trim())))
                         updateClarifyBatchCard(handler, updated)
                         if (updated.ask.questions.all { it.qid in updated.ask.answers }) {
-                            updated.sessionId?.let { cancelInteractionNotification(it, updated.ask) }
+                            cancelInteractionNotification(updated)
                             _pendingAsk.value = null
                             activeTurnCheckpointKey()?.let { ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), false) }
                         } else {
@@ -7158,7 +7215,7 @@ class ChatViewModel : ViewModel() {
                     // must leave the card answerable for a retry.
                     handler.recordCardDispatch(pending.messageId, cardKey, stampValue)
                     if (ownsResponse()) {
-                        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
+                        cancelInteractionNotification(pending)
                         _pendingAsk.value = null
                         activeTurnCheckpointKey()?.let {
                             ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), false)
@@ -7173,6 +7230,7 @@ class ChatViewModel : ViewModel() {
                     emitError(e, context = "send_message")
                 },
             )
+            gateway.advanceServerRequests()
         }
     }
 
@@ -7185,11 +7243,11 @@ class ChatViewModel : ViewModel() {
     private fun expirePendingAsk(expiry: GatewayAskExpiry) {
         val pending = _pendingAsk.value ?: return
         if (pending.ask.kind != expiry.kind) return
-        if (expiry.kind != GatewayAsk.Kind.APPROVAL) {
+        if (expiry.kind != GatewayAsk.Kind.APPROVAL || pending.ask.serverRequest) {
             val requestId = expiry.requestId?.takeIf { it.isNotBlank() } ?: return
             if (pending.ask.requestId != requestId) return
         }
-        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
+        cancelInteractionNotification(pending)
         _pendingAsk.value = null
         activeTurnCheckpointKey()?.let {
             ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), false)
@@ -7210,7 +7268,7 @@ class ChatViewModel : ViewModel() {
      */
     private fun clearPendingAskAfterInterrupt() {
         val pending = _pendingAsk.value ?: return
-        pending.sessionId?.let { cancelInteractionNotification(it, pending.ask) }
+        cancelInteractionNotification(pending)
         _pendingAsk.value = null
         activeTurnCheckpointKey()?.let {
             ActiveTurnKeepAliveRegistry.setWaiting(it.keepAliveKey(), false)
@@ -7534,8 +7592,10 @@ class ChatViewModel : ViewModel() {
         sessionId: String,
         ask: GatewayAsk,
         profile: String? = currentSessionProfileName(),
+        contextKey: String? = activeProfileContextKey,
     ) {
         val context = appContext ?: return
+        val connectionId = AgentDisplay.parseProfileContextKey(contextKey)?.connectionId ?: return
         InteractionRequestNotifier.notify(
             context = context,
             sessionId = sessionId,
@@ -7543,41 +7603,114 @@ class ChatViewModel : ViewModel() {
             profile = profile,
             alertsEnabled = notifyOnTurnComplete,
             appForeground = AppForegroundTracker.isForeground.value,
+            connectionId = connectionId,
         )
+    }
+
+    private fun cancelInteractionNotification(pending: PendingAsk) {
+        val target = ChatNotificationTarget.from(pending.contextKey, pending.sessionId) ?: return
+        cancelInteractionNotification(target.sessionId, pending.ask, target.profile, pending.contextKey)
     }
 
     private fun cancelInteractionNotification(
         sessionId: String,
         ask: GatewayAsk,
         profile: String? = currentSessionProfileName(),
+        contextKey: String? = activeProfileContextKey,
     ) {
         val context = appContext ?: return
-        InteractionRequestNotifier.cancel(context, sessionId, ask, profile)
+        InteractionRequestNotifier.cancel(context, sessionId, ask, profile,
+            AgentDisplay.parseProfileContextKey(contextKey)?.connectionId)
     }
 
-    /**
-     * Post the one-shot "Hermes finished" notification when the turn ends
-     * while the app is backgrounded. Never fires for cancelled streams
-     * (errors don't reach this path at all — they end via onErrorCb).
-     */
-    private fun maybeNotifyTurnComplete(handler: ChatHandler, messageId: String) {
-        val ctx = appContext ?: return
-        if (!notifyOnTurnComplete) return
-        if (intentionallyCancelled) return
-        if (AppForegroundTracker.isForeground.value) return
+    private fun snapshotReplyIdentity(handler: ChatHandler, sessionId: String): ReplyNotificationIdentity {
+        val requested = currentSessionProfileName()
+        val profile = conversationBinding.value.displayProfile?.takeIf { requested == null || it.name == requested }
+            ?: displayProfileProvider()?.takeIf { requested == null || it.name == requested }
+        return ReplyNotificationIdentity(
+            profileName = profile?.name ?: requested,
+            displayName = AgentDisplay.profileDisplayName(profile),
+            conversationTitle = handler.sessions.value.firstOrNull { it.sessionId == sessionId }?.title,
+        )
+    }
+
+    private fun recordUnreadCompletion(target: ChatNotificationTarget, turnId: String): Deferred<Boolean>? {
+        val store = chatUnreadStore ?: return null
+        val contextKey = AgentDisplay.profileContextKey(target.connectionId, target.profile)
+        val visible = AppForegroundTracker.isForeground.value && chatVisible && !_isLoadingHistory.value &&
+            activeProfileContextKey == contextKey && chatHandler?.currentSessionId?.value == target.sessionId
+        val completedAt = System.currentTimeMillis()
+        return viewModelScope.async(start = CoroutineStart.UNDISPATCHED) {
+            // A local read-receipt failure must not drop the existing reply alert.
+            runCatching { store.completed(contextKey, target.sessionId, turnId, completedAt, visible) }
+                .getOrDefault(true)
+        }
+    }
+
+    private fun postCompletedConversation(
+        target: ChatNotificationTarget, turnId: String, agentName: String?, text: String,
+        identity: ReplyNotificationIdentity?, toolCount: Int = 0, durationSeconds: Long? = null,
+        receipt: Deferred<Boolean>? = null,
+    ) {
+        val context = appContext ?: return
+        if (pendingReplyNotifications[target] == turnId) return
+        pendingReplyNotifications[target] = turnId
+        val deliveryLease = "reply:${target.key}:$turnId"
+        // Handoff before the turn releases its lease: local receipt/avatar IO
+        // must not let Android retire the existing foreground service first.
+        ActiveTurnKeepAliveRegistry.acquire(deliveryLease)
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                val recorded = withTimeoutOrNull(2_000) { receipt?.await() }
+                if (recorded == false) return@launch
+                val avatar = cachedReplyAvatar(context, target.connectionId, identity?.profileName ?: target.profile)
+                // Permission/settings/foreground may change during local cache IO.
+                if (pendingReplyNotifications[target] != turnId) return@launch
+                if (!notifyOnTurnComplete || AppForegroundTracker.isForeground.value) return@launch
+                TurnCompleteNotifier.notifyTurnComplete(context, target, turnId, agentName, text,
+                    toolCount, durationSeconds, identity, avatar)
+            } finally {
+                if (pendingReplyNotifications[target] == turnId) pendingReplyNotifications.remove(target)
+                ActiveTurnKeepAliveRegistry.release(deliveryLease)
+            }
+        }
+    }
+
+    /** Clear only alerts for the exact conversation displayed in foreground. */
+    fun clearVisibleConversationNotifications() {
+        if (!AppForegroundTracker.isForeground.value) return
+        val context = appContext ?: return
+        val binding = conversationBinding.value
+        val sessionId = chatHandler?.currentSessionId?.value
+        if (_isLoadingHistory.value || binding.sessionId != sessionId) return
+        val target = ChatNotificationTarget.from(binding.contextKey, sessionId) ?: return
+        pendingReplyNotifications.remove(target)
+        TurnCompleteNotifier.cancel(context, target)
+        InteractionRequestNotifier.cancelConversation(context, target)
+        viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            runCatching { chatUnreadStore?.markRead(requireNotNull(binding.contextKey), target.sessionId) }
+        }
+    }
+
+    private fun maybeNotifyTurnComplete(
+        handler: ChatHandler,
+        messageId: String,
+        target: ChatNotificationTarget?,
+        turnId: String,
+        identity: ReplyNotificationIdentity?,
+    ) {
+        if (target == null || intentionallyCancelled) return
+        if (appContext == null) return
+        val receipt = recordUnreadCompletion(target, turnId)
+        if (!notifyOnTurnComplete || AppForegroundTracker.isForeground.value) return
         val msg = handler.messages.value.lastOrNull {
             it.id == messageId && it.role == MessageRole.ASSISTANT
-        } ?: handler.messages.value.lastOrNull { it.role == MessageRole.ASSISTANT } ?: return
-        val toolCount = msg.toolCalls.size
-        val durationSeconds = ((System.currentTimeMillis() - msg.timestamp) / 1_000L)
-            .takeIf { it > 0 }
-        TurnCompleteNotifier.notifyTurnComplete(
-            context = ctx,
-            agentName = handler.activeAgentName,
-            responseText = msg.content.trim().ifBlank { "Hermes finished responding." },
-            toolCount = toolCount,
-            durationSeconds = durationSeconds,
-        )
+        }
+        val toolCount = msg?.toolCalls?.size ?: 0
+        val durationSeconds = msg?.let { ((System.currentTimeMillis() - it.timestamp) / 1_000L).takeIf { seconds -> seconds > 0 } }
+        postCompletedConversation(target, turnId, handler.activeAgentName,
+            msg?.content.orEmpty().trim().ifBlank { "Hermes finished responding." },
+            identity, toolCount, durationSeconds, receipt)
     }
 
     // === Dropped-stream answer recovery (issue #166) ===
@@ -7595,7 +7728,7 @@ class ChatViewModel : ViewModel() {
                 AppForegroundTracker.isForeground.collect { foreground ->
                     val context = appContext
                     if (foreground) {
-                        context?.let(InteractionRequestNotifier::cancelAll)
+                        if (chatVisible) clearVisibleConversationNotifications()
                     } else {
                         scheduleCheckpointWrite(immediate = true)
                         val handler = chatHandler
@@ -7609,6 +7742,7 @@ class ChatViewModel : ViewModel() {
                                 key.sessionId,
                                 pending.ask,
                                 pending.profile,
+                                key.contextKey,
                             )
                         }
                     }
@@ -7657,6 +7791,7 @@ class ChatViewModel : ViewModel() {
                 it.role == MessageRole.ASSISTANT && !it.clientOnly
             },
             startedAt = assistantTimestamp,
+            replyIdentity = snapshotReplyIdentity(handler, sessionId),
         )
         activeQueueOwnerRunId = userMessageId
         activeTurnCheckpointKey()?.let { ActiveTurnKeepAliveRegistry.acquire(it.keepAliveKey()) }
@@ -7695,6 +7830,7 @@ class ChatViewModel : ViewModel() {
             priorUserMessageCount = checkpoint.priorUserMessageCount,
             baselineAssistantCount = checkpoint.baselineAssistantCount,
             startedAt = checkpoint.startedAt,
+            replyIdentity = checkpoint.replyIdentity,
         )
         activeQueueOwnerRunId = checkpoint.user.id
         restoreQueuedMessages(checkpoint)
@@ -7745,6 +7881,10 @@ class ChatViewModel : ViewModel() {
         return ChatTurnCheckpoint(
             contextKey = contextKey,
             profileKey = seed.profileKey,
+            replyIdentity = seed.replyIdentity?.copy(
+                conversationTitle = handler.sessions.value.firstOrNull { it.sessionId == sessionId }?.title
+                    ?: seed.replyIdentity.conversationTitle,
+            ),
             sessionId = sessionId,
             liveSessionId = gatewayClient?.currentLiveSessionId(sessionId) ?: seed.liveSessionId,
             transport = seed.transport,
@@ -7823,6 +7963,7 @@ class ChatViewModel : ViewModel() {
                 ChatTurnAskCheckpoint(
                     kind = ask.ask.kind.name,
                     requestId = ask.ask.requestId,
+                    serverRequest = ask.ask.serverRequest,
                     text = ask.ask.text,
                     choices = ask.ask.choices,
                     multiSelect = ask.ask.multiSelect,
@@ -8034,6 +8175,7 @@ class ChatViewModel : ViewModel() {
             ask = GatewayAsk(
                 kind = kind,
                 requestId = saved.requestId,
+                serverRequest = saved.serverRequest,
                 text = saved.text,
                 choices = saved.choices,
                 multiSelect = saved.multiSelect,
@@ -8495,11 +8637,23 @@ class ChatViewModel : ViewModel() {
      */
     private fun finalizeTurnSideEffects(handler: ChatHandler, messageId: String) {
         val completedOwner = activeQueueOwnerRunId
+        val completionTarget = ChatNotificationTarget.from(
+            activeTurnCheckpointSeed?.contextKey ?: activeProfileContextKey,
+            activeTurnCheckpointSeed?.sessionId ?: handler.currentSessionId.value,
+        )
+        val completionTurnId = activeTurnCheckpointSeed?.userMessageId ?: completedOwner ?: messageId
+        val replyIdentity = activeTurnCheckpointSeed?.replyIdentity?.let { identity ->
+            identity.copy(conversationTitle = handler.sessions.value.firstOrNull {
+                it.sessionId == handler.currentSessionId.value
+            }?.title ?: identity.conversationTitle)
+        } ?: snapshotReplyIdentity(handler, handler.currentSessionId.value.orEmpty())
         handler.onStreamComplete(messageId)
         settleSessionActivity(handler.currentSessionId.value)
         if (completedOwner != null && queuedMessageItems.any { it.ownerRunId == completedOwner }) {
             completedQueueOwnerRuns += completedOwner
         }
+        // Acquire delivery protection before releasing this turn's protection.
+        maybeNotifyTurnComplete(handler, messageId, completionTarget, completionTurnId, replyIdentity)
         clearTurnCheckpoint(preserveQueue = true)
         activeStream = null
         _steerableTurn.value = false
@@ -8507,10 +8661,6 @@ class ChatViewModel : ViewModel() {
         // A terminal turn event is not proof of a user's decision. Keep any
         // unanswered card intact; only a labeled response, authoritative
         // expiry, or explicit interrupt owns its transition.
-
-        // Notify when the turn finished while the app is backgrounded —
-        // never for cancelled streams; errors end via onErrorCb instead.
-        maybeNotifyTurnComplete(handler, messageId)
 
         // v0.4.1 polish: auto-return to Hermes-Relay if the bridge
         // moved the foreground app during this run. No-op when the

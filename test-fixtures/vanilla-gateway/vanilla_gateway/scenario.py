@@ -14,7 +14,7 @@ class ScenarioError(ValueError):
     """Raised when a scenario does not satisfy the fixture schema."""
 
 
-_STEP_OPS = {"event", "persist", "sleep", "close", "set_running", "clarify"}
+_STEP_OPS = {"event", "persist", "sleep", "close", "set_running", "clarify", "server_request"}
 _LIVE_STATUSES = {"starting", "working", "waiting", "idle"}
 _SAFE_NAME = re.compile(r"[A-Za-z0-9_.-]{1,120}")
 
@@ -71,6 +71,12 @@ class Scenario:
                     raise ScenarioError("event scope must be exact, foreign, or unscoped")
                 if step["op"] == "persist" and not isinstance(step.get("messages"), list):
                     raise ScenarioError("persist step requires a messages list")
+                if step["op"] == "server_request":
+                    rid, method, payload = step.get("id"), step.get("method"), step.get("payload")
+                    if isinstance(rid, bool) or not isinstance(rid, (str, int, float)):
+                        raise ScenarioError("server request requires a string or numeric id")
+                    if not isinstance(method, str) or not method or not isinstance(payload, dict):
+                        raise ScenarioError("server request requires a method and object payload")
                 if step["op"] == "clarify":
                     payload = step.get("payload")
                     if not isinstance(payload, dict) or not isinstance(payload.get("request_id"), str):

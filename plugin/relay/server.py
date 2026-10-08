@@ -826,9 +826,10 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         lan = [candidate for candidate in existing
                if str(candidate.get("role", "")).lower() == "lan"]
         legacy = [candidate for candidate in existing
-                  if candidate.get("legacy") is True
-                  or str(candidate.get("role", "")).lower()
-                  in {"legacy_direct", "public_legacy"}]
+                  if str(candidate.get("role", "")).lower() not in {"tailscale", "public", "lan"}
+                  and (candidate.get("legacy") is True
+                       or str(candidate.get("role", "")).lower()
+                       in {"legacy_direct", "public_legacy"})]
         other = [candidate for candidate in existing
                  if str(candidate.get("role", "")).lower()
                  not in {
@@ -4252,8 +4253,10 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
         session_token = await _authenticate(
             ws, server, remote_ip, request, via_secure_link=via_secure_link
         )
-    except _AuthFailed as exc:
-        logger.info("Auth failed from %s: %s", remote_ip, exc)
+    except _AuthFailed:
+        # The failed envelope can contain arbitrary client text. Keep it out
+        # of logs; the client already receives the bounded auth.fail reason.
+        logger.info("Auth failed")
         server._client_capabilities.pop(ws, None)
         server.chat.detach_ws(ws)
         # WebSocket was already sent an auth.fail message
@@ -4269,7 +4272,7 @@ async def handle_ws(request: web.Request) -> web.WebSocketResponse:
 
     server._clients[ws] = session_token
     server._client_tasks[ws] = set()
-    logger.info("Client authenticated from %s", remote_ip)
+    logger.info("Client authenticated")
 
     try:
         async for msg in ws:

@@ -39,6 +39,25 @@ token, terminal/bridge grants, and optional network candidates.
 
 ---
 
+## Gateway interactive requests
+
+Current upstream asks arrive as JSON-RPC server requests after Android advertises
+`client.capabilities {server_requests:true}` following each `gateway.ready`.
+Android supports native Clarify (single and batch), approval, sudo and secret
+cards. Answers use the original typed frame id. Batch answers use `clarify.lock`
+with the original frame id and exact question id; each accepted lock survives
+reconnect replay. Skip sends an empty answer. Supervised mode cancels Clarify,
+denies approvals and declines sudo/secret without displaying inputs.
+
+Request ownership includes the Gateway client, socket generation and exact live
+session. A checkpoint cannot authorize a native answer until upstream replays
+it. Unsupported vault, Desktop renderer and display installation requests receive
+JSON-RPC method-not-found so they do not wait for a renderer Android lacks.
+Older Gateway notification asks retain their `*.respond` path.
+
+See [Gateway request contract](gateway-server-requests.md) for the method matrix,
+cancellation semantics and verification commands.
+
 ## 2. Design Principles
 
 1. **Vanilla Hermes first** — chat, Manage, and voice must work against unmodified upstream Hermes before any Relay power path is considered.
@@ -150,6 +169,50 @@ leases or assuming process termination; if the process survives, returning to
 the app can protect unfinished turns again. The service is not sticky and does
 not restart idle retention from stale notification actions after process death.
 
+Background chat alerts cover actionable Gateway requests and successful turn
+completion for locally owned conversations while the app is backgrounded. An
+absent alert preference follows Android notification permission and is refreshed on resume, including grants
+made during onboarding; an explicit user choice remains authoritative. The chat
+ViewModel observes the setting without requiring UI recomposition. Android's app
+and channel controls still govern delivery. Active-turn protection preserves the
+live connection; it does not provide offline push after process death.
+
+Alerts retain their saved connection, profile, and durable conversation identity.
+Successful detached turns may notify after a sibling conversation is selected
+and the app is backgrounded. Detached errors, interruptions, and reclaimed
+runtimes never produce success alerts.
+Each conversation has an independent reply slot, and replay of the same turn
+cannot re-alert an existing slot. Opening a notification restores its saved
+connection and profile before opening the explicit conversation. Cold-start taps
+wait for navigation policy hydration. Missing or disallowed owners never fall
+back to the currently selected conversation. Returning to the app dismisses only
+alerts for the conversation actually displayed; disabling alerts clears all chat
+alert slots. Public lock-screen reply copy omits response and profile details.
+
+Completed replies in off-screen conversations also create local unread receipts,
+independent of Android notification permission and the background-alert toggle.
+The drawer marks those conversations, the profile shelf and switcher show unread
+conversation counts, and the chat header retains the total while the shelf is
+closed. Opening the exact conversation clears its receipt. Receipts retain their
+last turn identity across app restart so replay cannot resurrect a read badge or
+re-alert that turn. Storage is bounded to the latest 512 conversation receipts;
+it contains no message bodies. Server Default and named-profile receipt owners
+remain distinct, including when their display choices would normally collapse.
+
+Reply notifications use the owning official profile's `display_name`/name and
+conversation title captured with the turn. When available, the large icon comes
+from the connection/profile-scoped cache populated by upstream
+`profiles.get_asset {name, asset: "avatar"}`. Missing, invalid, or oversized
+cached images fall back to the app icon; completion does not fetch arbitrary
+remote image URLs or borrow the newly selected profile's image. Public
+lock-screen copy remains generic and has no profile avatar.
+
+Chat progress uses the selected dots or matrix indicator in a fixed rail directly
+above the composer while the visible conversation is running. Scrolling the
+transcript does not move that rail. Waiting for user input and terminal settlement
+hide it; message bubbles retain reasoning, tool activity, and image-generation
+previews without duplicating the general progress indicator.
+
 The session drawer is a Dashboard REST consumer, not a Gateway-socket view.
 Profile-scoped session browsing and stored transcript reads remain available
 whenever the authenticated Dashboard route is available, including while the
@@ -203,7 +266,7 @@ Connection lifecycle, auth, keepalive.
 
 | Field | Type | Meaning |
 |-------|------|---------|
-| `expires_at` | epoch seconds or `null` | Session lifetime. `null` means never-expire (user explicitly picked "Never" in the TTL picker). Server-side `math.inf` serializes as `null`. |
+| `expires_at` | epoch seconds or `null` | Session lifetime. `null` means never-expire (approved by the host operator). Server-side `math.inf` serializes as `null`. |
 | `grants` | `{ channel: epoch \| null }` | Per-channel expiries. Keys today: `chat`, `terminal`, `bridge`, `tui`, `voice:config`, `voice:stt`, `voice:tts`, and `voice:realtime`. Each grant is clamped to the session lifetime — a grant cannot outlive its session. `null` means the grant shares the session's never-expire. |
 | `transport_hint` | `"wss"` / `"ws"` / `"unknown"` | What the server believes the phone is actually connected over. Drives the transport security badge and the TTL picker's default option on re-pair. |
 | `profiles` | `[{name, model, description, system_message, api_server_*}]` | **Added v0.6.0; expanded 2026-05-18.** Relay-advertised list of upstream Hermes profiles discovered at `~/.hermes/profiles/*/`, plus a synthetic `"default"` entry describing Hermes' effective default profile. When the root `active_profile` marker names a valid profile, the synthetic row uses that profile's config/SOUL/API metadata; otherwise it uses the root profile. The named row remains available for explicit selection. `system_message` carries the profile's `SOUL.md` content and may be `null`. `api_server_enabled`, `api_server_url`, `api_server_host`, `api_server_port`, and `api_server_key_present` let Android route chat/session calls through a profile's own Hermes API server when it is running, without exposing the key. Empty list when `RELAY_PROFILE_DISCOVERY_ENABLED=0`. See `docs/decisions.md` §21. |
@@ -287,12 +350,25 @@ the selected provider when upstream requires it, while retaining the hosted
 Nous compatibility behavior where the gateway selects its single
 native-eligible provider.
 The app owns an ephemeral five-minute loopback callback and stores the resulting
-bearer session only for that connection and exact dashboard origin. Callback,
-code-exchange, hosted-gateway, transport, response-shape, and secure-storage
+bearer session only for that connection and exact dashboard origin. A bound
+foreground service shows a sign-in notification before the browser opens and
+retains network access through callback, token exchange, and session verification.
+The sign-in coroutine releases its binding on completion, cancellation, or
+timeout; it does not enable persistent connectivity or change battery settings.
+Callback, code-exchange, hosted-gateway, transport, response-shape, and secure-storage
 failures surface as distinct secret-free recovery guidance. Client-local native
 failures automatically continue through the upstream cookie/WebView fallback;
 explicit provider denial, server rejection, and rate limiting remain visible
 instead of starting a second authorization attempt.
+The callback binds only literal `127.0.0.1` on an OS-selected port. At most four
+accepted sockets read concurrently, each with a five-second absolute header
+deadline, an 8 KiB request-line limit and a 16 KiB header limit. A single consumer
+validates the exact Host/port, `/callback` target and unique state/code parameters
+before a single-use PKCE exchange. Cancellation closes accepted sockets and the
+listener and cancels an active token call. Browser response writes have a separate
+two-second bound; failure to deliver the page does not undo a saved session.
+Completion and error pages show the selected provider's escaped display name;
+shared guidance does not assume Google or a hosted gateway.
 If a provider establishes its browser session but does not resume the original
 authorization transaction, the waiting screen offers Continue sign-in. That
 action cancels the old native attempt before opening a fresh authorization, so
@@ -303,6 +379,9 @@ authorization-origin relationship, browser launch, validated loopback callback,
 completion, Continue/cancel/close actions, fallback, and typed failure with
 elapsed time, provider class, and route role. Raw provider names, hostnames,
 callback parameters, codes, state, verifier, cookies, and tokens are excluded.
+Listener binding/closure, socket acceptance, completed reads, fixed rejection
+categories and failed response writes identify where browser handoff stopped.
+Callback-wait timeout is distinct from token-transport timeout.
 The review-before-sharing support export combines recent sanitized diagnostics
 with persistent reliability reports; no telemetry or automatic upload is added.
 Unreadable secure stores may be cleared and rebuilt, with any Keystore fallback,
@@ -435,9 +514,10 @@ As of **v3 (ADR 24)**, the QR can also carry an ordered list of **endpoint candi
    when the top-level host matches `100.64.0.0/10` / `.ts.net`) entry
    from the top-level fields for forward-compat.
 7. SessionTtlPickerDialog opens with the QR's operator-chosen TTL
-   preselected (or default 30d on wss/Tailscale, 7d on plain ws). User
-   picks: 1d / 7d / 30d / 90d / 1y / Never. Never-expire warns inline
-   but is always selectable — user intent is the trust model.
+   preselected (or default 30d on wss/Tailscale, 7d on plain ws). The six
+   selectable rows have one radio semantics node each and scroll when needed.
+   The host-approved lifetime and grants remain authoritative; choosing a
+   longer duration cannot expand that approval.
 8. Phone opens the candidate's Relay transport (normally the Dashboard
    same-origin plugin path; direct `:8767` is legacy compatibility) with the pairing code + confirmed
    ttl_seconds + grants in the first system/auth envelope.
@@ -637,7 +717,7 @@ Bottom navigation bar with 4 tabs:
 - **Bot Mode workspace** — the session drawer exposes one entry into a separate full-screen messenger surface; it does not add Bot or group rows to the ordinary session taxonomy. Android refreshes every saved Dashboard/Gateway with bounded concurrency, preserves last-good rows as visibly offline, and collapses duplicate routes by upstream `install_id` before assigning source-qualified handles. Every Bot carries an immutable `(connectionId, profile)` owner; labels, installation metadata, and the currently resolved URL are presentation/routing data rather than identity. All gateways and one-gateway filters never mutate the foreground connection.
 - **Canonical Bot Chat** — each individual row resolves the exact hidden session titled `Bot Chat` on its owning Gateway. Lookup failure is not absence, so Android creates and materializes the lazy row with `session.title` only after an authoritative empty exact-title result. The dedicated Bot Chat destination retains that route's pooled Gateway client, loads history through the same connection/profile Dashboard, sends only through Gateway, and returns directly to Bot Mode without rebinding Standard Chat or the global connection. `/new` or `/reset` compacts the canonical conversation instead of forking it. The route pool mints a fresh WebSocket ticket per dial, includes the immutable profile in the WebSocket URL, isolates credentials by exact trusted connection origin, and tears down only the removed connection's clients.
 - **Bot group projection** — Android merges the bounded `ui_meta["hermes-bots-groups"]` v3 projection across gateways by durable room identity and newest revision. Rooms and recent messages are visibly read-only; Android does not create, rename, disband, join, send, coordinate member turns, or become a second room-log authority. Binary room images are ignored at this metadata boundary.
-- **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. Create, switch, rename, delete, pin/unpin, and archive/restore. A profile switch marks the replacement list loading before clearing the previous profile's rows and keeps that state until the exact-profile fetch settles, so an empty-state claim never flashes before server truth arrives. The process-owned conversation binding is the single connection/profile/session identity for Chat; selecting an All Profiles row atomically makes its owner the selected agent and persists that profile/session, while merely browsing All Profiles changes no agent state. Lifecycle or locale-driven Activity recreation cannot replace an explicit binding with stale persisted state, and asynchronous list/history/mutation work is accepted only for the binding's exact namespace. A profile lock hides All Profiles and rejects stale/deep-linked cross-profile opens. The All Profiles browser mode otherwise survives Activity state restoration and refetches its rows after recreation. Pin and archive are durable upstream session fields loaded and patched through the owning connection/profile's Dashboard session API; Android does not keep a second local flag registry. Archived rows are requested explicitly so they remain restorable after recreation. Failed mutations roll back the optimistic row, while refresh and deletion reconcile from server truth. When a persisted title is absent, use upstream's first-user-message `preview`, matching the Hermes Desktop session picker; show "Untitled" only when neither value exists.
+- **Session drawer** (swipe from left or hamburger icon) — session list with title, timestamp, message count. On wide Chat layouts (at least 840 dp available), a saved opt-in presentation choice can keep the same browser visible in a 320 dp sidebar; unpinning returns it to the on-demand drawer. Compact layouts keep the drawer, and supervised history restrictions suppress the sidebar. Create, switch, rename, delete, pin/unpin, and archive/restore. A profile switch marks the replacement list loading before clearing the previous profile's rows and keeps that state until the exact-profile fetch settles, so an empty-state claim never flashes before server truth arrives. The process-owned conversation binding is the single connection/profile/session identity for Chat; selecting an All Profiles row atomically makes its owner the selected agent and persists that profile/session, while merely browsing All Profiles changes no agent state. Lifecycle or locale-driven Activity recreation cannot replace an explicit binding with stale persisted state, and asynchronous list/history/mutation work is accepted only for the binding's exact namespace. A profile lock hides All Profiles and rejects stale/deep-linked cross-profile opens. The All Profiles browser mode otherwise survives Activity state restoration and refetches its rows after recreation. Pin and archive are durable upstream session fields loaded and patched through the owning connection/profile's Dashboard session API; Android does not keep a second local flag registry. Archived rows are requested explicitly so they remain restorable after recreation. Failed mutations roll back the optimistic row, while refresh and deletion reconcile from server truth. When a persisted title is absent, use upstream's first-user-message `preview`, matching the Hermes Desktop session picker; show "Untitled" only when neither value exists.
 - **Cold profile hydration** — a persisted named profile scopes its Dashboard session directory and last-session restore immediately, before `/api/profiles` metadata is available. Server-default selection waits for the lightweight active-profile scope. Roster, avatars, pets, skills, and model metadata never precede the first directory result. The startup sphere releases after route selection; Chat keeps identity and cached rows mounted while its existing animated status surfaces show Gateway wake, session restore, and directory loading.
 - **Authoritative session activity** — one composite registry keyed by connection, normalized profile, and durable session id drives the drawer, filters, grouping, animation, accessibility, and the visible composer. Exact pending approval/clarify/sudo/secret/MCP requests produce **Needs input**; the Gateway's process-wide `session.active_list` supplies **Starting**, **Working**, and **Idle**; an exact terminal, `session.info {running:false}`, or an exact live/durable active-list row reporting Idle can settle only the matching Android-owned turn and progress generation. Because active-list rows normally have no profile metadata, Android assigns a row through exact foreground/detached ownership already held by that client, explicit profile metadata if a future upstream sends it, or the currently selected passive session when its durable id has exactly one owner in the current connection directory. Duplicate same-id owners across profiles remain unresolved and create no status. Resolved rows from a partial snapshot may update their exact owners, but disappearance settles a scope only when the successful process-wide snapshot was completely and unambiguously resolved for it. Restart/checkpoint recovery is **Checking**; a failed or unsupported live refresh is **Unavailable**, never inferred Idle. REST `is_active` remains recency metadata only. `process.list` may add a separate **Background work** indicator and never keeps the parent conversation Working. Old socket generations, ambiguous bare session ids, delayed snapshots, and snapshots crossed by newer turn events cannot settle or revive a newer generation.
 - **Concurrent Gateway chats** — switching sessions, profiles, drafts, or Threads detaches the visible Android-owned turn without sending `session.interrupt`; each Android-owned running chat keeps a connection/profile/session-scoped checkpoint and reattaches to its live Gateway session when reopened. Opening, foregrounding, or selecting a saved session without that exact checkpoint is read-only observation: Android warms only the socket, reads profile-scoped history, and polls `session.active_list` without `session.resume`, `session.activate`, `prompt.submit`, or `session.interrupt`. A Desktop/TUI-owned turn therefore remains owned by its producing client; Android refreshes persisted progress and performs one final history read when the runtime settles. Explicit send/config actions may resume the destination session, explicit Stop still interrupts, and Direct API compatibility chat stays single-stream and cancels on navigation.
@@ -1409,3 +1489,22 @@ by a fresh Start action in the resumed app. The microphone FGS acknowledges
 readiness before the overlay attaches. Stop, screen lock, task removal and lost
 access terminate the session; an Activity handoff retains protection until resume.
 Device Control, Accessibility and MediaProjection remain sideload-only. See ADR 74.
+
+### Android Relay session lifetime management
+
+Settings → Relay sessions → Session lifetime allows the current phone to
+shorten its own session with `PATCH /sessions/{prefix}`. Only positive durations
+shorter than the remaining lifetime are offered; this bearer cannot change
+another device’s lifetime. The dialog stays open on failure with refresh,
+shorter-duration, and operator-approved re-pairing guidance. Successful updates
+refresh the session list and close the dialog.
+
+Pair again opens the existing Relay repair chooser for the current connection
+without revoking the current session first. Renewal requires a fresh host operator-approved code. Timed bridge grants
+are capped at seven days by default and may expire before the parent session;
+shortening never renews grants or the phone's separate screen-access consent.
+
+Relay-only renewal by code preserves the saved Dashboard/API identity and uses
+the existing pairing payload path. Existing pinned route trust is retained only
+when the entered Relay URL matches that route. A different Relay URL cannot
+inherit another host’s TLS pin.

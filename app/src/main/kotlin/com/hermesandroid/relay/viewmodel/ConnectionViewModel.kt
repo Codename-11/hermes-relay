@@ -930,6 +930,12 @@ internal fun migratedBackgroundAvatar(
 
 class ConnectionViewModel(application: Application) : AndroidViewModel(application) {
 
+    // Eager Main.immediate collectors can rebuild clients during construction.
+    // Their non-null topology input must exist before any collector starts.
+    private var topologyConnectionId: String? = null
+    private var topologyGatewayMode: String? = null
+    private var topologyProfiles: List<String> = emptyList()
+
     private val ctx: Context get() = getApplication()
 
     companion object {
@@ -1041,6 +1047,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // Chat scroll behavior
         private val KEY_SMOOTH_AUTO_SCROLL = booleanPreferencesKey("smooth_auto_scroll")
         private val KEY_CLOSE_DRAWER_ON_SEND = booleanPreferencesKey("close_drawer_on_send")
+        private val KEY_SESSIONS_SIDEBAR_PINNED =
+            booleanPreferencesKey("sessions_sidebar_pinned")
         private val KEY_KEEP_COMPOSER_FOCUSED_ON_SEND =
             booleanPreferencesKey("keep_composer_focused_on_send")
 
@@ -3158,6 +3166,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // Pinned Sessions sidebar (wide layout only). Persisted intent: when the
+    // chat surface is >= 840dp wide the drawer renders as an always-visible
+    // 320dp sidebar instead of a modal sheet; below the threshold the modal
+    // drawer behavior applies and the intent waits for the next wide layout.
+    val sessionsSidebarPinned: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_SESSIONS_SIDEBAR_PINNED] ?: false }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    fun setSessionsSidebarPinned(pinned: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_SESSIONS_SIDEBAR_PINNED] = pinned
+            }
+        }
+    }
+
     // Keep the text composer focused after send. Default ON matches mobile
     // chat convention: quick follow-up messages should not require retapping
     // the input. Turning it off drops the keyboard after a successful send.
@@ -3219,16 +3243,20 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     // are on until POST_NOTIFICATIONS is actually granted.
     // ChatViewModel.notifyOnTurnComplete; ChatSettingsScreen owns the toggle
     // + the POST_NOTIFICATIONS runtime request on first enable.
-    private val defaultNotifyTurnComplete: Boolean = defaultChatAlertsEnabled(
+    private fun defaultNotifyTurnComplete(): Boolean = defaultChatAlertsEnabled(
         sdkInt = Build.VERSION.SDK_INT,
         notificationsPermitted = androidx.core.content.ContextCompat.checkSelfPermission(
-                application,
+                getApplication<Application>(),
                 android.Manifest.permission.POST_NOTIFICATIONS,
             ) == android.content.pm.PackageManager.PERMISSION_GRANTED,
     )
-    val notifyTurnComplete: StateFlow<Boolean> = application.relayDataStore.data
-        .map { it[KEY_NOTIFY_TURN_COMPLETE] ?: defaultNotifyTurnComplete }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, defaultNotifyTurnComplete)
+    private val notificationPermissionDefault = MutableStateFlow(defaultNotifyTurnComplete())
+    val notifyTurnComplete: StateFlow<Boolean> = combine(
+        application.relayDataStore.data,
+        notificationPermissionDefault,
+    ) { preferences, permitted ->
+        preferences[KEY_NOTIFY_TURN_COMPLETE] ?: permitted
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, notificationPermissionDefault.value)
 
     fun setNotifyTurnComplete(enabled: Boolean) {
         viewModelScope.launch {
@@ -4479,6 +4507,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             profileController.profileSessionStore.clearConnection(connectionId)
             profileController.profileDisplayAliasStore.clearConnection(connectionId)
             profileController.profileIconStore.clearConnection(connectionId)
+            com.hermesandroid.relay.data.ChatUnreadStore(getApplication<Application>()).removeConnection(connectionId)
             com.hermesandroid.relay.data.BridgeCapabilityPolicyRepository(getApplication())
                 .clearConnection(connectionId)
         } finally {
@@ -5548,6 +5577,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
      *   that can't measure it (or want to force a probe) pass [Long.MAX_VALUE].
      */
     fun revalidateOnResume(awayMs: Long) {
+        // Onboarding and Android Settings can grant permission after this VM
+        // was created. Refresh before the brief-resume network early return;
+        // an explicit chat-alert preference still wins over this default.
+        notificationPermissionDefault.value = defaultNotifyTurnComplete()
         // Relay recovery is independent of standard API health. Even a brief
         // resume should replace ordinary WSS backoff with an immediate attempt.
         reconnectIfStale()
@@ -5882,9 +5915,6 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
-    private var topologyConnectionId: String? = null
-    private var topologyGatewayMode: String? = null
-    private var topologyProfiles: List<String> = emptyList()
 
     fun selectedProfileUsesIsolatedApiRoute(): Boolean {
         val profile = profileController.selectedProfile.value ?: return false
@@ -8738,6 +8768,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 authManager.clearSession()
                 authManager.clearApiKey()
                 check(dataManager.resetAppData()) { "App data store reset failed" }
+                com.hermesandroid.relay.data.ChatUnreadStore(getApplication<Application>()).clear()
                 profileController.profileSelectionStore.clearAll()
                 profileController.profileLockStore.clearAll()
                 com.hermesandroid.relay.data.SupervisedModeStore(getApplication<Application>())

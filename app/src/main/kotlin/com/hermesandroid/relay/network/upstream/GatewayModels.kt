@@ -180,6 +180,7 @@ data class GatewayBackgroundTurnCompletion(
     val liveSessionId: String,
     val profile: String?,
     val expectedAssistantText: String?,
+    val successful: Boolean = false,
 )
 
 /** Input lifecycle from a deliberately detached Gateway turn. */
@@ -207,15 +208,15 @@ sealed interface GatewayBackgroundInteractionEvent {
  * until the matching respond RPC arrives, the ask times out (resolves to ""
  * server-side), or the turn is cancelled (`session.interrupt` force-releases
  * pending asks and force-denies approvals). Built by [GatewayEventMapper]
- * from the four `*.request` events; answered via the
- * [GatewayChatClient] `respond*` helpers.
+ * from admitted native JSON-RPC requests or legacy `*.request` events;
+ * answered through [GatewayChatClient.respondAsk].
  */
 data class GatewayAsk(
     val kind: Kind,
     /**
      * Correlates the answer with the blocked server thread. Null ONLY for
-     * [Kind.APPROVAL] — upstream approvals correlate per-session, not
-     * per-request (`approval.respond` carries `session_id` instead).
+     * legacy [Kind.APPROVAL], whose response correlates per session. Native
+     * requests use an internal key retaining the frame id's JSON type.
      */
     val requestId: String?,
     /** Question / command / prompt — whatever the ask wants the user to read. */
@@ -235,6 +236,7 @@ data class GatewayAsk(
     val timeoutSeconds: Int,
     val questions: List<GatewayClarifyQuestion> = emptyList(),
     val answers: Map<String, String> = emptyMap(),
+    val serverRequest: Boolean = false,
 ) {
     enum class Kind { CLARIFY, APPROVAL, SUDO, SECRET }
     val clarifyComplete: Boolean get() = questions.isNotEmpty() && questions.all { it.qid in answers }

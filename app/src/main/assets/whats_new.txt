@@ -1,19 +1,13 @@
-v1.17.0 - Voice over other apps and clearer conversations
+v1.18.1 - Reliable browser sign-in
 
 Summary
-* Google Play gains optional voice controls over other apps. Clarify questions, profile names, and chat context are easier to follow without losing confirmed answers or saved conversations.
+* Dashboard browser sign-in stays connected while you complete the provider flow and return to Hermes-Relay. Callback pages show which provider handled the attempt.
 
 Highlights
-* Keep voice controls over other apps — Start Voice Overlay from Voice Focus after granting microphone, notification, and display-over-other-apps access. Stop voice from its controls or persistent notification; screen lock and permission loss end the session.
-* Answer Clarify questions one at a time — Multi-question requests support separate choices and custom answers. Confirmed progress survives reconnects, and failed sends keep the current answer available.
-* Recognize profiles by their display names — Profiles use their Hermes display names, and the resolved server default appears under its agent identity. Explicit profile choices and saved conversations are preserved.
+* Finish browser sign-in — The app keeps the sign-in callback and session check connected while the browser is open, then ends the sign-in notification when the attempt finishes or is canceled.
 
 Improved
-* Read cleaner chat cards — Standalone response cards lose the extra outer bubble, assistant messages use quieter surfaces, and delivery status sits beside the timestamp.
-
-Fixed
-* See which context your chat can send — Gateway previews mark phone status and turn context as unavailable. Automatic phone-status sharing is labeled for API-only chats, where it remains supported.
+* Recognize the sign-in provider — Browser callback success and error pages identify the selected provider and use guidance that applies to self-hosted and hosted Hermes.
 
 Compatibility
-* Voice Overlay is now available in Google Play and sideload builds. Device Control remains sideload-only.
-* Standard Chat and voice use upstream Hermes without requiring Hermes-Relay Plugin. Gateway phone-status delivery and automatic Android identification remain unavailable.
+* Browser sign-in continues to use upstream Hermes Dashboard; no Hermes-Relay Plugin update is required.

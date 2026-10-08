@@ -798,7 +798,7 @@
     <string name="settings_bridge_desc">Relay-granted phone bridge controls</string>
     <string name="settings_bridge_core_desc">Relay features without sideload device control</string>
     <string name="settings_relay_sessions">Relay sessions</string>
-    <string name="settings_relay_sessions_desc">Phones paired with this server, revoke, extend</string>
+    <string name="settings_relay_sessions_desc">Manage paired phones, session lifetimes, and access</string>
     <string name="settings_notification_companion">Notification companion</string>
     <string name="settings_notification_companion_desc">Shared phone notifications for paired relay tools</string>
     <string name="settings_media">Media</string>
@@ -1186,6 +1186,8 @@
     <string name="drawer_new_chat">New Chat</string>
     <string name="drawer_search_placeholder">Search sessions or id...</string>
     <string name="drawer_search_sessions">Search sessions</string>
+    <string name="drawer_pin_sidebar">Pin sessions sidebar</string>
+    <string name="drawer_unpin_sidebar">Unpin sessions sidebar</string>
     <string name="drawer_activity_working">Working</string>
     <string name="drawer_activity_needs_input">Needs input</string>
     <string name="drawer_activity_starting">Starting</string>
@@ -2511,7 +2513,7 @@
     <string name="stats_last_sentence">Last sentence</string>
     <string name="stats_avg_latency_last_format">Avg latency (last %1$d)</string>
     <string name="stats_response_chunks">Response chunks</string>
-    <string name="stats_last_chunk_gap">Last chunk gap</string>
+    <string name="stats_last_chunk_gap">Synthesis request gap</string>
     <string name="stats_received">Received</string>
     <string name="stats_barge_in_playback">Barge-in / Playback</string>
     <string name="stats_barge_in_events">Barge-in events</string>
@@ -3045,7 +3047,7 @@
 
     <!-- SessionTtlPickerDialog -->
     <string name="ttl_title">Keep this pairing for&#8230;</string>
-    <string name="ttl_body">Your phone will reconnect automatically during this window. After it expires, you must pair again to use Relay features.</string>
+    <string name="ttl_body">The host operator approves the actual lifetime and feature grants. Your selection cannot increase that approval. After access expires, pair again with a fresh operator-approved code.</string>
     <string name="ttl_pair">Pair</string>
     <string name="ttl_cancel">Cancel</string>
     <string name="ttl_option_1d">1 day</string>
@@ -4674,4 +4676,18 @@
     <string name="cw_auth_verified">Sign-in verified</string>
     <string name="cw_chat_checked_on_open">Verified when Chat opens</string>
     <string name="dashboard_local_auth_help">Hermes is reachable, but protected requests are not authorized. If this Dashboard is forwarded from loopback, check its bind address, authentication provider, and dashboard.public_url on the host. A 401 alone does not identify the cause.</string>
+    <string name="voice_streaming_failed_basic">Streaming voice failed. Using basic speech, which may pause between sentences. Check the voice provider settings.</string>
+    <string name="voice_streaming_stopped_basic_next">Streaming voice stopped. Remaining speech will use basic speech. Check the voice provider settings.</string>
+    <string name="stats_tts_queue_wait">Audio queue wait</string>
+    <string name="stats_tts_player_start">Player start delay</string>
+    <string name="chat_unread_reply">Unread reply</string>
+    <string name="chat_unread_conversations">Unread conversations: %1$d</string>
+    <string name="paired_devices_lifetime">Session lifetime</string>
+    <string name="paired_devices_shorten_title">Shorten this pairing</string>
+    <string name="paired_devices_shorten_body">You can shorten this phone’s session. To renew or increase its lifetime, obtain a fresh operator-approved pairing code and pair again. Feature grants may expire earlier: bridge access is capped at 7 days by default for timed sessions. Shortening does not renew grants or on-device screen permissions.</string>
+    <string name="paired_devices_shorten">Shorten</string>
+    <string name="paired_devices_pair_again">Pair again</string>
+    <string name="paired_devices_policy_failed">Could not shorten the session. Refresh Relay sessions and try a shorter duration, or pair again with a fresh operator-approved code to renew access.</string>
+    <string name="paired_devices_updating">Updating session…</string>
+    <string name="paired_devices_no_shorter_duration">No shorter preset remains. You can revoke this session, or pair again to renew access.</string>
 </resources>

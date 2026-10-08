@@ -652,7 +652,7 @@
     <string name="settings_bridge_desc">Controles bridge del teléfono otorgado por Relay</string>
     <string name="settings_bridge_core_desc">Funciones de Relay sin control de dispositivo de carga lateral</string>
     <string name="settings_relay_sessions">Sesiones Relay</string>
-    <string name="settings_relay_sessions_desc">Teléfonos emparejados con este servidor, revocar, ampliar</string>
+    <string name="settings_relay_sessions_desc">Gestiona teléfonos emparejados, duración de sesiones y acceso</string>
     <string name="settings_notification_companion">Compañero de notificación</string>
     <string name="settings_notification_companion_desc">Notificaciones telefónicas compartidas para herramientas relay emparejadas</string>
     <string name="settings_media">Medios de comunicación</string>
@@ -908,6 +908,8 @@
     <string name="drawer_new_chat">Nuevo chat</string>
     <string name="drawer_search_placeholder">Buscar sesiones o id...</string>
     <string name="drawer_search_sessions">Buscar sesiones</string>
+    <string name="drawer_pin_sidebar">Fijar barra lateral de sesiones</string>
+    <string name="drawer_unpin_sidebar">Desfijar barra lateral de sesiones</string>
     <string name="drawer_activity_working">En curso</string>
     <string name="drawer_activity_needs_input">Requiere intervención</string>
     <string name="drawer_activity_starting">Iniciando</string>
@@ -1961,7 +1963,7 @@
     <string name="stats_last_sentence">última frase</string>
     <string name="stats_avg_latency_last_format">Latencia promedio (último %1$d)</string>
     <string name="stats_response_chunks">Fragmentos de respuesta</string>
-    <string name="stats_last_chunk_gap">último hueco</string>
+    <string name="stats_last_chunk_gap">Intervalo entre solicitudes de síntesis</string>
     <string name="stats_received">Recibió</string>
     <string name="stats_barge_in_playback">Intrusión / Reproducción</string>
     <string name="stats_barge_in_events">Eventos de irrupción</string>
@@ -2434,7 +2436,7 @@
     <string name="insecure_ack_reason_tailscale">Tailscale o VPN</string>
     <string name="insecure_ack_reason_dev">Solo desarrollo local</string>
     <string name="ttl_title">Mantenga este emparejamiento para...</string>
-    <string name="ttl_body">Su teléfono se volverá a conectar automáticamente durante esta ventana. Una vez que caduque, deberá volver a emparejarse para utilizar las funciones de Relay.</string>
+    <string name="ttl_body">El operador del host aprueba la duración real y los permisos de funciones. Tu selección no puede ampliar esa aprobación. Cuando caduque el acceso, vuelve a emparejar con un nuevo código aprobado por el operador.</string>
     <string name="ttl_pair">Emparejar</string>
     <string name="ttl_cancel">Cancelar</string>
     <string name="ttl_option_1d">1 dia</string>
@@ -4307,4 +4309,18 @@
     <string name="cw_auth_verified">Inicio de sesión verificado</string>
     <string name="cw_chat_checked_on_open">Se verifica al abrir Chat</string>
     <string name="dashboard_local_auth_help">Hermes es accesible, pero las solicitudes protegidas no están autorizadas. Si el Dashboard se reenvía desde loopback, comprueba la dirección de escucha, el proveedor de autenticación y dashboard.public_url en el host. Un 401 por sí solo no identifica la causa.</string>
+    <string name="voice_streaming_failed_basic">Falló la voz en streaming. Se usará la voz básica, que puede tener pausas entre frases. Revisa los ajustes del proveedor de voz.</string>
+    <string name="voice_streaming_stopped_basic_next">La voz en streaming se detuvo. El resto usará la voz básica. Revisa los ajustes del proveedor de voz.</string>
+    <string name="stats_tts_queue_wait">Espera de la cola de audio</string>
+    <string name="stats_tts_player_start">Demora de inicio del reproductor</string>
+    <string name="chat_unread_reply">Respuesta sin leer</string>
+    <string name="chat_unread_conversations">Conversaciones sin leer: %1$d</string>
+    <string name="paired_devices_lifetime">Duración de la sesión</string>
+    <string name="paired_devices_shorten_title">Acortar este emparejamiento</string>
+    <string name="paired_devices_shorten_body">Puedes acortar la sesión de este teléfono. Para renovarla o ampliar su duración, obtén un nuevo código de emparejamiento aprobado por el operador y vuelve a emparejar. Los permisos de funciones pueden caducar antes: el acceso de Bridge se limita por defecto a 7 días en sesiones temporales. Acortar no renueva los permisos ni el acceso a la pantalla autorizado en el teléfono.</string>
+    <string name="paired_devices_shorten">Acortar</string>
+    <string name="paired_devices_pair_again">Volver a emparejar</string>
+    <string name="paired_devices_policy_failed">No se pudo acortar la sesión. Actualiza las sesiones de Relay y prueba una duración menor, o vuelve a emparejar con un nuevo código aprobado por el operador para renovar el acceso.</string>
+    <string name="paired_devices_updating">Actualizando sesión…</string>
+    <string name="paired_devices_no_shorter_duration">No queda ninguna duración predefinida más corta. Puedes revocar esta sesión o volver a emparejar para renovar el acceso.</string>
 </resources>

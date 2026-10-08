@@ -386,6 +386,7 @@ def _session_update(config: RealtimeAgentSessionConfig) -> dict[str, Any]:
                 "output": {
                     "format": {
                         "type": "audio/pcm",
+                        "rate": config.sample_rate,
                     },
                     "voice": config.voice,
                 },

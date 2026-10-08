@@ -68,10 +68,12 @@ the upstream contract identifiers it depends on.
 |---|---|
 | `initial_history_bind` | Durable, profile-scoped history is already available when the client resumes and first binds its rendered transcript |
 | `ordinary_turn` | Normal message start, deltas, completion, and persisted history |
+| `notification_terminal_outcomes` | Successful, failed, and interrupted terminal envelopes remain distinguishable for detached-turn alerts |
 | `unsolicited_voice_completions` | One submitted turn followed by live same-session process, watch, and delegation answers, including duplicate start/terminal frames; Standard Voice receives each admitted answer once |
 | `clarify_legacy` | Top-level single question and unkeyed `clarify.respond` |
-| `clarify_normalized_single` | One normalized `questions[]` entry still requires its exact `qid` |
-| `clarify_batch` | Independent qid responses, partial acknowledgement, and answered-question replay on reconnect |
+| `clarify_normalized_single` | Native request with one normalized question, capability advertisement and exact `clarify.lock` |
+| `clarify_batch` | Native request, per-question locks, partial progress and `open_requests` replay |
+| `clarify_batch_legacy`, `clarify_normalized_single_legacy` | Notification-era batch compatibility |
 | `session_initialization_failure` | Exact-session initialization error arrives before a lazy create acknowledgement; Android must fail the pending send without waiting for the readiness deadline |
 | `subagent_child_preview` | Child activity continues after the parent terminal, followed by child completion and a separate completion wake; preview ownership remains on the same profile/session |
 | `ownership_rejection` | A submit acknowledged before the defense-in-depth ownership check emits the canonical terminal refusal; no user/model row is persisted and clients must not enter history recovery |
@@ -249,3 +251,21 @@ The scenario format is intentionally usable by future official Desktop and TUI
 client adapters. Potential later work includes hosted emulator/device lanes,
 performance scenarios, and explicitly approved scheduled execution. None of
 those are configured today.
+
+
+## Server request migration
+
+See [the method matrix and wire semantics](gateway-server-requests.md). Current
+Clarify scenarios require `gateway.server_requests`; the old `gateway.clarify`
+conformance identifier is retained only for historical notification servers.
+In addition to the source checker, run the real upstream registry without a
+Gateway, provider, database or operator credentials:
+
+```powershell
+python scripts/check-gateway-server-requests-runtime.py <clean-upstream-checkout>
+```
+
+This runner verifies response settlement, capability refusal, per-question locks,
+replay, partial timeout, skip, cancel-all and unsupported-method errors against
+the imported upstream implementation. It requires upstream's Pydantic dependency.
+It reports the exact clean upstream SHA; it does not certify a physical device.

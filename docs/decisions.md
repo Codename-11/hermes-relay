@@ -2141,6 +2141,14 @@ CLI until an equally narrow native pairing dialog exists. The Windows installer
 places one CLI binary and the tray binary beside each other under
 `~/.hermes/bin`; there is no private bundled sidecar.
 
+**2026-10-05 pairing amendment.** The management form accepts full signed
+pairing invites alongside direct URL-and-code entry. It invokes the installed
+CLI's existing invite flow with a bounded child-process environment value,
+keeping invite contents out of command arguments and activity records. The
+Dashboard's explicit CLI+UI pairing target adds existing direct Relay
+compatibility routes. Neither flow adds mandatory Hermes sign-in, publishes a
+listener, or changes device approval and local per-host access policy.
+
 **2026-08-11 access and host amendment.** Stored relay URLs represent distinct
 Hermes hosts, not peer devices on one relay. The compact host selector lists
 those local pairings and places **Pair another host...** inside the selector;
@@ -2345,6 +2353,16 @@ ephemeral loopback callback, S256 verifier, state validation, encrypted bearer
 storage, and exact-origin attachment. Android passes a provider selector when
 the gateway requires one; hosted Nous retains upstream's compatibility behavior
 where the gateway chooses its single native-eligible provider.
+
+While the system browser is foregrounded, Android can block a background UID's
+loopback callback and token exchange even with Battery Saver disabled. Native
+sign-in therefore binds a dedicated, non-exported `specialUse` foreground service
+and waits for notification promotion before opening the browser. The ephemeral
+sign-in coroutine owns the binding through session verification and unbinds on
+every exit. Cancellation before service connection never launches the browser;
+service loss cancels the attempt. No authorization material enters service
+intents, notifications, or storage, and this does not enable persistent Gateway
+connectivity. The Play foreground-service declaration must cover this use case.
 
 Missing `native_pkce` uses the dashboard cookie flow. A client-local native
 failure (transport/listener, secure storage, or unsupported native response)
@@ -4473,3 +4491,50 @@ loopback/public_url guidance is conditional on additional setup evidence.
 **Consequences.** Advanced network setups are usable with explicit assumed risk.
 The exception must not cross connection or credential-origin boundaries. VPN
 monitoring or route enforcement would be separate work, not an implied guarantee.
+
+## ADR 76 — Native Dashboard callbacks use bounded concurrent readers
+
+**Status:** Accepted (2026-09-27).
+
+The native password and OIDC paths share one Android loopback coordinator.
+Serial blocking reads allowed an incomplete request to hold later callbacks
+behind it. A per-read socket timeout reset by incoming bytes did not enforce the
+attempt deadline or coroutine cancellation.
+
+Use at most four concurrent readers with a five-second absolute request deadline
+and one serial authorization consumer. Cancellation closes descriptors to unblock
+Java socket IO; interrupting a coroutine alone is insufficient. Keep request-line
+and header byte limits, exact literal IPv4 Host/port and callback-path validation,
+unique state/code parameters, single-use authorization and connection-generation
+checks. Token calls are cancelled with their attempt. Response writes have their
+own two-second deadline. Fixed diagnostic stages never include request contents.
+
+This addresses the reproduced listener defect in #632. The reported Samsung
+Android 16 password-browser stall is not established as the same failure. Provider
+selection, upstream PKCE, embedded cookie fallback, `/api/auth/me` verification,
+encrypted connection credentials and saved conversations retain their ownership.
+See [callback investigation and verification](native-dashboard-callback-testing.md).
+
+## ADR 77 — Gateway asks use upstream JSON-RPC server requests
+
+**Status:** Accepted (2026-09-27).
+
+Upstream replaced most paired ask notifications and response methods with
+server-to-client JSON-RPC requests. Android advertises its ability to answer
+requests or return a method error after readiness on every connection. A method
+with an id is dispatched before ordinary client response correlation, preserving
+string and numeric ids without treating inbound requests as RPC acknowledgements.
+
+The existing native cards render supported requests. Their persisted checkpoint
+records whether the ask came from the native protocol; restored native cards
+cannot fall back to legacy response methods. Only a replayed open request on the
+current socket and exact session authorizes a reply. Batch Clarify uses upstream
+question locks and preserves accepted progress. Server cancellation, expiry and
+closed-request snapshots retire only matching cards. Native requests have no
+invented client deadline. Secret and sudo values remain transient and masked.
+
+Android does not impersonate Desktop preview, terminal, native window, tour,
+vault or display-installation interfaces. Those requests receive `-32601`.
+Legacy notification fixtures remain separate from current upstream scenarios.
+The current contract has both source checks and provider-free execution against
+an unmodified pinned upstream request registry.

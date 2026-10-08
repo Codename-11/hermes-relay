@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
@@ -34,6 +35,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
@@ -53,6 +55,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -102,12 +105,14 @@ import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.ChatSession
 import com.hermesandroid.relay.data.SessionActivityState
 import com.hermesandroid.relay.data.SupervisedSessionActions
@@ -199,6 +204,43 @@ internal fun resolveSessionDrawerFilter(
     else -> filter
 }
 
+/**
+ * Where the Sessions surface renders for a given available width and pin
+ * intent and history policy. Pure function so these boundaries are JVM-testable.
+ *
+ * - Pinned intent only takes effect at wide widths (>= [SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP]).
+ * - Below the threshold the modal drawer renders (and the pin affordance is
+ *   hidden) while the persisted intent survives for the next wide layout.
+ * - Supervised history restrictions also suspend the sidebar without clearing
+ *   the saved preference.
+ */
+enum class SessionSidebarLayout { Sidebar, Modal }
+
+const val SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP = 840
+const val SESSIONS_SIDEBAR_WIDTH_DP = 320
+
+fun resolveSessionSidebarLayout(
+    availableWidthDp: Int,
+    pinned: Boolean,
+    historyAllowed: Boolean = true,
+): SessionSidebarLayout =
+    if (pinned && historyAllowed && availableWidthDp >= SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP) {
+        SessionSidebarLayout.Sidebar
+    } else {
+        SessionSidebarLayout.Modal
+    }
+
+/**
+ * Whether the modal drawer's edge-swipe gestures should be active. Pure so the
+ * supervised rule stays JVM-testable. Edge-swipe opens the modal drawer, so it
+ * must be off when the pinned sidebar is already the sessions surface —
+ * otherwise a swipe stacks a second sessions UI on top of the sidebar.
+ */
+fun resolveDrawerGesturesEnabled(
+    supervisedHistoryAllowed: Boolean,
+    pinnedSidebar: Boolean,
+): Boolean = supervisedHistoryAllowed && !pinnedSidebar
+
 internal enum class SessionDrawerLoadPresentation {
     Loading,
     Unavailable,
@@ -219,6 +261,8 @@ fun SessionDrawerContent(
     loadMoreFailed: Boolean = false,
     isOpen: Boolean = true,
     activityStates: Map<String, SessionActivityState> = emptyMap(),
+    unreadSessionIds: Set<String> = emptySet(),
+    unreadProfileSessions: Set<Pair<String, String>> = emptySet(),
     animationEnabled: Boolean = true,
     autoTitlesSupported: Boolean = true,
     archiveSupported: Boolean = true,
@@ -269,6 +313,16 @@ fun SessionDrawerContent(
     onRenameProfileSession: ((String, String, String) -> Unit)? = null,
     onSetProfileSessionPinned: ((String, String, Boolean) -> Unit)? = null,
     onSetProfileSessionArchived: ((String, String, Boolean) -> Unit)? = null,
+    /**
+     * True renders the sessions UI as a persistent 320dp sidebar (wide layout);
+     * false keeps the existing modal drawer sheet presentation. Default false
+     * preserves the compact drawer behavior and every existing call site.
+     */
+    asSidebar: Boolean = false,
+    /** Pin/unpin affordance below the panel header. Null hides the control. */
+    onTogglePin: (() -> Unit)? = null,
+    /** Whether the sidebar pin is currently active (drives the control's state). */
+    pinned: Boolean = false,
 ) {
     var renameDialogTarget by remember { mutableStateOf<Pair<ProfileSessionRow, Boolean>?>(null) }
     var newThreadDialog by remember { mutableStateOf(false) }
@@ -434,11 +488,7 @@ fun SessionDrawerContent(
         }
     }
 
-    ModalDrawerSheet(
-        modifier = Modifier.width(320.dp),
-        drawerContainerColor = RelayRefresh.Background,
-        drawerContentColor = RelayRefresh.Ink,
-    ) {
+    val panel: @Composable () -> Unit = {
         Column(modifier = Modifier.padding(16.dp)) {
             // Header
             Row(
@@ -561,6 +611,31 @@ fun SessionDrawerContent(
                             modifier = Modifier.size(20.dp),
                         )
                     }
+                }
+            }
+            // Keep the presentation control on its own 48dp row so the title
+            // and existing actions still fit within a 320dp panel at large text.
+            onTogglePin?.let { togglePin ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .toggleable(value = pinned, role = Role.Switch, onValueChange = { togglePin() })
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        Icons.Filled.PushPin,
+                        contentDescription = null,
+                        tint = if (pinned) RelayRefresh.Amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(if (pinned) R.string.drawer_unpin_sidebar else R.string.drawer_pin_sidebar),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
                 }
             }
             drawerSubtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
@@ -887,6 +962,9 @@ fun SessionDrawerContent(
                             provisional = provisional,
                             isActive = !showAllProfiles && session.sessionId == currentSessionId,
                             activityState = activityState,
+                            unread = if (showAllProfiles) {
+                                (AgentDisplay.profileSessionKey(row.profile) to session.sessionId) in unreadProfileSessions
+                            } else session.sessionId in unreadSessionIds,
                             animationEnabled = animationEnabled && isOpen,
                             pinned = session.pinned,
                             archived = session.archived,
@@ -959,6 +1037,30 @@ fun SessionDrawerContent(
                 }
             }
         }
+        }
+    }
+
+    // Present the identical sessions panel either as the modal drawer sheet
+    // (compact layouts, unchanged) or as a persistent 320dp leading sidebar
+    // (wide layouts with the pin active). Filters, search, rows, and dialogs
+    // are defined once above so both presentations stay behaviorally identical.
+    if (asSidebar) {
+        Surface(
+            modifier = Modifier.width(320.dp).fillMaxHeight(),
+            color = RelayRefresh.Background,
+            contentColor = RelayRefresh.Ink,
+        ) {
+            // ModalDrawerSheet supplies a ColumnScope. Surface does not, so
+            // stack the shared header and list explicitly in this presentation.
+            Column(modifier = Modifier.fillMaxHeight()) { panel() }
+        }
+    } else {
+        ModalDrawerSheet(
+            modifier = Modifier.width(320.dp),
+            drawerContainerColor = RelayRefresh.Background,
+            drawerContentColor = RelayRefresh.Ink,
+        ) {
+            panel()
         }
     }
 
@@ -1499,6 +1601,7 @@ private fun SessionItem(
     provisional: Boolean,
     isActive: Boolean,
     activityState: SessionActivityState?,
+    unread: Boolean = false,
     animationEnabled: Boolean,
     pinned: Boolean,
     archived: Boolean,
@@ -1516,6 +1619,7 @@ private fun SessionItem(
     val context = LocalContext.current
     val untitledLabel = stringResource(R.string.drawer_untitled)
     val activityLabel = activityState?.let { stringResource(sessionActivityLabelResource(it)) }
+    val unreadLabel = stringResource(R.string.chat_unread_reply)
     val motion = rememberAccessibleMotionState()
     val backgroundColor = if (isActive) {
         MaterialTheme.colorScheme.secondaryContainer
@@ -1532,12 +1636,16 @@ private fun SessionItem(
                 animated = animationEnabled && motion.osAnimations && !motion.touchExploration,
             )
             .semantics {
-                activityLabel?.let { stateDescription = it }
+                listOfNotNull(activityLabel, unreadLabel.takeIf { unread }).takeIf { it.isNotEmpty() }
+                    ?.let { stateDescription = it.joinToString(". ") }
             }
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (unread) {
+            androidx.compose.material3.Badge(modifier = Modifier.padding(end = 8.dp))
+        }
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -1545,6 +1653,7 @@ private fun SessionItem(
         ) {
             Text(
                 text = session.title ?: untitledLabel,
+                fontWeight = if (unread) androidx.compose.ui.text.font.FontWeight.SemiBold else null,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

@@ -2,6 +2,48 @@
  "schema": 3,
  "versions": [
   {
+   "version": "1.18.1",
+   "title": "Reliable browser sign-in",
+   "date": "2026-09-29",
+   "summary": "Dashboard browser sign-in stays connected while you complete the provider flow and return to Hermes-Relay. Callback pages show which provider handled the attempt.",
+   "changes": [
+    {"id": "native-signin-foreground", "kind": "fixed", "title": "Finish browser sign-in", "summary": "The app keeps the sign-in callback and session check connected while the browser is open, then ends the sign-in notification when the attempt finishes or is canceled.", "highlight": true},
+    {"id": "native-signin-provider-pages", "kind": "improved", "title": "Recognize the sign-in provider", "summary": "Browser callback success and error pages identify the selected provider and use guidance that applies to self-hosted and hosted Hermes."}
+   ],
+   "compatibility": [
+    "Browser sign-in continues to use upstream Hermes Dashboard; no Hermes-Relay Plugin update is required."
+   ],
+   "playNotes": "Browser sign-in stays connected while you complete your provider's flow and return to Hermes-Relay. The sign-in notification ends when the attempt finishes or is canceled, and callback pages identify the selected provider.",
+   "sections": []
+  },
+  {
+   "version": "1.18.0",
+   "title": "Current Hermes prompts and safer connections",
+   "date": "2026-09-28",
+   "summary": "Current Hermes prompts work on Android again. Gateway setup, sign-in, voice handoff, media, and session navigation are more reliable, with optional Secure Link support.",
+   "changes": [
+    {"id": "gateway-server-requests", "kind": "fixed", "title": "Answer current Hermes prompts", "summary": "Clarify, approval, sudo, and secret cards work with current Hermes Gateway requests. Clarify answers remain in progress across reconnects, and unsupported requests fail clearly.", "highlight": true},
+    {"id": "native-dashboard-callback", "kind": "fixed", "title": "Finish Dashboard sign-in reliably", "summary": "Incomplete browser callbacks cannot hold later sign-in attempts or prevent cancellation and timeout.", "highlight": true},
+    {"id": "gateway-onboarding-consent", "kind": "improved", "title": "Set up Gateways with clearer checks", "summary": "Setup verifies Dashboard access, explains authentication failures, accepts custom ports, and asks for exact-address consent before HTTP use.", "highlight": true},
+    {"id": "secure-link-client", "kind": "added", "title": "Use paired Secure Link routes", "summary": "Paired certificate checks cover HTTP, Gateway, and voice traffic. Route details show the active HTTPS Dashboard address.", "highlight": true},
+    {"id": "wide-sessions-sidebar", "kind": "added", "title": "Keep Sessions visible on wide screens", "summary": "An optional sidebar keeps session navigation beside Chat on larger layouts."},
+    {"id": "supergrok-usage", "kind": "added", "title": "See SuperGrok usage", "summary": "New installs show SuperGrok subscription usage by default when the host provides it; existing display preferences stay intact."},
+    {"id": "gateway-foreground-start", "kind": "fixed", "title": "Avoid a connection-service startup crash", "summary": "Accepted foreground starts settle before local retention stops, while active Hermes turns remain protected."},
+    {"id": "standard-voice-completions", "kind": "fixed", "title": "Hear live background completions", "summary": "Standard Voice speaks later answers in its active conversation once, while Stop and conversation changes discard pending speech."},
+    {"id": "voice-fallback-diagnostics", "kind": "improved", "title": "Understand voice fallback", "summary": "A failed streaming provider now shows a warning, keeps queued speech when basic TTS takes over, and exposes synthesis and player timing. Audible basic-TTS pauses remain under investigation."},
+    {"id": "chat-model-cold-load", "kind": "fixed", "title": "Open models before the first message", "summary": "Chat loads Gateway model choices when the picker opens and distinguishes loading, unavailable, and empty results."},
+    {"id": "appearance-cold-start", "kind": "fixed", "title": "Restore Appearance on launch", "summary": "The saved palette and light/dark choice apply before the first app frame."},
+    {"id": "proactive-thread-media", "kind": "fixed", "title": "Show media in phone Threads", "summary": "Proactive messages render media attachments while preserving multiline text and clean notification previews."}
+   ],
+   "compatibility": [
+    "Standard Chat and Voice continue to use upstream Hermes; Secure Link and enhanced tools use the optional Hermes-Relay Plugin 1.12.0.",
+    "HTTP outside recognized private address ranges requires explicit consent for the exact address and port; the app does not verify VPN protection.",
+    "Legacy basic-TTS pauses remain under investigation under issue #639."
+   ],
+   "playNotes": "Current Hermes Clarify, approval, sudo, and secret prompts work again. Set up Gateways with clearer authentication checks and explicit HTTP consent. Secure Link protects paired routes, Standard Voice speaks live background completions, and a wide Sessions sidebar improves navigation. Voice fallback now shows what happened; audible basic-TTS pauses remain under investigation.",
+   "sections": []
+  },
+  {
    "version": "1.17.0",
    "title": "Voice over other apps and clearer conversations",
    "date": "2026-09-13",

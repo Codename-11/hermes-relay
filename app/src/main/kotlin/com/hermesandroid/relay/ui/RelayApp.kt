@@ -464,7 +464,7 @@ sealed class Screen(
     // so no unresolved `{openAgentSheet}` leaks into the destination.
     data object Chat : Screen(
         "chat?openAgentSheet={openAgentSheet}&sessionId={sessionId}&profile={profile}" +
-            "&proactiveChatId={proactiveChatId}",
+            "&proactiveChatId={proactiveChatId}&connectionId={connectionId}",
         "Chat",
         Icons.AutoMirrored.Filled.Chat,
     ) {
@@ -472,14 +472,19 @@ sealed class Screen(
         const val ARG_SESSION_ID: String = "sessionId"
         const val ARG_PROFILE: String = "profile"
         const val ARG_PROACTIVE_CHAT_ID: String = "proactiveChatId"
+        const val ARG_CONNECTION_ID: String = "connectionId"
         fun route(
             openAgentSheet: Boolean = false,
             sessionId: String? = null,
             profile: String? = null,
             proactiveChatId: String? = null,
+            connectionId: String? = null,
         ): String {
             val params = buildList {
                 if (openAgentSheet) add("$ARG_OPEN_AGENT_SHEET=true")
+                connectionId?.takeIf { it.isNotBlank() }?.let {
+                    add("$ARG_CONNECTION_ID=${android.net.Uri.encode(it)}")
+                }
                 sessionId?.takeIf { it.isNotBlank() }?.let {
                     add("$ARG_SESSION_ID=${android.net.Uri.encode(it)}")
                 }
@@ -945,12 +950,8 @@ fun RelayApp() {
     }
     // === END PHASE3-status ===
 
-    // Mirror the "Notify when Hermes finishes" setting into ChatViewModel —
-    // same pattern as appContextSettings; the VM reads the plain field at
-    // turn-complete time instead of holding a ConnectionViewModel reference.
-    val notifyTurnComplete by connectionViewModel.notifyTurnComplete.collectAsState()
-    LaunchedEffect(notifyTurnComplete) {
-        chatViewModel.notifyOnTurnComplete = notifyTurnComplete
+    LaunchedEffect(chatViewModel, connectionViewModel) {
+        chatViewModel.bindChatAlerts(connectionViewModel.notifyTurnComplete)
     }
 
     val streamingEndpoint by connectionViewModel.streamingEndpoint.collectAsState()
@@ -1369,8 +1370,9 @@ fun RelayApp() {
             supervisedPolicy.enabled,
             parentAccessForCurrentRoute,
         ) {
+            // Leave cold-start taps buffered until ownership/policy has hydrated.
+            if (!relayNavigationHydrated) return@LaunchedEffect
             com.hermesandroid.relay.util.NavRouteRequest.requests.collect { route ->
-                if (!relayNavigationHydrated) return@collect
                 if (
                     supervisedPolicy.enabled &&
                     !isSupervisedRouteAllowed(route, parentAccessForCurrentRoute)
@@ -2336,6 +2338,11 @@ fun RelayApp() {
                             type = NavType.BoolType
                             defaultValue = false
                         },
+                        navArgument(Screen.Chat.ARG_CONNECTION_ID) {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        },
                         navArgument(Screen.Chat.ARG_SESSION_ID) {
                             type = NavType.StringType
                             nullable = true
@@ -2375,6 +2382,8 @@ fun RelayApp() {
                     // sheet.
                     val openAgentSheetArg = backStackEntry.arguments
                         ?.getBoolean(Screen.Chat.ARG_OPEN_AGENT_SHEET, false) == true
+                    val rawRequestedConnectionId = backStackEntry.arguments
+                        ?.getString(Screen.Chat.ARG_CONNECTION_ID)?.takeIf { it.isNotBlank() }
                     val rawRequestedSessionId = backStackEntry.arguments
                         ?.getString(Screen.Chat.ARG_SESSION_ID)
                         ?.takeIf { it.isNotBlank() }
@@ -2407,6 +2416,7 @@ fun RelayApp() {
                         rawRequestedProactiveChatId,
                     ) {
                         if (supervisedPolicy.enabled) {
+                            backStackEntry.arguments?.putString(Screen.Chat.ARG_CONNECTION_ID, null)
                             backStackEntry.arguments?.putString(Screen.Chat.ARG_SESSION_ID, null)
                             backStackEntry.arguments?.putString(Screen.Chat.ARG_PROFILE, null)
                             backStackEntry.arguments?.putString(Screen.Chat.ARG_PROACTIVE_CHAT_ID, null)
@@ -2441,7 +2451,23 @@ fun RelayApp() {
                             null,
                         )
                     }
+                    // Bound the wait for a removed/unavailable profile. Never
+                    // fall through to the current picker as a substitute owner.
+                    LaunchedEffect(rawRequestedConnectionId, requestedSessionId, requestedProfileRoute) {
+                        if (rawRequestedConnectionId == null || requestedSessionId == null) return@LaunchedEffect
+                        kotlinx.coroutines.delay(30_000)
+                        if (backStackEntry.arguments?.getString(Screen.Chat.ARG_SESSION_ID) == requestedSessionId) {
+                            backStackEntry.arguments?.putString(Screen.Chat.ARG_CONNECTION_ID, null)
+                            backStackEntry.arguments?.putString(Screen.Chat.ARG_SESSION_ID, null)
+                            backStackEntry.arguments?.putString(Screen.Chat.ARG_PROFILE, null)
+                            UiMessageBus.warning(applicationContext.getString(R.string.chat_profile_history_unavailable))
+                        }
+                    }
                     LaunchedEffect(
+                        rawRequestedConnectionId,
+                        activeConnectionId,
+                        connections,
+                        relayNavigationHydrated,
                         requestedSessionId,
                         requestedProfileRoute,
                         profileSelectionSettled,
@@ -2449,7 +2475,55 @@ fun RelayApp() {
                         agentProfiles,
                     ) {
                         val sessionId = requestedSessionId ?: return@LaunchedEffect
-                        if (requestedProfileRoute != null) {
+                        if (rawRequestedConnectionId != null) {
+                            val target = com.hermesandroid.relay.notifications.ChatNotificationTarget(
+                                rawRequestedConnectionId,
+                                requestedProfileRoute?.takeUnless {
+                                    it == com.hermesandroid.relay.notifications.ChatNotificationTarget.DEFAULT_PROFILE
+                                },
+                                sessionId,
+                            )
+                            when (chatNotificationNavigationStep(
+                                target = target,
+                                hydrated = relayNavigationHydrated,
+                                allowed = !supervisedPolicy.enabled && requestedProfileRoute != null &&
+                                    (activeConnectionId != target.connectionId ||
+                                        connectionViewModel.isProfileSelectionAllowed(target.profile)),
+                                connectionIds = connections.mapTo(mutableSetOf()) { it.id },
+                                activeConnectionId = activeConnectionId,
+                                profileSelectionSettled = profileSelectionSettled,
+                                selectedProfile = effectiveSessionProfileName,
+                                profileNames = agentProfiles.mapTo(mutableSetOf()) { it.name },
+                            )) {
+                                ChatNotificationNavigationStep.Wait -> return@LaunchedEffect
+                                ChatNotificationNavigationStep.Reject -> {
+                                    backStackEntry.arguments?.putString(Screen.Chat.ARG_CONNECTION_ID, null)
+                                    backStackEntry.arguments?.putString(Screen.Chat.ARG_SESSION_ID, null)
+                                    backStackEntry.arguments?.putString(Screen.Chat.ARG_PROFILE, null)
+                                    UiMessageBus.warning(applicationContext.getString(R.string.chat_profile_history_unavailable))
+                                    return@LaunchedEffect
+                                }
+                                ChatNotificationNavigationStep.SwitchConnection -> {
+                                    connectionViewModel.switchConnection(target.connectionId).join()
+                                    return@LaunchedEffect
+                                }
+                                ChatNotificationNavigationStep.SelectProfile -> {
+                                    val profile = agentProfiles.firstOrNull { it.name == target.profile }
+                                    connectionViewModel.selectProfile(profile)
+                                    chatViewModel.activateGatewayProfile(profile)
+                                    return@LaunchedEffect
+                                }
+                                ChatNotificationNavigationStep.Open -> {
+                                    if (!chatViewModel.openProfileSession(
+                                            profileName = target.profile,
+                                            profile = agentProfiles.firstOrNull { it.name == target.profile },
+                                            contextKey = AgentDisplay.profileContextKey(target.connectionId, target.profile),
+                                            sessionId = target.sessionId,
+                                        )) return@LaunchedEffect
+                                    chatViewModel.clearVisibleConversationNotifications()
+                                }
+                            }
+                        } else if (requestedProfileRoute != null) {
                             val targetProfile = requestedProfileRoute.takeUnless {
                                 it == com.hermesandroid.relay.notifications
                                     .InteractionRequestNotifier.DEFAULT_PROFILE_ROUTE_VALUE
@@ -2480,6 +2554,7 @@ fun RelayApp() {
                         } else if (chatViewModel.currentSessionId.value != sessionId) {
                             chatViewModel.switchSession(sessionId)
                         }
+                        backStackEntry.arguments?.putString(Screen.Chat.ARG_CONNECTION_ID, null)
                         backStackEntry.arguments?.putString(Screen.Chat.ARG_SESSION_ID, null)
                         backStackEntry.arguments?.putString(Screen.Chat.ARG_PROFILE, null)
                     }
@@ -3250,7 +3325,14 @@ fun RelayApp() {
                                 }
                             },
                             onRequestRepair = {
-                                navController.navigate(Screen.Pair.route())
+                                navController.navigate(
+                                    Screen.Pair.route(
+                                        connectionId = activeConnectionId,
+                                        autoStart = "relay",
+                                    ),
+                                ) {
+                                    launchSingleTop = true
+                                }
                             }
                         )
                     } else {

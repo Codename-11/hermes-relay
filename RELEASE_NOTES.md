@@ -1,10 +1,10 @@
-# Hermes-Relay Android v1.17.0
+# Hermes-Relay Android v1.18.1
 
-**Release Date:** September 13, 2026
+**Release Date:** September 29, 2026
 
 ## Download
 
-> Installing on your phone? Download `hermes-relay-1.17.0-sideload-release.apk` and tap it for the full feature set, or install from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
+> Installing on your phone? Download `hermes-relay-1.18.1-sideload-release.apk` and tap it for the full feature set, or install from [Google Play](https://play.google.com/store/apps/details?id=com.axiomlabs.hermesrelay).
 
 The `.aab` file is a Play Console upload bundle and cannot be installed by tapping it on a phone.
 
@@ -12,28 +12,19 @@ Verify the download against `SHA256SUMS.txt`. See the [sideload guide](https://h
 
 ## Summary
 
-Google Play gains optional voice controls over other apps. This release also makes Clarify batches, profile identity, and chat context easier to follow while preserving confirmed answers and saved conversations.
-
-## Added
-
-- Start Voice Overlay from Voice Focus after granting microphone, notification, and display-over-other-apps access. Permission grants require a separate Start action. Stop voice from the overlay or persistent notification; screen lock, task removal, and permission loss end the session.
+Dashboard browser sign-in remains connected while a provider completes authentication and Hermes-Relay verifies the session. Callback pages identify the selected provider.
 
 ## Changed
 
-- Standalone response cards use one surface, assistant bubbles are subtler, and timestamps share a row with delivery status.
+- Browser callback success and error pages show the selected provider and use guidance that applies to self-hosted and hosted Hermes.
 
 ## Fixed
 
-- Answer upstream Clarify batches one question at a time, with independent choices, custom answers, and confirmed progress across reconnects. (#474)
-- Context previews show that Gateway chats cannot send phone status or general turn context. Automatic phone-status sharing remains supported for API-only chats. (#556)
-- Profiles display their Hermes names and group the resolved server default under its agent identity, preserving explicit selection and saved conversations.
+- A bounded sign-in foreground service keeps the browser callback and session verification connected while Hermes-Relay is in the background. It ends after completion, cancellation, or timeout.
 
 ## Install / Verify
 
-- App version: **1.17.0** (versionCode **57**).
-- Standard Chat, sessions, profiles, Manage, voice, and ordinary media use current upstream Hermes. Speech-to-text still requires a configured provider on the host.
-- Hermes-Relay Plugin **1.11.3** is the optional release for Hermes-Relay tools and current Dashboard WebSocket compatibility.
-- Explicit Direct API/API-only connections remain supported and are not used as silent failover for Dashboard-owned chats.
-- Voice Overlay is available in Google Play and sideload builds. Device Control remains sideload-only.
-- Gateway phone-status delivery and automatic Android identification remain unavailable pending upstream support.
-- Physical Android 14-16 and OEM voice-overlay testing was not performed for this release. Code, rendered UI, existing emulator evidence, CI, and signed-package preflight provide the recorded verification.
+- App version: **1.18.1** (versionCode **59**).
+- Standard Chat, sessions, profiles, Manage, and Standard Voice use current upstream Hermes. The optional Hermes-Relay Plugin **1.12.0** supplies Relay tools and Secure Link host support.
+- Existing saved connections, profiles, sessions, history, and drafts remain in place.
+- Basic/password, self-hosted OIDC, and Nous sign-in passed on a physical Samsung device with Battery Saver off. Other OEMs, Battery Saver-on behavior, and process death during provider UI were not separately verified.

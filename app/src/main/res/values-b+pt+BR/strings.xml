@@ -684,7 +684,7 @@
     <string name="settings_bridge_desc">Controles do Bridge no celular concedidos pelo Relay</string>
     <string name="settings_bridge_core_desc">Recursos do Relay sem controle de dispositivo por sideload</string>
     <string name="settings_relay_sessions">Sessões do Relay</string>
-    <string name="settings_relay_sessions_desc">Celulares pareados com este servidor; revogue ou prorrogue</string>
+    <string name="settings_relay_sessions_desc">Gerencie telefones pareados, duração das sessões e acesso</string>
     <string name="settings_notification_companion">Assistente de notificações</string>
     <string name="settings_notification_companion_desc">Notificações compartilhadas do celular para ferramentas pareadas do relay</string>
     <string name="settings_media">Mídia</string>
@@ -944,6 +944,8 @@
     <string name="drawer_new_chat">Novo Chat</string>
     <string name="drawer_search_placeholder">Pesquisar sessões ou id...</string>
     <string name="drawer_search_sessions">Pesquisar sessões</string>
+    <string name="drawer_pin_sidebar">Fixar barra lateral de sessões</string>
+    <string name="drawer_unpin_sidebar">Desfixar barra lateral de sessões</string>
     <string name="drawer_activity_working">Em andamento</string>
     <string name="drawer_activity_needs_input">Precisa de resposta</string>
     <string name="drawer_activity_starting">Iniciando</string>
@@ -2051,7 +2053,7 @@
     <string name="stats_last_sentence">Última frase</string>
     <string name="stats_avg_latency_last_format">Latência média (últimas %1$d)</string>
     <string name="stats_response_chunks">Blocos da resposta</string>
-    <string name="stats_last_chunk_gap">Último intervalo entre blocos</string>
+    <string name="stats_last_chunk_gap">Intervalo entre solicitações de síntese</string>
     <string name="stats_received">Recebidos</string>
     <string name="stats_barge_in_playback">Interrupção por voz/reprodução</string>
     <string name="stats_barge_in_events">Eventos de interrupção por voz</string>
@@ -2545,7 +2547,7 @@
     <string name="insecure_ack_reason_dev">Somente desenvolvimento local</string>
     <!-- SessionTtlPickerDialog -->
     <string name="ttl_title">Manter este pareamento por…</string>
-    <string name="ttl_body">Seu celular se reconectará automaticamente durante este período. Depois que ele expirar, você precisará parear novamente para usar os recursos do Relay.</string>
+    <string name="ttl_body">O operador do host aprova a duração real e as permissões dos recursos. Sua seleção não pode ampliar essa aprovação. Quando o acesso expirar, pareie novamente com um novo código aprovado pelo operador.</string>
     <string name="ttl_pair">Parear</string>
     <string name="ttl_cancel">Cancelar</string>
     <string name="ttl_option_1d">1 dia</string>
@@ -4459,4 +4461,18 @@
     <string name="cw_auth_verified">Login verificado</string>
     <string name="cw_chat_checked_on_open">Verificado ao abrir o Chat</string>
     <string name="dashboard_local_auth_help">Hermes está acessível, mas as solicitações protegidas não estão autorizadas. Se o Dashboard for encaminhado do loopback, confira o endereço de escuta, o provedor de autenticação e dashboard.public_url no host. Um 401 sozinho não identifica a causa.</string>
+    <string name="voice_streaming_failed_basic">A voz em streaming falhou. Será usada a voz básica, que pode ter pausas entre frases. Confira as configurações do provedor de voz.</string>
+    <string name="voice_streaming_stopped_basic_next">A voz em streaming parou. O restante usará a voz básica. Confira as configurações do provedor de voz.</string>
+    <string name="stats_tts_queue_wait">Espera na fila de áudio</string>
+    <string name="stats_tts_player_start">Atraso ao iniciar o player</string>
+    <string name="chat_unread_reply">Resposta não lida</string>
+    <string name="chat_unread_conversations">Conversas não lidas: %1$d</string>
+    <string name="paired_devices_lifetime">Duração da sessão</string>
+    <string name="paired_devices_shorten_title">Reduzir este pareamento</string>
+    <string name="paired_devices_shorten_body">Você pode reduzir a duração da sessão deste telefone. Para renovar ou aumentar a duração, obtenha um novo código de pareamento aprovado pelo operador e pareie novamente. As permissões de recursos podem expirar antes: o acesso do Bridge é limitado a 7 dias por padrão nas sessões com prazo definido. Reduzir não renova as permissões nem a autorização de acesso à tela no telefone.</string>
+    <string name="paired_devices_shorten">Reduzir</string>
+    <string name="paired_devices_pair_again">Parear novamente</string>
+    <string name="paired_devices_policy_failed">Não foi possível reduzir a duração da sessão. Atualize as sessões do Relay e tente uma duração menor, ou pareie novamente com um novo código aprovado pelo operador para renovar o acesso.</string>
+    <string name="paired_devices_updating">Atualizando sessão…</string>
+    <string name="paired_devices_no_shorter_duration">Não há uma duração predefinida mais curta. Você pode revogar esta sessão ou parear novamente para renovar o acesso.</string>
 </resources>

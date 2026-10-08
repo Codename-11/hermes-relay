@@ -22,6 +22,7 @@ import com.hermesandroid.relay.ui.components.ChatDebugOverlay
 import com.hermesandroid.relay.ui.components.chatDebugHeaderGesture
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -264,6 +265,11 @@ import com.hermesandroid.relay.ui.components.ThinkingIndicatorStyle
 import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
 import com.hermesandroid.relay.ui.components.ThinkingMatrixPattern
 import com.hermesandroid.relay.ui.components.SessionDrawerContent
+import com.hermesandroid.relay.ui.components.SESSIONS_SIDEBAR_WIDTH_DP
+import com.hermesandroid.relay.ui.components.SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP
+import com.hermesandroid.relay.ui.components.SessionSidebarLayout
+import com.hermesandroid.relay.ui.components.resolveDrawerGesturesEnabled
+import com.hermesandroid.relay.ui.components.resolveSessionSidebarLayout
 import com.hermesandroid.relay.ui.components.ProfileSessionRow
 import com.hermesandroid.relay.ui.components.ProvisionalThreadRow
 import com.hermesandroid.relay.ui.components.ProfileDisplayManagerDialog
@@ -896,6 +902,19 @@ fun ChatScreen(
     val activityRecords by chatViewModel.activityRecords.collectAsState()
     val activityOwner by chatViewModel.conversationBinding.collectAsState()
     val activitySessionId by chatViewModel.currentSessionId.collectAsState()
+    val completionReceipts by chatViewModel.completionReceipts.collectAsState()
+    val unreadForConnection = remember(completionReceipts, activityOwner.contextKey) {
+        completionReceipts.filter {
+            it.unread && AgentDisplay.parseProfileContextKey(it.contextKey)?.connectionId ==
+                AgentDisplay.parseProfileContextKey(activityOwner.contextKey)?.connectionId
+        }
+    }
+    val unreadProfileCounts = remember(unreadForConnection) {
+        unreadForConnection.groupingBy {
+            requireNotNull(AgentDisplay.parseProfileContextKey(it.contextKey)).profileKey
+        }.eachCount()
+    }
+
     val receiptMessages = remember(rawMessages, activityRecords, activityOwner, activitySessionId, supervised, supervisedVisibility) {
         if (activityOwner.transport == com.hermesandroid.relay.data.SessionTransport.SSE ||
             (supervised && !supervisedVisibility.showWorkingStatus)
@@ -1231,6 +1250,9 @@ fun ChatScreen(
     // the foreground. setChatVisible owns that edge; an ordinary Gateway open
     // warms only the observation socket and never attaches a saved session.
     val appForeground by com.hermesandroid.relay.util.AppForegroundTracker.isForeground.collectAsState()
+    LaunchedEffect(appForeground, activityOwner.contextKey, currentSessionId, isLoadingHistory, completionReceipts) {
+        if (appForeground) chatViewModel.clearVisibleConversationNotifications()
+    }
     LaunchedEffect(isGatewayTransport, appForeground, chatGatewayAvailability) {
         val visibleGatewayOwner = shouldOwnVisibleGateway(
             appForeground = appForeground,
@@ -1283,6 +1305,23 @@ fun ChatScreen(
     val thinkingIndicatorStyle by connectionViewModel.thinkingIndicatorStyle.collectAsState()
     val thinkingMatrixPattern by connectionViewModel.thinkingMatrixPattern.collectAsState()
     val thinkingMatrixColor by connectionViewModel.thinkingMatrixColor.collectAsState()
+    val thinkingIndicatorConfig = remember(
+        thinkingIndicatorStyle,
+        thinkingMatrixPattern,
+        thinkingMatrixColor,
+        animationEnabled,
+    ) {
+        ThinkingIndicatorConfig(
+            style = if (thinkingIndicatorStyle == "matrix") {
+                ThinkingIndicatorStyle.Matrix
+            } else {
+                ThinkingIndicatorStyle.Dots
+            },
+            pattern = ThinkingMatrixPattern.fromKey(thinkingMatrixPattern),
+            color = ThinkingMatrixColor.fromKey(thinkingMatrixColor),
+            animated = animationEnabled,
+        )
+    }
     val imageGenerationOrdinals = remember(messages) {
         var nextOrdinal = 0
         buildMap {
@@ -1531,6 +1570,9 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val userScrolledAwayState = remember(currentSessionId) { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    // Pinned Sessions sidebar intent (persisted). Only takes effect when the
+    // available chat width is wide enough; see resolveSessionSidebarLayout.
+    val sessionsSidebarPinned by connectionViewModel.sessionsSidebarPinned.collectAsState()
     LaunchedEffect(chatViewModel, drawerState) {
         chatViewModel.sessionDirectoryRefreshRequests.collect {
             if (drawerState.isOpen || allProfileSessions.isNotEmpty()) {
@@ -2450,6 +2492,7 @@ fun ChatScreen(
         presentation = profilePresentation,
         selectedProfileName = selectedProfile?.name,
         serverDefaultProfileName = serverDefaultDisplayProfile?.name,
+        unreadProfileKeys = unreadProfileCounts.keys,
     ).size > 1
     val profileSwitchEnabled = com.hermesandroid.relay.ui.components.ProfileShelfPolicy.canSwitch(
         isStreaming = isStreaming,
@@ -2474,14 +2517,27 @@ fun ChatScreen(
     val hasLiveConversationSurface = messages.isNotEmpty() || isStreaming
     val isChatConnecting = chatConnectState == ChatConnectState.Connecting &&
         !hasLiveConversationSurface
+    val sessionsHistoryAllowed = !supervised || supervisedPolicy.capabilities.conversationHistory
+    val toggleSessionsSidebarPin: () -> Unit = {
+        scope.launch {
+            if (!sessionsSidebarPinned) drawerState.close()
+            connectionViewModel.setSessionsSidebarPinned(!sessionsSidebarPinned)
+        }
+    }
 
-    ModalNavigationDrawer(
-        drawerState = drawerState,
-        // Material routes scrim taps through the drawer's gesture handler.
-        // Keep it enabled so tapping outside always dismisses the drawer; the
-        // voice overlay already owns input while voice mode is visible.
-        gesturesEnabled = !supervised || supervisedPolicy.capabilities.conversationHistory,
-        drawerContent = {
+    BoxWithConstraints {
+        // Available chat width in dp drives the wide-layout threshold; the
+        // pure resolver decides Sidebar vs Modal from it + the pin intent.
+        val availableWidthDp = maxWidth.value.toInt()
+        val isWideLayout =
+            availableWidthDp >= SESSIONS_SIDEBAR_WIDTH_THRESHOLD_DP
+        val sidebarLayout = resolveSessionSidebarLayout(
+            availableWidthDp,
+            sessionsSidebarPinned,
+            historyAllowed = sessionsHistoryAllowed,
+        )
+        val isPinnedSidebar = sidebarLayout == SessionSidebarLayout.Sidebar
+        val sessionsDrawerContent: @Composable (Boolean) -> Unit = { renderAsSidebar ->
             val drawerProfileName = explicitBindingProfileName ?: effectiveProfile?.name
             val drawerTitle = if (drawerProfileName != null) {
                 stringResource(R.string.chat_profile_sessions, agentDisplayName)
@@ -2556,8 +2612,13 @@ fun ChatScreen(
                 isLoadingMore = isLoadingMoreSessions,
                 hasMore = hasMoreSessions,
                 loadMoreFailed = sessionPageLoadFailed,
-                isOpen = drawerState.isOpen,
+                isOpen = drawerState.isOpen || isPinnedSidebar,
                 activityStates = sessionActivityStates,
+                unreadSessionIds = unreadForConnection.filter { it.contextKey == activityOwner.contextKey }
+                    .mapTo(mutableSetOf()) { it.sessionId },
+                unreadProfileSessions = unreadForConnection.mapTo(mutableSetOf()) {
+                    requireNotNull(AgentDisplay.parseProfileContextKey(it.contextKey)).profileKey to it.sessionId
+                },
                 animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
                 archiveSupported = sessionArchivingSupported,
@@ -2748,8 +2809,51 @@ fun ChatScreen(
                         }
                     }
                 },
+                asSidebar = renderAsSidebar,
+                // Pin affordance lives below the panel header; shown only
+                // where the pin can take effect (wide layout).
+                onTogglePin = if (isWideLayout && sessionsHistoryAllowed) toggleSessionsSidebarPin else null,
+                pinned = isPinnedSidebar,
             )
         }
+        // A pinned sidebar behaves as an always-open drawer: entering the
+        // wide pinned layout re-syncs the session list the same way opening
+        // the modal drawer does. It also replaces the modal drawer as THE
+        // sessions surface, so a drawer left open at pin time is closed —
+        // otherwise it overlays a duplicate sessions panel.
+        LaunchedEffect(isPinnedSidebar) {
+            // Unpinning returns to the closed, on-demand drawer as well.
+            drawerState.close()
+            if (isPinnedSidebar) {
+                chatViewModel.setSessionActivityDrawerOpen(true)
+                chatViewModel.refreshSessionsIfStale()
+            }
+        }
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (isPinnedSidebar) {
+                Box(modifier = Modifier.width(SESSIONS_SIDEBAR_WIDTH_DP.dp)) {
+                    sessionsDrawerContent(true)
+                }
+            }
+            Box(
+                modifier = Modifier.fillMaxSize()
+                    .padding(start = if (isPinnedSidebar) SESSIONS_SIDEBAR_WIDTH_DP.dp else 0.dp)
+            ) {
+            ModalNavigationDrawer(
+                drawerState = drawerState,
+                // Material routes scrim taps through the drawer's gesture handler.
+                // Keep it enabled so tapping outside always dismisses the drawer; the
+                // voice overlay already owns input while voice mode is visible.
+                // Edge-swipe is also disabled while the pinned sidebar owns the
+                // leading edge, so a swipe can't open a second sessions surface.
+                gesturesEnabled = resolveDrawerGesturesEnabled(
+                    supervisedHistoryAllowed = sessionsHistoryAllowed,
+                    pinnedSidebar = isPinnedSidebar,
+                ),
+                // Do not compose a second session browser behind the sidebar.
+                drawerContent = {
+                    if (!isPinnedSidebar) sessionsDrawerContent(false)
+                },
     ) {
         val isDarkTheme = LocalBrand.current.isDark
 
@@ -2766,11 +2870,15 @@ fun ChatScreen(
             TopAppBar(
                 modifier = Modifier.onSizeChanged { chatHeaderHeightPx = it.height },
                 navigationIcon = {
-                    if (!supervised || supervisedPolicy.capabilities.conversationHistory) {
+                    // While the pinned sidebar is the sessions surface the
+                    // hamburger would only stack a second modal sessions
+                    // drawer over it — the pin/unpin affordance lives in the
+                    // sidebar header instead, so the control is omitted.
+                    if (!isPinnedSidebar && sessionsHistoryAllowed) {
                         IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.cd_sessions))
                         }
-                    } else if (supervisedPolicy.capabilities.newChat) {
+                    } else if (supervised && !sessionsHistoryAllowed && supervisedPolicy.capabilities.newChat) {
                         IconButton(onClick = { chatViewModel.createNewChat() }) {
                             Icon(Icons.Filled.Edit, contentDescription = "New chat")
                         }
@@ -2966,6 +3074,12 @@ fun ChatScreen(
                                         }
                                     }
                                 }
+                            }
+                            if (!supervised) {
+                                com.hermesandroid.relay.ui.components.UnreadConversationBadge(
+                                    count = unreadForConnection.size,
+                                    modifier = Modifier.align(Alignment.TopEnd),
+                                )
                             }
                             if (!supervised || supervisedVisibility.showConnectionStatus) {
                                 ConnectionStatusBadge(
@@ -3179,6 +3293,7 @@ fun ChatScreen(
                     resolvedProfile = effectiveProfile,
                     presentation = profilePresentation,
                     activeDisplayName = globalSelectedAgentDisplayName,
+                    unreadCounts = unreadProfileCounts,
                     isProfileLocked = isProfileLocked,
                     lockedProfileName = lockedProfileName,
                     switchEnabled = profileSwitchEnabled,
@@ -3570,23 +3685,6 @@ fun ChatScreen(
                         if (supervised && !supervisedPolicy.capabilities.generatedImages) null
                         else RelayServerImageResolver { path -> chatViewModel.resolveServerImage(path) }
                     }
-                    val thinkingIndicatorConfig = remember(
-                        thinkingIndicatorStyle,
-                        thinkingMatrixPattern,
-                        thinkingMatrixColor,
-                        animationEnabled,
-                    ) {
-                        ThinkingIndicatorConfig(
-                            style = if (thinkingIndicatorStyle == "matrix") {
-                                ThinkingIndicatorStyle.Matrix
-                            } else {
-                                ThinkingIndicatorStyle.Dots
-                            },
-                            pattern = ThinkingMatrixPattern.fromKey(thinkingMatrixPattern),
-                            color = ThinkingMatrixColor.fromKey(thinkingMatrixColor),
-                            animated = animationEnabled,
-                        )
-                    }
                     CompositionLocalProvider(
                         LocalRelayServerImageResolver provides relayServerImageResolver,
                         LocalThinkingIndicator provides thinkingIndicatorConfig,
@@ -3741,6 +3839,7 @@ fun ChatScreen(
                                     showAgentIdentity = !supervised || supervisedVisibility.showAgentIdentity,
                                     showTimestamps = !supervised || supervisedVisibility.showTimestamps,
                                     showWorkingStatus = !supervised || supervisedVisibility.showWorkingStatus,
+                                    showStreamingStatus = false,
                                     showUsage = !supervised || supervisedVisibility.showUsage,
                                     showTechnicalBadges = !supervised || supervisedVisibility.showTechnicalRoute,
                                     showAssistantImages = !supervised || supervisedPolicy.capabilities.generatedImages,
@@ -3948,17 +4047,8 @@ fun ChatScreen(
                             }
                         }
 
-                        // NOTE: no standalone StreamingDots item here — the
-                        // streaming bubble already renders its own in-bubble
-                        // dots (MessageBubble), and a second indicator below
-                        // the bubble both read as a duplicate "typing" hint
-                        // and churned animateItem placement at the viewport
-                        // bottom on every delta (visible jitter at
-                        // gateway/token delta frequency). Same reason the
-                        // trailing spacer doesn't animateItem(): its position
-                        // shifts on every delta of the growing bubble above
-                        // it, and a constant 8dp gap gains nothing from
-                        // placement animation.
+                        // Progress belongs to the fixed composer rail. Keep the
+                        // trailing gap free of placement animation as rows grow.
                         item { Spacer(modifier = Modifier.height(8.dp)) }
                     }
                     } // CompositionLocalProvider(LocalRelayServerImageResolver)
@@ -4550,6 +4640,26 @@ fun ChatScreen(
                 )
             }
 
+            if (isStreaming && pendingAsk == null &&
+                (!supervised || supervisedVisibility.showWorkingStatus)
+            ) {
+                val progressLabel = stringResource(
+                    if (recoveringAnswer) R.string.msg_bubble_reconnecting
+                    else R.string.msg_bubble_still_working,
+                )
+                CompositionLocalProvider(LocalThinkingIndicator provides thinkingIndicatorConfig) {
+                    com.hermesandroid.relay.ui.components.ChatWorkingStatus(
+                        status = progressLabel,
+                        accessibilityDescription = progressLabel,
+                        textColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .testTag("chat-composer-progress"),
+                    )
+                }
+            }
+
             ChatInputBar(
                 busyAction = effectiveBusyAction.takeIf { isStreaming },
                 correctionAvailable = canSteerCurrentMessage,
@@ -4910,7 +5020,11 @@ fun ChatScreen(
             }
         }
 
-        // Voice mode overlay — covers the whole Box when voiceUiState.voiceMode
+        } // end chat Box
+            } // end ModalNavigationDrawer
+        } // end padded chat Box
+
+        // Voice mode covers both Chat and the pinned Sessions sidebar.
         AnimatedVisibility(
             visible = voiceUiState.voiceMode,
             enter = fadeIn(),
@@ -4981,7 +5095,7 @@ fun ChatScreen(
                 // === END v0.4.1 ===
             )
         }
-        } // end Box
+    }
     }
 
     // Command palette bottom sheet
@@ -5038,6 +5152,7 @@ fun ChatScreen(
             selectedProfile = selectedProfile,
             resolvedProfile = effectiveProfile,
             presentation = profilePresentation,
+            unreadCounts = unreadProfileCounts,
             isProfileLocked = isProfileLocked,
             switchEnabled = profileSwitchEnabled,
             onSelect = selectProfileFromShelf,

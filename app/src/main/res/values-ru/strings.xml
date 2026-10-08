@@ -701,7 +701,7 @@
     <string name="settings_bridge_desc">Управление мостом телефона, разрешенное плагином Relay</string>
     <string name="settings_bridge_core_desc">Функции Relay без управления устройством (доступно при установке из APK)</string>
     <string name="settings_relay_sessions">Сеансы Relay</string>
-    <string name="settings_relay_sessions_desc">Телефоны, сопряженные с этим сервером, отзыв, продление</string>
+    <string name="settings_relay_sessions_desc">Управление сопряжёнными телефонами, сроками сеансов и доступом</string>
     <string name="settings_notification_companion">Сопровождение уведомлений</string>
     <string name="settings_notification_companion_desc">Общие уведомления телефона для сопряженных инструментов Relay</string>
     <string name="settings_media">Медиа</string>
@@ -1022,6 +1022,8 @@
     <string name="drawer_new_chat">Новый чат</string>
     <string name="drawer_search_placeholder">Поиск сессий или id...</string>
     <string name="drawer_search_sessions">Поиск сессий</string>
+    <string name="drawer_pin_sidebar">Закрепить боковую панель сессий</string>
+    <string name="drawer_unpin_sidebar">Открепить боковую панель сессий</string>
     <string name="drawer_activity_working">Выполняется</string>
     <string name="drawer_activity_needs_input">Требуется ввод</string>
     <string name="drawer_activity_starting">Запуск</string>
@@ -2157,7 +2159,7 @@
     <string name="stats_last_sentence">Последнее предложение</string>
     <string name="stats_avg_latency_last_format">Средняя задержка (последние %1$d)</string>
     <string name="stats_response_chunks">Части ответа</string>
-    <string name="stats_last_chunk_gap">Последний разрыв части</string>
+    <string name="stats_last_chunk_gap">Интервал запросов синтеза</string>
     <string name="stats_received">Получено</string>
     <string name="stats_barge_in_playback">Вмешательство/воспроизведение</string>
     <string name="stats_barge_in_events">События вмешательства</string>
@@ -2652,7 +2654,7 @@
     <string name="insecure_ack_reason_tailscale">Tailscale или VPN</string>
     <string name="insecure_ack_reason_dev">Только локальная разработка</string>
     <string name="ttl_title">Сохранять эту пару для...</string>
-    <string name="ttl_body">Ваш телефон будет автоматически подключаться в течение этого окна. После истечения срока действия вам нужно будет снова сопоставить, чтобы использовать функции Relay.</string>
+    <string name="ttl_body">Оператор хоста одобряет фактический срок и разрешения функций. Ваш выбор не может расширить это одобрение. После истечения доступа выполните сопряжение заново с новым кодом, одобренным оператором.</string>
     <string name="ttl_pair">Пара</string>
     <string name="ttl_cancel">Отмена</string>
     <string name="ttl_option_1d">1 день</string>
@@ -4355,4 +4357,18 @@
     <string name="cw_auth_verified">Вход подтверждён</string>
     <string name="cw_chat_checked_on_open">Проверяется при открытии чата</string>
     <string name="dashboard_local_auth_help">Hermes доступен, но защищённые запросы не авторизованы. Если Dashboard перенаправляется с loopback, проверьте адрес прослушивания, провайдер аутентификации и dashboard.public_url на хосте. Сам по себе код 401 не определяет причину.</string>
+    <string name="voice_streaming_failed_basic">Потоковая озвучка недоступна. Используется базовая озвучка, возможны паузы между предложениями. Проверьте настройки голосового провайдера.</string>
+    <string name="voice_streaming_stopped_basic_next">Потоковая озвучка остановилась. Оставшийся текст будет озвучен в базовом режиме. Проверьте настройки голосового провайдера.</string>
+    <string name="stats_tts_queue_wait">Ожидание в очереди аудио</string>
+    <string name="stats_tts_player_start">Задержка запуска плеера</string>
+    <string name="chat_unread_reply">Непрочитанный ответ</string>
+    <string name="chat_unread_conversations">Непрочитанные беседы: %1$d</string>
+    <string name="paired_devices_lifetime">Срок сеанса</string>
+    <string name="paired_devices_shorten_title">Сократить срок сопряжения</string>
+    <string name="paired_devices_shorten_body">Можно сократить срок сеанса этого телефона. Чтобы продлить или обновить доступ, получите новый код сопряжения, одобренный оператором, и выполните сопряжение заново. Разрешения отдельных функций могут истечь раньше: доступ Bridge в сеансах с ограниченным сроком по умолчанию действует не более 7 дней. Сокращение срока не обновляет разрешения функций или разрешение на доступ к экрану телефона.</string>
+    <string name="paired_devices_shorten">Сократить</string>
+    <string name="paired_devices_pair_again">Повторить сопряжение</string>
+    <string name="paired_devices_policy_failed">Не удалось сократить срок сеанса. Обновите список сеансов Relay и выберите меньший срок или выполните сопряжение заново с новым кодом, одобренным оператором, чтобы обновить доступ.</string>
+    <string name="paired_devices_updating">Обновление сеанса…</string>
+    <string name="paired_devices_no_shorter_duration">Более коротких готовых вариантов нет. Можно отозвать этот сеанс или выполнить сопряжение заново для обновления доступа.</string>
 </resources>

@@ -26,7 +26,13 @@ pairing, revocation, and configuration remain labeled user actions.
   `hermes plugins install Codename-11/hermes-relay/plugin --enable`. The
   Dashboard scanner discovers `dashboard/manifest.json` from that unified
   package.
-- A gateway restart after install: `systemctl --user restart hermes-gateway`.
+- Restart the **Dashboard process** after installing or first enabling its
+  Python backend, then refresh the browser. A plugin rescan updates discovery;
+  it does not mount newly installed backend routes. Restarting a separate
+  gateway process alone does not restart the Dashboard.
+- Dashboard Relay WebSocket transport uses upstream's default
+  `plugins.isolation: in_process`. The optional `host` isolation mode currently
+  forwards buffered HTTP requests and does not forward plugin WebSockets.
 
 **On your phone:**
 
@@ -103,6 +109,19 @@ Use this first for Android:
 1. Open **Hermes-Relay → Devices** and click **Show setup QR** under **Connect mobile app**.
 2. In Android **Connect**, choose **Scan Hermes setup QR**.
 3. Scan the tokenless QR and sign in if prompted.
+
+For another computer, the pairing dialog identifies whether its invite includes
+a route supported by CLI+UI. Choose **Hermes-Relay CLI+UI** under **Pairing client**
+to include direct Relay compatibility routes, then **Copy invite**. On the
+computer, open **CLI+UI → Hosts → Pair host → Paste invite → Import and pair**.
+The Dashboard has **Copy invite**; the CLI+UI invite field has a **Paste** button
+that reads the local Windows clipboard when clicked. Ctrl+V remains available.
+The full snippet carries the pairing code, route candidates and any Secure Link
+certificate trust. Default Android invites use Dashboard Relay ingress, which
+CLI+UI cannot authenticate through yet. The host command
+`hermes pair --legacy-direct-relay` remains an alternative, and **URL + code**
+remains available for a reachable direct Relay WebSocket address.
+The public Dashboard address does not expose the direct Relay port.
 
 The QR contains only the canonical Dashboard address. Android verifies that
 origin, then uses the upstream Dashboard/Gateway for Chat, sessions, Manage,

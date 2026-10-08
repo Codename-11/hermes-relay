@@ -1,14 +1,23 @@
 # Hermes-Relay Plugin v__VERSION__
 
-**Release Date:** September 13, 2026
+**Release Date:** October 7, 2026
 
 ## Summary
 
-Dashboard WebSocket connections work again with current Hermes authentication helpers, while older Hermes hosts remain supported.
+Dashboard pairing provides separate Android and CLI+UI choices, clearer connection addresses, and more reliable QR invites.
+
+## Added
+
+- CLI+UI pairing invites include route candidates and Secure Link certificate trust.
 
 ## Fixed
 
-- Resolve WebSocket guards from their current upstream module and retain the older-host fallback. Single-use tickets, Host/Origin/IP checks, and independent Hermes-Relay session authentication remain enforced. Missing or incomplete helper contracts deny admission.
+- Connection guidance shows protocols and ports, includes direct Tailscale Relay routes, and avoids assuming a public Relay listener from a Dashboard address.
+- Expired and oversized invites show actionable errors. QR codes remain fully visible, and setup distinguishes Plugin activation from discovery.
+
+## Compatibility
+
+Full-invite CLI import requires a compatible CLI build newer than the currently published 0.4.0-beta.8. This Plugin release does not publish that companion. Existing Android pairing and legacy CLI connection settings remain supported.
 
 ## Install / update
 
@@ -20,7 +29,7 @@ Dashboard WebSocket connections work again with current Hermes authentication he
     # or, if already installed:
     hermes-relay-update
 
-Restart or reload the Hermes Dashboard and Relay after updating so the new manifest and prompt context are active.
+Restart or reload the Hermes Dashboard and Relay after updating so the new manifest and provider context are active.
 
 ## Verify
 

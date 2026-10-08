@@ -65,6 +65,7 @@ import com.hermesandroid.relay.network.upstream.DashboardRedirectAuthMode
 import com.hermesandroid.relay.network.upstream.DASHBOARD_SESSION_COOKIE_VARIANT_NAMES
 import com.hermesandroid.relay.network.upstream.EncryptedDashboardCookieStore
 import com.hermesandroid.relay.network.upstream.NativeDashboardSignInCoordinator
+import com.hermesandroid.relay.network.upstream.withNativeDashboardAuthForeground
 import com.hermesandroid.relay.network.upstream.androidDashboardRedirectAuthMode
 import com.hermesandroid.relay.network.upstream.clearDashboardSessionCookiesForRequest
 import com.hermesandroid.relay.network.upstream.importDashboardCookieHeader
@@ -467,48 +468,62 @@ fun DashboardSignInScreen(
                     providerName = provider.name,
                     competingRedirectProviders = competingRedirectProviders,
                 )
-                NativeDashboardSignInCoordinator(authClient).signIn(
-                    provider = authorizationProvider,
-                    onAuthorizationPrepared = { usesAlternateOrigin ->
+                val session = withNativeDashboardAuthForeground(context) {
+                    NativeDashboardSignInCoordinator(
+                        authClient,
+                        providerDisplayName = provider.displayName ?: provider.name,
+                    ).signIn(
+                        provider = authorizationProvider,
+                        onDiagnostic = { stage ->
+                            recordNativeDashboardAuthDiagnostic(
+                                stage = stage,
+                                attempt = attemptNumber,
+                                providerKind = attemptProviderKind,
+                                dashboardUrl = dashboardUrl,
+                                startedAtElapsedMs = attemptStartedAtElapsedMs,
+                            )
+                        },
+                        onAuthorizationPrepared = { usesAlternateOrigin ->
+                            recordNativeDashboardAuthDiagnostic(
+                                stage = "authorization_prepared",
+                                attempt = attemptNumber,
+                                providerKind = attemptProviderKind,
+                                dashboardUrl = dashboardUrl,
+                                startedAtElapsedMs = attemptStartedAtElapsedMs,
+                                authorizationOrigin = if (usesAlternateOrigin) {
+                                    "alternate"
+                                } else {
+                                    "configured"
+                                },
+                            )
+                        },
+                        onCallbackValidated = {
+                            recordNativeDashboardAuthDiagnostic(
+                                stage = "callback_validated",
+                                attempt = attemptNumber,
+                                providerKind = attemptProviderKind,
+                                dashboardUrl = dashboardUrl,
+                                startedAtElapsedMs = attemptStartedAtElapsedMs,
+                            )
+                        },
+                    ) { authorizationUrl ->
+                        withContext(Dispatchers.Main.immediate) {
+                            launchNativeDashboardAuthorization(context, authorizationUrl)
+                        }
                         recordNativeDashboardAuthDiagnostic(
-                            stage = "authorization_prepared",
+                            stage = "browser_launched",
                             attempt = attemptNumber,
                             providerKind = attemptProviderKind,
                             dashboardUrl = dashboardUrl,
                             startedAtElapsedMs = attemptStartedAtElapsedMs,
-                            authorizationOrigin = if (usesAlternateOrigin) {
-                                "alternate"
-                            } else {
-                                "configured"
-                            },
                         )
-                    },
-                    onCallbackValidated = {
-                        recordNativeDashboardAuthDiagnostic(
-                            stage = "callback_validated",
-                            attempt = attemptNumber,
-                            providerKind = attemptProviderKind,
-                            dashboardUrl = dashboardUrl,
-                            startedAtElapsedMs = attemptStartedAtElapsedMs,
-                        )
-                    },
-                ) { authorizationUrl ->
-                    withContext(Dispatchers.Main.immediate) {
-                        launchNativeDashboardAuthorization(context, authorizationUrl)
                     }
-                    recordNativeDashboardAuthDiagnostic(
-                        stage = "browser_launched",
-                        attempt = attemptNumber,
-                        providerKind = attemptProviderKind,
-                        dashboardUrl = dashboardUrl,
-                        startedAtElapsedMs = attemptStartedAtElapsedMs,
-                    )
-                }
-                val client = clientFactory(dashboardUrl)
-                val session = try {
-                    verifyAndRecord(client)
-                } finally {
-                    client.shutdown()
+                    val client = clientFactory(dashboardUrl)
+                    try {
+                        verifyAndRecord(client)
+                    } finally {
+                        client.shutdown()
+                    }
                 }
                 if (session?.authenticated == true) {
                     recordNativeDashboardAuthDiagnostic(
@@ -909,7 +924,8 @@ internal fun nativeDashboardSignInMessageKind(failureStage: String): NativeDashb
         failureStage == "token_shape" -> NativeDashboardSignInMessageKind.ResponseUnsupported
         failureStage == "inactive_generation" -> NativeDashboardSignInMessageKind.AttemptInactive
         failureStage == "token_store" -> NativeDashboardSignInMessageKind.SecureStorage
-        failureStage.startsWith("token_transport") -> NativeDashboardSignInMessageKind.Transport
+        failureStage.startsWith("token_transport") || failureStage == "callback_timeout" ||
+            failureStage == "callback_bind_failed" -> NativeDashboardSignInMessageKind.Transport
         else -> NativeDashboardSignInMessageKind.Generic
     }
 

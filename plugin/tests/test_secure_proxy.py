@@ -90,6 +90,19 @@ class SecureProxyMintTests(AioHTTPTestCase):
         app.on_startup.remove(_on_secure_proxy_startup)
         return app
 
+    async def test_cli_tailnet_route_is_signed_once_before_secure_link(self) -> None:
+        tailnet = {"role": "tailscale", "priority": 0, "recommended": True, "legacy": True,
+            "relay": {"url": "ws://100.64.0.1:8767", "transport_hint": "ws"}}
+        response = await self.client.post("/pairing/mint", json={
+            "legacy_direct_relay": True, "endpoints": [tailnet],
+        })
+        self.assertEqual(response.status, 200, await response.text())
+        candidates = json.loads((await response.json())["qr_payload"])["endpoints"]
+        matches = [c for c in candidates if c.get("relay", {}).get("url") == "ws://100.64.0.1:8767"]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(candidates[0]["relay"]["url"], "ws://100.64.0.1:8767")
+        self.assertEqual([c["priority"] for c in candidates], list(range(len(candidates))))
+
     async def test_dashboard_mint_signs_proxy_before_fallback_routes(self) -> None:
         lan = {
             "role": "lan", "priority": 0,

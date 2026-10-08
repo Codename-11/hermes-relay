@@ -49,7 +49,8 @@ function classifyCiPaths(paths) {
     ]),
     contract: forceAll ||
       under(['app/src/main/kotlin/com/hermesandroid/relay/network/upstream/']) || exact([
-        'scripts/check-upstream-route-contract.py', '.github/workflows/ci-contract.yml',
+        'scripts/check-upstream-route-contract.py',
+        'scripts/tests/check_upstream_route_contract_test.py', '.github/workflows/ci-contract.yml',
       ]),
     docs: forceAll || under(['user-docs/']) || exact([
       '.github/workflows/docs.yml',
