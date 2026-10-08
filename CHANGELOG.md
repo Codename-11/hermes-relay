@@ -8,7 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- CLI+UI imports full pairing invites from the Dashboard, preserving route candidates and Secure Link certificate trust.
 - Android marks unread completed conversations in the session drawer and shows unread conversation counts on profiles and the chat header.
 - Reply notifications show the owning agent's official profile name and cached avatar, plus the conversation title.
 
@@ -24,6 +23,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Chat progress stays above the composer while scrolling and disappears when the turn finishes or waits for input.
 
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
+
+## [0.4.0-beta.9] - 2026-10-07
+
+### Added
+
+- The Windows management UI imports full Dashboard pairing invites through a native Paste invite control, preserving route candidates and Secure Link certificate trust.
+
+### Changed
+
+- CLI pairing displays advertised routes with protocols and ports and gives actionable direct-route guidance when Dashboard authentication is unsupported.
 
 ## [Plugin 1.13.0] - 2026-10-07
 
