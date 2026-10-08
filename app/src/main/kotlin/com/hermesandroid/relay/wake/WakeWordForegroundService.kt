@@ -11,9 +11,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
@@ -21,7 +18,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.MainActivity
 import com.hermesandroid.relay.R
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,6 +27,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -74,20 +72,34 @@ internal fun wakeWordInputLevel(samples: ShortArray, count: Int): Float {
  * started.
  */
 class WakeWordForegroundService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val resourceLock = Any()
-    private val stopRequested = AtomicBoolean(false)
-    @Volatile private var recognitionJob: Job? = null
-    private var recorder: AudioRecord? = null
-    private var detector: WakeWordDetector? = null
-    private var microphoneLease: MicrophoneLease? = null
-    @Volatile private var voiceSessionActive = false
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val recognition = WakeWordRecognition(scope)
+    private var settingsJob: Job? = null
+    private var settingsGeneration = 0L
+    private var destroyed = false
+    private var started = false
     @Volatile private var currentPreferences = WakeWordPreferences()
     private var testTimeoutJob: Job? = null
+    private val voiceSessionActive: Boolean
+        get() = MicrophoneOwnershipCoordinator.voiceSessionActive.value
 
     override fun onCreate() {
         super.onCreate()
         runningInstance = this
+        scope.launch {
+            combine(
+                MicrophoneOwnershipCoordinator.voiceSessionActive,
+                WakeWordActivationCoordinator.pending,
+                MicrophoneOwnershipCoordinator.owner,
+            ) { active, pending, _ -> active to pending }.collectLatest { (active, pending) ->
+                if (!started || destroyed || runningInstance !== this@WakeWordForegroundService) return@collectLatest
+                if (active) {
+                    pauseForVoice()
+                } else if (pending == null) {
+                    startFromPersistedSettings()
+                }
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -97,6 +109,9 @@ class WakeWordForegroundService : Service() {
         startForegroundNotification(runtimeState.value)
         when (intent?.action) {
             ACTION_STOP -> {
+                destroyed = true
+                settingsGeneration++
+                settingsJob?.cancel()
                 finishWakeWordTest(WakeWordTestPhase.Idle)
                 stopRecognition()
                 setRuntimeState(WakeWordRuntimeState.Stopped)
@@ -108,12 +123,17 @@ class WakeWordForegroundService : Service() {
                     stopSelf()
                 }
             }
-            ACTION_START, null -> startFromPersistedSettings()
+            ACTION_START, null -> {
+                started = true
+                if (voiceSessionActive) pauseForVoice() else startFromPersistedSettings()
+            }
         }
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        destroyed = true
+        settingsGeneration++
         stopRecognition()
         finishWakeWordTest(WakeWordTestPhase.Idle)
         if (runningInstance === this) runningInstance = null
@@ -123,10 +143,13 @@ class WakeWordForegroundService : Service() {
     }
 
     private fun startFromPersistedSettings() {
-        if (recognitionJob?.isActive == true || voiceSessionActive) return
+        if (!started || destroyed || recognition.isActive || voiceSessionActive) return
+        settingsJob?.cancel()
+        val expected = ++settingsGeneration
         setRuntimeState(WakeWordRuntimeState.Starting)
-        scope.launch {
+        settingsJob = scope.launch {
             val prefs = WakeWordPreferencesRepository(applicationContext).flow.first()
+            if (destroyed || expected != settingsGeneration) return@launch
             currentPreferences = prefs
             if (!prefs.enabled) {
                 setRuntimeState(WakeWordRuntimeState.Stopped)
@@ -138,9 +161,11 @@ class WakeWordForegroundService : Service() {
         }
     }
 
-    @SuppressLint("MissingPermission")
+    private fun canListen(): Boolean = runningInstance === this && !destroyed && !voiceSessionActive &&
+        currentPreferences.enabled && WakeWordActivationCoordinator.pending.value == null
+
     private fun startRecognition(preferences: WakeWordPreferences) {
-        if (voiceSessionActive || recognitionJob?.isActive == true) return
+        if (!canListen()) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED
         ) {
@@ -152,100 +177,32 @@ class WakeWordForegroundService : Service() {
             fail("Wake-word model is not installed")
             return
         }
-        val lease = MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord)
-        if (lease == null) {
-            setRuntimeState(WakeWordRuntimeState.PausedForVoice)
-            return
-        }
-        microphoneLease = lease
-        stopRequested.set(false)
-        recognitionJob = scope.launch {
-            var detected = false
-            var testDetection = false
-            var unattachedDetector: WakeWordDetector? = null
-            try {
-                val createdDetector = SherpaWakeWordDetector(
-                    files = files,
-                    sensitivity = preferences.sensitivity,
-                    confirmationFrames = preferences.confirmationFrames,
-                )
-                unattachedDetector = createdDetector
-                val minBuffer = AudioRecord.getMinBufferSize(
-                    SAMPLE_RATE,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                ).coerceAtLeast(SAMPLE_RATE / 5 * 2)
-                val createdRecorder = AudioRecord.Builder()
-                    .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setSampleRate(SAMPLE_RATE)
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                            .build()
-                    )
-                    .setBufferSizeInBytes(minBuffer * 2)
-                    .build()
-                if (createdRecorder.state != AudioRecord.STATE_INITIALIZED) {
-                    createdRecorder.release()
-                    throw IllegalStateException("Wake-word microphone failed to initialize")
+        recognition.start(
+            canListen = ::canListen,
+            createAudio = { WakeWordAudioRecord(files, preferences) },
+            onListening = { setRuntimeState(WakeWordRuntimeState.Listening) },
+            onSamples = { samples, count ->
+                if (_testState.value.phase == WakeWordTestPhase.Listening) {
+                    _testState.value = _testState.value.copy(inputLevel = wakeWordInputLevel(samples, count))
                 }
-                synchronized(resourceLock) {
-                    if (stopRequested.get()) {
-                        createdRecorder.release()
-                        return@launch
-                    }
-                    detector = createdDetector
-                    recorder = createdRecorder
-                    unattachedDetector = null
-                }
-                createdRecorder.startRecording()
-                setRuntimeState(WakeWordRuntimeState.Listening)
-
-                val samples = ShortArray(FRAME_SAMPLES)
-                while (!stopRequested.get()) {
-                    val count = createdRecorder.read(samples, 0, samples.size)
-                    if (count < 0) throw IllegalStateException("Wake-word microphone read failed: $count")
-                    if (_testState.value.phase == WakeWordTestPhase.Listening) {
-                        _testState.value = _testState.value.copy(
-                            inputLevel = wakeWordInputLevel(samples, count),
-                        )
-                    }
-                    if (count > 0 && createdDetector.accept(samples, count)) {
-                        detected = true
-                        testDetection =
-                            _testState.value.phase == WakeWordTestPhase.Listening
-                        break
-                    }
-                }
-            } catch (t: Throwable) {
-                if (!stopRequested.get()) {
-                    Log.w(TAG, "wake listening failed", t)
-                    fail(t.message ?: "Wake-word listener failed")
-                }
-            } finally {
-                runCatching { unattachedDetector?.close() }
-                releaseRecognitionResources()
-                recognitionJob = null
-            }
-            if (detected && !stopRequested.get()) {
-                if (testDetection) {
-                    Log.i(TAG, "wake-word microphone test detected the configured phrase")
+            },
+            onDetected = {
+                if (_testState.value.phase == WakeWordTestPhase.Listening) {
                     finishWakeWordTest(WakeWordTestPhase.Detected)
-                    if (!voiceSessionActive && currentPreferences.enabled) {
-                        startRecognition(currentPreferences)
-                    }
+                    startRecognition(currentPreferences)
                 } else {
                     onWakeDetected(preferences)
                 }
-            }
-        }
+            },
+            onBusy = { setRuntimeState(WakeWordRuntimeState.PausedForVoice) },
+            onError = { fail(it.message ?: "Wake-word listener failed") },
+        )
     }
 
     private fun startWakeWordTest() {
         if (voiceSessionActive ||
             runtimeState.value != WakeWordRuntimeState.Listening ||
-            recognitionJob?.isActive != true
+            !recognition.isActive
         ) {
             finishWakeWordTest(WakeWordTestPhase.Unavailable)
             return
@@ -268,12 +225,9 @@ class WakeWordForegroundService : Service() {
         _testState.value = WakeWordTestState(phase = phase)
     }
 
-    /**
-     * Synchronous mic handoff: stop and release AudioRecord before any caller
-     * enters the existing voice capture path.
-     */
     private fun pauseForVoice() {
-        voiceSessionActive = true
+        settingsGeneration++
+        settingsJob?.cancel()
         if (_testState.value.phase == WakeWordTestPhase.Listening) {
             finishWakeWordTest(WakeWordTestPhase.Unavailable)
         }
@@ -281,71 +235,18 @@ class WakeWordForegroundService : Service() {
         setRuntimeState(WakeWordRuntimeState.PausedForVoice)
     }
 
-    private fun setVoiceSessionActive(active: Boolean) {
-        voiceSessionActive = active
-        if (active) {
-            pauseForVoice()
-        } else {
-            val previousJob = recognitionJob
-            scope.launch {
-                // The cancelled reader's finally block owns detector teardown.
-                // Waiting prevents it from closing a newly created detector or
-                // releasing the new listener's microphone lease as stale work.
-                previousJob?.join()
-                if (!voiceSessionActive &&
-                    currentPreferences.enabled &&
-                    WakeWordActivationCoordinator.pending.value == null
-                ) {
-                    startRecognition(currentPreferences)
-                }
-            }
-        }
-    }
-
     private fun reloadSettings() {
         finishWakeWordTest(WakeWordTestPhase.Idle)
-        val previousJob = recognitionJob
         stopRecognition()
-        scope.launch {
-            // The previous job owns the JNI detector teardown. Do not create a
-            // replacement until that teardown has completed.
-            previousJob?.join()
-            currentPreferences = WakeWordPreferencesRepository(applicationContext).flow.first()
-            if (!voiceSessionActive && currentPreferences.enabled) {
-                startRecognition(currentPreferences)
-            }
-        }
+        startFromPersistedSettings()
     }
 
     private fun stopRecognition() {
-        stopRequested.set(true)
-        synchronized(resourceLock) {
-            runCatching { recorder?.stop() }
-            runCatching { recorder?.release() }
-            recorder = null
-            microphoneLease?.let(MicrophoneOwnershipCoordinator::release)
-            microphoneLease = null
-        }
-        // Closing the native detector concurrently with accept() can race in
-        // JNI. Stopping AudioRecord unblocks the reader; its finally block owns
-        // detector close after accept() has returned.
-        recognitionJob?.cancel()
-    }
-
-    private fun releaseRecognitionResources() {
-        synchronized(resourceLock) {
-            runCatching { recorder?.stop() }
-            runCatching { recorder?.release() }
-            recorder = null
-            runCatching { detector?.close() }
-            detector = null
-            microphoneLease?.let(MicrophoneOwnershipCoordinator::release)
-            microphoneLease = null
-        }
+        recognition.stop()
     }
 
     private fun onWakeDetected(preferences: WakeWordPreferences) {
-        // releaseRecognitionResources() has completed before this callback.
+        // The reader and its lease have been released before this callback.
         Log.i(TAG, "wake phrase detected; microphone released before activation")
         WakeWordActivationCoordinator.request(
             WakeWordActivation(
@@ -454,8 +355,6 @@ class WakeWordForegroundService : Service() {
         const val NOTIFICATION_ID = 4714
         const val ACTION_START = "com.hermesandroid.relay.wake.START"
         const val ACTION_STOP = "com.hermesandroid.relay.wake.STOP"
-        private const val SAMPLE_RATE = 16_000
-        private const val FRAME_SAMPLES = 1_600
         private const val TEST_DURATION_MS = 10_000L
 
         private val _runtimeState = MutableStateFlow(WakeWordRuntimeState.Stopped)
@@ -479,14 +378,6 @@ class WakeWordForegroundService : Service() {
             )
             _runtimeState.value = WakeWordRuntimeState.Stopped
             _testState.value = WakeWordTestState()
-        }
-
-        fun prepareForVoice() {
-            runningInstance?.pauseForVoice()
-        }
-
-        fun setVoiceSessionActive(active: Boolean) {
-            runningInstance?.setVoiceSessionActive(active)
         }
 
         fun reloadSettings() {

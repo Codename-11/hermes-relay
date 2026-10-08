@@ -57,7 +57,15 @@ never fall back to browser-side configuration writes.
   certificate SAN matches the advertised hostname or IP. Changing the
   advertised authority requires deliberate certificate/pin rotation.
 - The listener has exactly three fixed namespaces under one pinned origin: `/relay`, `/api`, and
-  `/dashboard`. `/relay` contains only health and the authenticated WebSocket;
+  `/dashboard`. `/relay` contains health, the authenticated WebSocket, and
+  `GET /relay/sessions`, `PATCH /relay/sessions/{token_prefix}`, and
+  `DELETE /relay/sessions/{token_prefix}` using the production Relay session
+  handlers. Session REST always requires a valid Relay bearer, including on
+  loopback connections; it never inherits the Dashboard's local operator shortcut.
+  PATCH permits only self-service lifetime/grant reductions; renewal and grant
+  expansion require fresh operator-approved pairing. Listing and revocation
+  retain the ordinary Relay bearer contract, including revoking another paired
+  device and closing its active Relay sockets.
   `/api/*` maps only to the loopback API server; `/dashboard/*` maps only to
   the loopback Dashboard. No client-controlled upstream is accepted.
 - API requests retain the API server bearer and never receive Relay or

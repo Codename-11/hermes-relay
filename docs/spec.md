@@ -459,8 +459,12 @@ WireGuard data plane. Public HTTPS remains the next secure fallback. The optiona
 **Hermes Secure Link** is a unified alternative: when
 explicitly enabled it listens on `:9443`, advertises the operator-reviewed
 paired endpoint's SPKI material,
-and exposes fixed `/relay`, `/api`, and `/dashboard` namespaces. Each service
-retains its native credential, and Dashboard forwarding fails closed unless
+and exposes fixed `/relay`, `/api`, and `/dashboard` namespaces. Relay session
+management uses `GET /relay/sessions`, `PATCH /relay/sessions/{token_prefix}`,
+and `DELETE /relay/sessions/{token_prefix}` with the paired Relay bearer. These
+routes reuse the ordinary session handlers, require bearer authentication even on loopback,
+and preserve self-only policy reductions and operator-approved renewal.
+Each service retains its native credential, and Dashboard forwarding fails closed unless
 its upstream OAuth/password gate is active. Clients select secure candidates
 first and may fall back to a separately configured LAN route; the existing
 plain-route acknowledgement still applies. See
@@ -1276,7 +1280,15 @@ utilities.
   retain a generic retry notice instead of collapsing to an unexplained Ready
   state. The
   wake recorder is released before the established voice recorder opens, and
-  assistant listening resumes only after the session exits. This mode is
+  assistant listening resumes only after the session exits. Manual chat, full
+  voice, and assistant entry share a process-wide voice reservation: both wake
+  modes pause, capture awaits the retiring wake reader's AudioRecord and detector
+  teardown, and wake acquisition stays blocked between utterances and during
+  playback. Hold release or exit cancels a pending capture; a stale wake callback
+  or prior session's teardown cannot start capture or resume a newer session.
+  Voice exit resumes the enabled listener only after capture and barge-in release.
+  Permission failures retain the pause while the voice surface remains open.
+  This mode is
   mutually exclusive with the experimental notification-based foreground
   listener. Third-party assistants do not receive Google's dedicated low-power
   hotword hardware, so continuous local detection has a material battery cost.

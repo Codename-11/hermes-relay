@@ -8,12 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
-- CLI+UI imports full pairing invites from the Dashboard, preserving route candidates and Secure Link certificate trust.
 - Android marks unread completed conversations in the session drawer and shows unread conversation counts on profiles and the chat header.
 - Reply notifications show the owning agent's official profile name and cached avatar, plus the conversation title.
 
 ### Fixed
 
+- Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
+- Android pauses both wake-word listener modes before voice capture and resumes listening after voice exits, preventing microphone conflicts. (#681)
 - Android Relay sessions distinguish shortening from operator-approved renewal, retain actionable update failures, and expose accessible pairing duration controls. (#659)
 
 - Android avoids a startup crash when profile state arrives during connection setup.
@@ -23,6 +24,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
 - Android keeps quiet tools and provider waits alive, including turns submitted by another client, and recovers missing completion events from authoritative Gateway state without sending Stop.
+
+## [0.4.0-beta.10] - 2026-10-08
+
+### Fixed
+
+- Structured CUA clicks, value changes, and scrolling accept current driver handles, including hexadecimal snapshot generations. (#680)
+- Windows Activity identifies CUA snapshots and system captures correctly and avoids assuming a backend or dispatch mode when neither was recorded. (#682)
+
+## [0.4.0-beta.9] - 2026-10-07
+
+### Added
+
+- The Windows management UI imports full Dashboard pairing invites through a native Paste invite control, preserving route candidates and Secure Link certificate trust.
+
+### Changed
+
+- CLI pairing displays advertised routes with protocols and ports and gives actionable direct-route guidance when Dashboard authentication is unsupported.
 
 ## [Plugin 1.13.0] - 2026-10-07
 

@@ -107,6 +107,7 @@ jobs:
             plugin/tests/test_secure_proxy_contract.py \
             plugin/tests/test_secure_link_setup.py \
             plugin/tests/test_secure_proxy_security.py \
+            plugin/tests/test_secure_proxy_sessions.py \
             plugin/tests/test_voice_routes.py \
             plugin/tests/test_realtime_agent_openai_provider.py \
             plugin/tests/test_realtime_agent_xai_provider.py \

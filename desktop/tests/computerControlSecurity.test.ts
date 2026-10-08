@@ -76,6 +76,24 @@ test('snapshot tokens return their backend binding only to the exact target', ()
   }), null)
 })
 
+test('current driver handles cannot cross session, grant, target, or generation bounds', () => {
+  const auth = authority('current-driver')
+  const state = new ComputerControlSecurityState(auth)
+  const binding = {
+    authority: auth, grantId: 'grant-current', target: { pid: 42, windowId: 7 },
+    snapshotGeneration: 's00000001', driverElementToken: 's00000001:3'
+  }
+  for (const mismatch of [
+    { authority: authority('other-session') }, { grantId: 'other-grant' },
+    { target: { pid: 43, windowId: 7 } }, { target: { pid: 42, windowId: 8 } },
+    { snapshotGeneration: 's00000002' }
+  ]) {
+    const token = state.issueSnapshotToken(binding)
+    assert.equal(state.consumeSnapshotToken(token, { ...binding, ...mismatch }), null)
+    assert.equal(state.consumeSnapshotToken(token, binding), null)
+  }
+})
+
 test('authority revocation removes only that concurrent session artifacts', () => {
   const first = authority('router-first')
   const second = authority('router-second')
