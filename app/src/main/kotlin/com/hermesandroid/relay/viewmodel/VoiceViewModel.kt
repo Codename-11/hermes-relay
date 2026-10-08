@@ -2077,6 +2077,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         startListening(requireContinuousLoop = false)
     }
 
+    /**
+     * Assistant activation must retain its owner while wake/barge-in teardown
+     * is pending. Capture errors and a user-cancelled start remain UI state,
+     * so the same assistant session can retry or exit normally.
+     */
+    suspend fun startListeningAwaitingHandoff() {
+        startListening()
+        pendingListeningStartJob?.join()
+    }
+
     private fun startListening(requireContinuousLoop: Boolean) {
         if (!_uiState.value.voiceMode) return
         // A direct mic tap starts a normal capture. Only the recorder opened by

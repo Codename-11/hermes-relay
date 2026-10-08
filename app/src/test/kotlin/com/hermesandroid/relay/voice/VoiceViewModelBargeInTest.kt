@@ -28,6 +28,7 @@ import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -165,6 +166,40 @@ class VoiceViewModelBargeInTest {
             bargeInListenerFactory = { _ -> bargeInListener },
         )
         return vm
+    }
+
+    @Test
+    fun `assistant activation waits for wake release before completing startup`() = runTest {
+        val wake = requireNotNull(MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord))
+        val vm = buildViewModel()
+        vm.enterVoiceMode()
+        val activation = async { vm.startListeningAwaitingHandoff() }
+        runCurrent()
+        assertTrue(!activation.isCompleted)
+        verify(exactly = 0) { recorder.startRecording() }
+        MicrophoneOwnershipCoordinator.release(wake)
+        activation.await()
+        assertEquals(VoiceState.Listening, vm.uiState.value.state)
+        verify(exactly = 1) { recorder.startRecording() }
+        vm.exitVoiceMode()
+    }
+
+    @Test
+    fun `cancelled assistant capture completes without orphaning the session`() = runTest {
+        val wake = requireNotNull(MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord))
+        val vm = buildViewModel()
+        vm.enterVoiceMode()
+        val activation = async { vm.startListeningAwaitingHandoff() }
+        runCurrent()
+        vm.stopListening()
+        activation.await()
+        MicrophoneOwnershipCoordinator.release(wake)
+        runCurrent()
+        verify(exactly = 0) { recorder.startRecording() }
+        assertTrue(vm.uiState.value.voiceMode)
+        assertEquals(VoiceState.Idle, vm.uiState.value.state)
+        vm.exitVoiceMode()
+        assertTrue(!MicrophoneOwnershipCoordinator.voiceSessionActive.value)
     }
 
     @Test
