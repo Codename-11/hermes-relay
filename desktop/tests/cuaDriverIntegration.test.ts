@@ -125,11 +125,19 @@ test('supported driver element tokens flow verbatim from snapshot into click and
     assert.equal(token, 's00000002:11')
     await session.clickElement({ pid: 100, windowId: 200, elementToken: token })
     await session.setElementValue({ pid: 100, windowId: 200, elementToken: token }, 'hello')
+    await session.scroll({ pid: 100, windowId: 200, elementToken: token }, 'down', 2)
     await session.close()
     const click = runner.calls.find(call => call.args[1] === 'click')
     const setValue = runner.calls.find(call => call.args[1] === 'set_value')
     assert.equal(click?.payload?.element_token, 's00000002:11')
     assert.equal(setValue?.payload?.element_token, 's00000002:11')
+    const scroll = runner.calls.find(call => call.args[1] === 'scroll')
+    assert.equal(scroll?.payload?.element_token, token)
+    for (const call of [click, setValue, scroll]) {
+      assert.equal(call?.payload?.pid, 100)
+      assert.equal(call?.payload?.window_id, 200)
+      assert.equal(call?.payload?.session, runner.calls.find(call => call.args[1] === 'start_session')?.payload?.session)
+    }
   } finally {
     await cleanup()
   }

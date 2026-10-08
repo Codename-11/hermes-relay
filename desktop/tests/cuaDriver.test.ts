@@ -186,7 +186,11 @@ test('rejects invalid tokens and keys before invoking the driver', async () => {
     const adapter = await CuaDriverAdapter.connect({ platform: 'win32', homeDir: install.home, runner })
     const session = await adapter.openSession({ controlSessionId: 'control-2', targetDeviceId: 'desktop-1' })
     const before = runner.calls.length
-    await assert.rejects(session.clickElement({ pid: 1, windowId: 2, elementToken: '../bad' }), /elementToken/)
+    for (const elementToken of ['../bad', 's1', 's1:', 's1:-1', 's1:1.5', 's1:2:3', 's1:2\n', ' s1:2', 'hermes-snapshot-id']) {
+      await assert.rejects(session.clickElement({ pid: 1, windowId: 2, elementToken }), /elementToken/)
+      await assert.rejects(session.setElementValue({ pid: 1, windowId: 2, elementToken }, 'value'), /elementToken/)
+      await assert.rejects(session.scroll({ pid: 1, windowId: 2, elementToken }, 'down', 1), /elementToken/)
+    }
     await assert.rejects(session.pressKey({ pid: 1, windowId: 2 }, 'win+r'), /allowlisted/)
     assert.equal(runner.calls.length, before)
     await session.close()
