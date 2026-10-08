@@ -701,7 +701,7 @@
     <string name="settings_bridge_desc">Управление мостом телефона, разрешенное плагином Relay</string>
     <string name="settings_bridge_core_desc">Функции Relay без управления устройством (доступно при установке из APK)</string>
     <string name="settings_relay_sessions">Сеансы Relay</string>
-    <string name="settings_relay_sessions_desc">Телефоны, сопряженные с этим сервером, отзыв, продление</string>
+    <string name="settings_relay_sessions_desc">Управление сопряжёнными телефонами, сроками сеансов и доступом</string>
     <string name="settings_notification_companion">Сопровождение уведомлений</string>
     <string name="settings_notification_companion_desc">Общие уведомления телефона для сопряженных инструментов Relay</string>
     <string name="settings_media">Медиа</string>
@@ -2654,7 +2654,7 @@
     <string name="insecure_ack_reason_tailscale">Tailscale или VPN</string>
     <string name="insecure_ack_reason_dev">Только локальная разработка</string>
     <string name="ttl_title">Сохранять эту пару для...</string>
-    <string name="ttl_body">Ваш телефон будет автоматически подключаться в течение этого окна. После истечения срока действия вам нужно будет снова сопоставить, чтобы использовать функции Relay.</string>
+    <string name="ttl_body">Оператор хоста одобряет фактический срок и разрешения функций. Ваш выбор не может расширить это одобрение. После истечения доступа выполните сопряжение заново с новым кодом, одобренным оператором.</string>
     <string name="ttl_pair">Пара</string>
     <string name="ttl_cancel">Отмена</string>
     <string name="ttl_option_1d">1 день</string>
@@ -4363,4 +4363,12 @@
     <string name="stats_tts_player_start">Задержка запуска плеера</string>
     <string name="chat_unread_reply">Непрочитанный ответ</string>
     <string name="chat_unread_conversations">Непрочитанные беседы: %1$d</string>
+    <string name="paired_devices_lifetime">Срок сеанса</string>
+    <string name="paired_devices_shorten_title">Сократить срок сопряжения</string>
+    <string name="paired_devices_shorten_body">Можно сократить срок сеанса этого телефона. Чтобы продлить или обновить доступ, получите новый код сопряжения, одобренный оператором, и выполните сопряжение заново. Разрешения отдельных функций могут истечь раньше: доступ Bridge в сеансах с ограниченным сроком по умолчанию действует не более 7 дней. Сокращение срока не обновляет разрешения функций или разрешение на доступ к экрану телефона.</string>
+    <string name="paired_devices_shorten">Сократить</string>
+    <string name="paired_devices_pair_again">Повторить сопряжение</string>
+    <string name="paired_devices_policy_failed">Не удалось сократить срок сеанса. Обновите список сеансов Relay и выберите меньший срок или выполните сопряжение заново с новым кодом, одобренным оператором, чтобы обновить доступ.</string>
+    <string name="paired_devices_updating">Обновление сеанса…</string>
+    <string name="paired_devices_no_shorter_duration">Более коротких готовых вариантов нет. Можно отозвать этот сеанс или выполнить сопряжение заново для обновления доступа.</string>
 </resources>
