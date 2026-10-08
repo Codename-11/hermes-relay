@@ -870,7 +870,6 @@ fun ChatScreen(
             if (pendingVoiceEnter && !isDemoMode) {
                 pendingVoiceEnter = false
                 setVoicePresentationMode(VoicePresentationMode.Conversation)
-                com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
                 voiceViewModel.enterVoiceMode()
             } else {
                 pendingVoiceEnter = false
@@ -889,7 +888,6 @@ fun ChatScreen(
         if (granted) {
             micPermissionDenied = false
             setVoicePresentationMode(VoicePresentationMode.Conversation)
-            com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
             voiceViewModel.enterVoiceMode()
         } else {
             pendingVoiceEnter = true
