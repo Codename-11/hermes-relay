@@ -13,6 +13,8 @@ import com.hermesandroid.relay.audio.BargeInListener
 import com.hermesandroid.relay.audio.RealtimePcmPlayer
 import com.hermesandroid.relay.audio.VadEngine
 import com.hermesandroid.relay.audio.VoicePlayer
+import com.hermesandroid.relay.wake.MicrophoneOwnershipCoordinator
+import com.hermesandroid.relay.wake.MicrophoneOwner
 import com.hermesandroid.relay.audio.VoiceRecorder
 import com.hermesandroid.relay.audio.VoiceSfxPlayer
 import com.hermesandroid.relay.data.BargeInPreferences
@@ -1083,6 +1085,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * every subsequent VoiceCapture start join the same ownership handoff.
      */
     private val pendingBargeInReaderRelease = AtomicReference<Job?>(null)
+    private var wakeVoiceSession: Any? = null
     private val bargeInTurnEpoch = AtomicLong(0L)
     @Volatile private var activeBargeInTurnEpoch: Long = 0L
 
@@ -1655,6 +1658,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             .takeIf { freshEntry }
             ?.backgroundRun
         if (freshEntry) {
+            wakeVoiceSession = MicrophoneOwnershipCoordinator.beginVoiceSession()
             assistantActivationId = activationId
             assistantContextTurnCommitted = false
             assistantExpectScreenContext = expectScreenContext
@@ -2056,6 +2060,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // queued SMS would execute the action after the overlay closed,
         // which is exactly the surprise we're trying to prevent.
         voiceBridgeIntentHandler?.cancelPending()
+        releaseWakeVoiceSession()
+    }
+
+    private fun releaseWakeVoiceSession() {
+        val session = wakeVoiceSession ?: return
+        wakeVoiceSession = null
+        MicrophoneOwnershipCoordinator.endVoiceSession(session, pendingBargeInReaderRelease.get())
     }
 
     // ---------------------------------------------------------------------
@@ -2067,6 +2078,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startListening(requireContinuousLoop: Boolean) {
+        if (!_uiState.value.voiceMode) return
         // A direct mic tap starts a normal capture. Only the recorder opened by
         // onBargeInDetected may carry response-interruption command context.
         responseInterruptedForVoiceCommand = false
@@ -2112,7 +2124,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         try { player?.stop() } catch (_: Exception) { /* ignore */ }
         try { realtimePcmPlayer?.stop() } catch (_: Exception) { /* ignore */ }
 
-        if (microphoneRelease == null || microphoneRelease.isCompleted) {
+        if ((microphoneRelease == null || microphoneRelease.isCompleted) &&
+            MicrophoneOwnershipCoordinator.owner.value != MicrophoneOwner.WakeWord
+        ) {
             if (!requireContinuousLoop || canStartContinuousCapture()) {
                 startVoiceCapture(rec)
             }
@@ -2122,8 +2136,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         val startEpoch = ++listeningStartEpoch
         val pendingStart = viewModelScope.launch(start = CoroutineStart.LAZY) {
             try {
-                microphoneRelease.join()
-                if (listeningStartEpoch == startEpoch &&
+                microphoneRelease?.join()
+                MicrophoneOwnershipCoordinator.awaitWakeRelease()
+                if (_uiState.value.voiceMode && listeningStartEpoch == startEpoch &&
                     (!requireContinuousLoop || canStartContinuousCapture())
                 ) {
                     startVoiceCapture(rec)
@@ -6077,14 +6092,17 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val pendingReaderRelease = pendingBargeInReaderRelease.get()?.takeUnless { it.isCompleted }
-        if (pendingReaderRelease != null) {
+        if (pendingReaderRelease != null ||
+            MicrophoneOwnershipCoordinator.owner.value == MicrophoneOwner.WakeWord
+        ) {
             // A late playback/realtime callback may request the next turn's
             // listener while the previous AudioRecord is still unwinding.
             // Join the same ownership fence as VoiceCapture, then re-check the
             // turn epoch so stale generations cannot reopen the microphone.
             activeBargeInTurnEpoch = epoch
             viewModelScope.launch {
-                pendingReaderRelease.join()
+                pendingReaderRelease?.join()
+                MicrophoneOwnershipCoordinator.awaitWakeRelease()
                 if (activeBargeInTurnEpoch == epoch &&
                     bargeInListener == null &&
                     activeResponseOwnsBargeIn()
@@ -6901,6 +6919,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // the VM is collected. The consumer job was just cancelled, so
         // the synth worker will never resume draining pendingTtsFiles.
         deletePendingSynthFiles()
+        releaseWakeVoiceSession()
     }
 
     /**

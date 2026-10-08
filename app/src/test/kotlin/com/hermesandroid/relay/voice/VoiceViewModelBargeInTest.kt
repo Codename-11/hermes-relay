@@ -2,6 +2,8 @@ package com.hermesandroid.relay.voice
 
 import android.app.Application
 import android.util.Log
+import com.hermesandroid.relay.wake.MicrophoneOwnershipCoordinator
+import com.hermesandroid.relay.wake.MicrophoneOwner
 import com.hermesandroid.relay.audio.BargeInListener
 import com.hermesandroid.relay.audio.VadEngine
 import com.hermesandroid.relay.audio.VoicePlayer
@@ -81,6 +83,7 @@ class VoiceViewModelBargeInTest {
 
     @Before
     fun setUp() {
+        MicrophoneOwnershipCoordinator.resetForTest()
         Dispatchers.setMain(mainDispatcher)
 
         // Static stubs for android.util.Log — [VoiceViewModel] logs on
@@ -134,6 +137,7 @@ class VoiceViewModelBargeInTest {
 
     @After
     fun tearDown() {
+        MicrophoneOwnershipCoordinator.resetForTest()
         Dispatchers.resetMain()
         unmockkStatic(Log::class)
     }
@@ -161,6 +165,106 @@ class VoiceViewModelBargeInTest {
             bargeInListenerFactory = { _ -> bargeInListener },
         )
         return vm
+    }
+
+    @Test
+    fun `manual entry waits for wake teardown in every interaction mode`() = runTest {
+        val cases = listOf(VoiceEngineMode.HermesVoiceOutput, VoiceEngineMode.RealtimeAgent)
+            .flatMap { engine -> InteractionMode.entries.map { mode -> engine to mode } }
+        for ((startsBefore, entry) in cases.withIndex()) {
+            val (engine, mode) = entry
+            val wake = requireNotNull(MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord))
+            val vm = buildViewModel()
+            vm.setInteractionMode(mode)
+            vm.enterVoiceMode()
+            vm.setVoiceEngineModeForTest(engine)
+            vm.startListening()
+            verify(exactly = startsBefore) { recorder.startRecording() }
+            assertTrue(MicrophoneOwnershipCoordinator.voiceSessionActive.value)
+            MicrophoneOwnershipCoordinator.release(wake)
+            runCurrent()
+            verify(exactly = startsBefore + 1) { recorder.startRecording() }
+            assertNull(MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord))
+            vm.exitVoiceMode()
+            assertTrue(!MicrophoneOwnershipCoordinator.voiceSessionActive.value)
+        }
+    }
+
+    @Test
+    fun `hold release cancels capture waiting for wake without ending voice reservation`() = runTest {
+        val wake = requireNotNull(MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord))
+        val vm = buildViewModel()
+        vm.setInteractionMode(InteractionMode.HoldToTalk)
+        vm.enterVoiceMode()
+        vm.startListening()
+        vm.stopListening()
+        MicrophoneOwnershipCoordinator.release(wake)
+        runCurrent()
+        verify(exactly = 0) { recorder.startRecording() }
+        assertNull(MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord))
+        vm.exitVoiceMode()
+        assertTrue(!MicrophoneOwnershipCoordinator.voiceSessionActive.value)
+    }
+
+    @Test
+    fun `exit during wake handoff fences stale capture and a new entry still works`() = runTest {
+        val wake = requireNotNull(MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord))
+        val vm = buildViewModel()
+        vm.enterVoiceMode()
+        vm.startListening()
+        vm.exitVoiceMode()
+        MicrophoneOwnershipCoordinator.release(wake)
+        runCurrent()
+        verify(exactly = 0) { recorder.startRecording() }
+        vm.enterVoiceMode()
+        vm.startListening()
+        verify(exactly = 1) { recorder.startRecording() }
+        vm.exitVoiceMode()
+    }
+
+    @Test
+    fun `exit retains wake reservation through barge release without affecting new voice`() = runTest {
+        val vm = buildViewModel()
+        vm.enterVoiceMode()
+        vm.beginBargeInTurnForTest()
+        runCurrent()
+        val release = Job()
+        every { bargeInListener.stop() } returns release
+        vm.exitVoiceMode()
+        assertTrue(MicrophoneOwnershipCoordinator.voiceSessionActive.value)
+        vm.enterVoiceMode()
+        release.complete()
+        runCurrent()
+        assertNull(MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord))
+        vm.exitVoiceMode()
+        assertTrue(!MicrophoneOwnershipCoordinator.voiceSessionActive.value)
+    }
+
+    @Test
+    fun `clearing voice owner releases reservation and cancels pending wake handoff`() = runTest {
+        val wake = requireNotNull(MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord))
+        val vm = buildViewModel()
+        val store = androidx.lifecycle.ViewModelStore()
+        store.put("voice", vm)
+        vm.enterVoiceMode()
+        vm.startListening()
+        store.clear()
+        MicrophoneOwnershipCoordinator.release(wake)
+        runCurrent()
+        verify(exactly = 0) { recorder.startRecording() }
+        assertTrue(!MicrophoneOwnershipCoordinator.voiceSessionActive.value)
+    }
+
+    @Test
+    fun `permission failure retains wake pause until voice exits`() = runTest {
+        val vm = buildViewModel()
+        every { recorder.startRecording() } throws SecurityException("RECORD_AUDIO denied")
+        vm.enterVoiceMode()
+        vm.startListening()
+        assertEquals(VoiceState.Error, vm.uiState.value.state)
+        assertNull(MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord))
+        vm.exitVoiceMode()
+        assertTrue(!MicrophoneOwnershipCoordinator.voiceSessionActive.value)
     }
 
     // -------------------------------------------------------------------
