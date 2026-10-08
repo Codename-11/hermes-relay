@@ -3142,6 +3142,7 @@ class ChatViewModel : ViewModel() {
         val messageId = "gateway-inbound-${UUID.randomUUID()}"
         val queuedUserMessageId = "gateway-queued-user-${UUID.randomUUID()}"
         var baselineAssistantCount = 0
+        var authoritativeHistoryRequired = false
         var started = false
         var accepted = false
         var boundHandle: ActiveTurnHandle? = null
@@ -3228,7 +3229,10 @@ class ChatViewModel : ViewModel() {
             },
             // Recovery can settle a partial live bubble before durable history
             // arrives. That history repairs Chat, but is not a speech receipt.
-            onReconcileRequired = { speechReceiver = null },
+            onReconcileRequired = { authoritative ->
+                speechReceiver = null
+                authoritativeHistoryRequired = authoritative
+            },
             onComplete = {
                 val canWriteTranscript = acceptsEvent()
                 val expectedText = handler.messages.value
@@ -3251,7 +3255,9 @@ class ChatViewModel : ViewModel() {
                     speechReceiver = null
                     scheduleGatewayHistoryReconcile(
                         storedSessionId = storedSessionId,
-                        expectedAssistantText = expectedText,
+                        // A missing terminal leaves only partial live text. It
+                        // cannot be an exact-match condition for the saved answer.
+                        expectedAssistantText = expectedText.takeUnless { authoritativeHistoryRequired },
                     )
                     drainQueue()
                 } else {

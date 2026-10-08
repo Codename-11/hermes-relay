@@ -68,6 +68,7 @@ the upstream contract identifiers it depends on.
 |---|---|
 | `initial_history_bind` | Durable, profile-scoped history is already available when the client resumes and first binds its rendered transcript |
 | `ordinary_turn` | Normal message start, deltas, completion, and persisted history |
+| `quiet_turn_recovery` | Quiet tool and provider waits retain the local stream; a subsequent unsolicited turn missing its final frame settles from exact server state and HTTP history |
 | `notification_terminal_outcomes` | Successful, failed, and interrupted terminal envelopes remain distinguishable for detached-turn alerts |
 | `unsolicited_voice_completions` | One submitted turn followed by live same-session process, watch, and delegation answers, including duplicate start/terminal frames; Standard Voice receives each admitted answer once |
 | `clarify_legacy` | Top-level single question and unkeyed `clarify.respond` |
@@ -89,6 +90,14 @@ the upstream contract identifiers it depends on.
 | `active_status_profile_scope` | A row has no profile metadata and a caller profile hint has no effect; the client must use exact client-held ownership and reject invented attribution |
 | `active_status_unsupported` | An older Gateway returns JSON-RPC method-not-found; the client retains Unknown rather than inventing Idle or Working |
 | `cross_client_observation` | A second client observes a Desktop-owned working session through active status and history without resume, activate, submit, or interrupt; the producing client receives the terminal event |
+
+The activation and active-list contracts also cover a start frame lost during
+socket replacement. `GatewayChatClientTest` verifies that exact running activation
+establishes activity proof before a later scoped Idle state, while Idle alone
+cannot complete a pre-start turn. The embedded real-socket fixture in
+`GatewayForegroundRecoveryInstrumentedTest#lostStartRunningActivation_recoversEndedTurnFromHistory`
+verifies that the rendered stream settles and loads the saved answer without a
+duplicate submit or an interrupt, even when no original turn frame was received.
 
 Activity receipts join canonical completion metadata by exact delegation identity
 within the connection/profile/session owner. Process notices use the canonical
@@ -181,6 +190,16 @@ history read, and authoritative settled state. Evidence output is bounded and
 redacted.
 
 ## Current-upstream conformance
+
+For quiet-turn regression coverage, run the `quiet_turn_recovery` fixture and
+select `GatewayExternalFixtureInstrumentedTest#quietTurns_surviveToolAndProviderSilenceAndRecoverUnsolicitedHistory`
+on `standardPhoneApi36`, with `gatewayFixtureBaseUrl` pointing to the host fixture
+(for example `http://10.0.2.2:8765` on the emulator). The adapter shortens only
+the diagnostic/probe interval, observes streaming across multiple quiet windows,
+then verifies final HTTP history, one submit, and zero interrupts or activations.
+The focused `GatewayChatClientTest` wire suite additionally covers read-only Idle
+settlement of exact unsolicited streams, delayed/stale snapshots, pending asks,
+explicit Stop, and route replacement. These lanes make no physical-device claim.
 
 The `secure_link_gateway_auth` scenario exercises query and subprotocol ticket
 admission through the real Secure Link proxy, single-use rejection, a completed

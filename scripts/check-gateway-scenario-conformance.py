@@ -206,14 +206,14 @@ def _check_session_initialization(server: SourceFile) -> CheckResult:
         return CheckResult(SESSION_INITIALIZATION, False, (), str(exc))
 
 
-def _check_settled_info(server: SourceFile) -> CheckResult:
+def _check_settled_info(server: SourceFile, helper_source: SourceFile, turn_source: SourceFile) -> CheckResult:
     contract = GATEWAY_SETTLED_INFO
     try:
         info = server.function("_session_info")
-        helper = server.function("_emit_settled_session_info")
-        turn = server.function("_run_prompt_submit")
+        helper = helper_source.function("_emit_settled_session_info")
+        turn = turn_source.function("_run_prompt_submit")
         info_strings = _string_constants(info)
-        helper_text = server.segment(helper)
+        helper_text = helper_source.segment(helper)
         if "running" not in info_strings or ".get(\"running\")" not in server.segment(info):
             raise ValueError("session.info no longer derives running from live session state")
         if '"session.info"' not in helper_text or "_session_info(" not in helper_text:
@@ -229,8 +229,8 @@ def _check_settled_info(server: SourceFile) -> CheckResult:
             True,
             (
                 server.evidence(info, "session.info includes running"),
-                server.evidence(helper, "settled session.info emission"),
-                f"{SERVER}:{running_line}:running=false before line {settle_line}",
+                helper_source.evidence(helper, "settled session.info emission"),
+                f"{turn_source.relative}:{running_line}:running=false before line {settle_line}",
             ),
         )
     except ValueError as exc:
@@ -586,7 +586,8 @@ def _check_server_requests(root: Path) -> CheckResult:
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id == "server_request" and node.args and isinstance(node.args[0], ast.Constant)}
     passed = (
-        expected == declared
+        # Additive request methods can be declined with JSON-RPC method-not-found.
+        expected <= declared
         and {"jsonrpc", "id", "method", "params", "session_id"} <= _string_constants(frame)
         and "answers" in _string_constants(snapshot)
         and {"error", "result", "answers"} <= _string_constants(resolve)
@@ -661,7 +662,13 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
             SourceFile(root, "tui_gateway/prompt_turn.py")
             if (root / "tui_gateway/prompt_turn.py").is_file() else server
         ),
-        GATEWAY_SETTLED_INFO: lambda: _check_settled_info(server),
+        GATEWAY_SETTLED_INFO: lambda: _check_settled_info(
+            server,
+            SourceFile(root, "tui_gateway/session_workdir.py")
+            if (root / "tui_gateway/session_workdir.py").is_file() else server,
+            SourceFile(root, "tui_gateway/prompt_turn.py")
+            if (root / "tui_gateway/prompt_turn.py").is_file() else server,
+        ),
         SESSION_ACTIVATE: lambda: _check_activate(server, methods),
         SESSION_RESUME: lambda: _check_resume(methods),
         SESSION_ACTIVE_LIST: lambda: _check_active_list(server, methods),

@@ -438,6 +438,38 @@ class GatewayForegroundRecoveryInstrumentedTest {
     }
 
     @Test
+    fun lostStartRunningActivation_recoversEndedTurnFromHistory() {
+        fixture.recoveryRunning = true
+        fixture.activeSessionStatus = "working"
+        viewModel.sendMessage("Recover before the first frame")
+        fixture.awaitRpc("prompt.submit")
+        // No start, delta or completion reaches Android on the original socket.
+        serverSocket.close(1011, "fixture lost start")
+        serverSocket = fixture.awaitServerSocket()
+        fixture.awaitRpc("session.activate")
+
+        persistedHistory = listOf(
+            MessageItem(id = "lost-start-user", sessionId = STORED_SESSION_ID,
+                role = "user", content = JsonPrimitive("Recover before the first frame")),
+            MessageItem(id = PERSISTED_ANSWER_ID, sessionId = STORED_SESSION_ID,
+                role = "assistant", content = JsonPrimitive(AUTHORITATIVE_ANSWER)),
+        )
+        fixture.activeSessionStatus = "idle"
+        compose.waitUntil(5_000) {
+            runBlocking { gatewayClient.listActiveSessions() }
+            !handler.isStreaming.value && !gatewayClient.hasActiveTurn() &&
+                handler.messages.value.any { it.id == PERSISTED_ANSWER_ID }
+        }
+        compose.onNodeWithTag("stream-state").assertTextEquals("IDLE")
+        compose.onNodeWithTag("message-$PERSISTED_ANSWER_ID")
+            .assertTextEquals("${MessageRole.ASSISTANT.name}:$AUTHORITATIVE_ANSWER")
+        assertEquals(1, fixture.rpcCount("prompt.submit"))
+        assertEquals(1, fixture.rpcCount("session.activate"))
+        assertEquals(0, fixture.rpcCount("session.interrupt"))
+        assertEquals(0, fixture.requestsTo("/v1/chat/completions"))
+    }
+
+    @Test
     fun terminalGapActiveList_settlesExactOwnedTurnAndRendersAuthoritativeHistory() {
         viewModel.sendMessage("Run an Android-owned task")
         fixture.awaitRpc("prompt.submit")

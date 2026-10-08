@@ -3741,11 +3741,16 @@ prewarm; it did not cover this already-active turn state.
 
 **Decision.** A Gateway turn may settle from `session.activate`, exact-session
 `session.info`, or an exact live/durable `session.active_list` row only when the
-turn is Android-owned, has already received turn-scoped activity, and upstream
-reports `running=false` or Idle. The active-list request captures the exact turn
+turn has already received exact-session turn-scoped activity or its owned
+reconnect activation confirmed `running=true` without a queued successor, and
+upstream subsequently reports `running=false` or Idle. The active-list request captures the exact turn
 and its progress generation; a session/profile switch, cancellation, newer turn,
 or intervening live event rejects the delayed snapshot. Pre-start idle snapshots
-and passively observed Desktop/TUI turns are never eligible. This backstop is a
+are never eligible. A lost start frame can therefore recover through positive
+running proof without treating an Idle-only startup snapshot as completion.
+Exact unsolicited turns already admitted to the local stream
+may also settle from read-only state; this grants no authority to attach or stop
+the producing client's runtime. This backstop is a
 successful server-owned settle, not cancellation or transport failure: Android
 completes the local stream, keeps the durable session identity, performs bounded
 identity-fenced history reconciliation, consumes one late terminal without
@@ -3765,6 +3770,23 @@ Normal terminal delivery is unchanged, queued turns retain their existing
 ownership, Relay remains optional, and unmodified upstream compatibility is
 preserved. Physical certification across the reported device/network matrix
 remains tracked in `docs/project/TODO.md`.
+
+**Quiet-turn policy (2026-10-07).** Client-visible silence is not evidence that a
+turn failed. The idle watchdog performs a read-only `session.active_list` check
+using the same exact runtime/durable identity and progress-generation fences.
+Working, Waiting, Starting, absent, unsupported, and failed reads do not imply
+completion. Exact Idle settles the local stream and reconciles history.
+Confirmed server-state completion permits an authoritative bounded history read
+when the final text is unknown. Partial live text must not require an exact saved
+text match, nor must the count grow when an older row leaves the latest window.
+Ordinary completion after reconnect retains the final-text persistence check.
+Quiet tools, provider waits, and compaction retain the stream; there are no per-kind
+kill leases or short post-retarget failure deadline. Pending native requests
+retain their server-owned deadline. Explicit cancellation remains the sole
+turn-handle path to `session.interrupt`; unsolicited reconnect warms only the
+socket and reads the existing open-request snapshot to restore or retire pending
+asks without activating the producer's runtime.
+Client shutdown detaches an unsolicited stream without cancelling its runtime.
 
 ---
 

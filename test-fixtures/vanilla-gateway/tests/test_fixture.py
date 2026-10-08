@@ -18,6 +18,19 @@ from vanilla_gateway.evidence import EvidenceLog  # noqa: E402
 
 
 class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_quiet_turns_finish_and_publish_authoritative_unsolicited_state(self) -> None:
+        fixture, base_url = await self.start("quiet_turn_recovery")
+        ws, _ = await self.connect(base_url)
+        await self.rpc(ws, 1, "prompt.submit", {"text": "Exercise quiet turns."})
+        frames = await self.frames_until(ws, lambda f: f.get("params", {}).get("type") == "session.info")
+        events = [f["params"] for f in frames if f.get("method") == "event"]
+        self.assertEqual(2, sum(e["type"] == "message.start" for e in events))
+        self.assertEqual(1, sum(e["type"] == "message.complete" for e in events))
+        self.assertFalse(events[-1]["payload"]["running"])
+        self.assertFalse(fixture.running)
+        async with self.session.get(f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages") as response:
+            self.assertIn("Background work finished quietly.", await response.text())
+
     async def test_dashboard_setup_signin_expiry_and_loopback_are_distinct(self) -> None:
         fixture, base_url = await self.start("dashboard_onboarding")
         async with self.session.get(f"{base_url}/api/status") as response:
