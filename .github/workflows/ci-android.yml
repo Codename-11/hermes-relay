@@ -204,6 +204,7 @@ jobs:
             --tests com.hermesandroid.relay.notifications.InteractionRequestNotifierTest \
             --tests com.hermesandroid.relay.ui.ChatNotificationNavigationTest \
             --tests com.hermesandroid.relay.ui.ChatNotificationNavigationUiTest \
+            --tests com.hermesandroid.relay.ui.StartupLoadingThemeTest \
             --tests com.hermesandroid.relay.viewmodel.ConnectionViewModelChatAlertsTest \
             --tests com.hermesandroid.relay.screenshots.ChatComposerProgressScreenshotTest \
             --tests com.hermesandroid.relay.screenshots.UnreadConversationsScreenshotTest \

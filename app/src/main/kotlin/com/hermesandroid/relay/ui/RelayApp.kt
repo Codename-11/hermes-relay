@@ -696,8 +696,21 @@ sealed class Screen(
 }
 
 @Composable
-private fun SupervisedStartupLoadingScreen() {
+internal fun SupervisedStartupLoadingScreen() {
     HermesRelayTheme(themePreference = "dark") {
+        SupervisedStartupLoadingContent()
+    }
+}
+
+@Composable
+internal fun RelayNavigationLoadingCover(
+    navigationHydrated: Boolean,
+    routeContentAllowed: Boolean,
+    currentRoute: String?,
+) {
+    if (shouldCoverRelayNavigation(navigationHydrated, routeContentAllowed, currentRoute)) {
+        // Keep the graph mounted while covering restored parent-only content
+        // and policy-owner hydration with an opaque fail-closed surface.
         SupervisedStartupLoadingContent()
     }
 }
@@ -3824,17 +3837,11 @@ fun RelayApp() {
                     )
                 }
             }
-                if (shouldCoverRelayNavigation(
-                        navigationHydrated = relayNavigationHydrated,
-                        routeContentAllowed = routeContentAllowed,
-                        currentRoute = currentRoute,
-                    )
-                ) {
-                    // Keep the graph mounted so the redirect can complete, but
-                    // cover restored parent-only content and policy-owner
-                    // hydration with an opaque fail-closed surface.
-                    SupervisedStartupLoadingContent()
-                }
+                RelayNavigationLoadingCover(
+                    navigationHydrated = relayNavigationHydrated,
+                    routeContentAllowed = routeContentAllowed,
+                    currentRoute = currentRoute,
+                )
                 }
             } // end bridge-return wrapper column
             } // end CompositionLocalProvider
