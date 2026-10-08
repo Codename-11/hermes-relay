@@ -23,6 +23,9 @@ in existing logs; `cua_driver` is now included in the audit entry type.
   the correction; audit redaction and outcome tests remain passing.
 - Full desktop suite: 205 passed, one opt-in native test skipped.
 - CLI type-check/build and production tray frontend build pass.
+- Canonical website screenshots were recaptured; all five images were unchanged.
+  The source fingerprint now includes the label formatter. Its regression test,
+  website asset checks, and full website build pass.
 - Opt-in Windows CUA lane passes using Driver 0.28.2, including click, set-value,
   scroll, fresh snapshots, one-use rejection, and labels for the returned backend.
 - Rendered the actual tray React Activity list and event timeline in the local

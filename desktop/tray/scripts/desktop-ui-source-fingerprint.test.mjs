@@ -57,6 +57,13 @@ test('production UI changes still invalidate screenshots', async t => {
   assert.notEqual((await f.fingerprint()).digest, before)
 })
 
+test('computer activity label changes invalidate screenshots', async t => {
+  const f = await fixture(t)
+  const before = (await f.fingerprint()).digest
+  await writeFile(join(f.root, 'desktop/tray/ui/computerActivity.ts'), 'changed backend labels\n')
+  assert.notEqual((await f.fingerprint()).digest, before)
+})
+
 test('text line endings do not cause platform-only drift', async t => {
   const f = await fixture(t)
   const before = await f.fingerprint()
