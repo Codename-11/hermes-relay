@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Desktop computer control accepts the current CUA Driver element token format. Element actions such as click, set value, and scroll no longer fail with a transport error when CUA Driver 0.20 or newer returns `<snapshot>:<index>` element handles; the legacy token form remains accepted.
 - Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
 - Android Relay sessions distinguish shortening from operator-approved renewal, retain actionable update failures, and expose accessible pairing duration controls. (#659)
-
+- Android Voice Stop leaves voice mode without cancelling a response after chat or Realtime transport has accepted it; hard interruption and lifecycle exits still cancel.
 - Android avoids a startup crash when profile state arrives during connection setup.
 - Android refreshes background-alert permission defaults after onboarding and keeps notification delivery tied to the original connection, profile, and conversation across navigation.
 - Replies from conversations left running get separate notification slots; opening one conversation preserves alerts from others.
