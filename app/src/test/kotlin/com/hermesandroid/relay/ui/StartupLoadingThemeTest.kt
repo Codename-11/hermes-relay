@@ -40,7 +40,7 @@ import org.robolectric.annotation.GraphicsMode
 
 @RunWith(AndroidJUnit4::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
-@Config(sdk = [36], qualifiers = "w360dp-h720dp-xhdpi-notnight")
+@Config(sdk = [36], qualifiers = "w360dp-h720dp-notnight-xhdpi")
 class StartupLoadingThemeTest {
     @get:Rule val compose = createComposeRule()
 
@@ -48,10 +48,10 @@ class StartupLoadingThemeTest {
     @Test fun autoLightSurvivesLoadingTransitions() = exercise("auto", false)
     @Test fun darkSurvivesLoadingTransitions() = exercise("dark", true)
 
-    @Test @Config(qualifiers = "w360dp-h720dp-xhdpi-night")
+    @Test @Config(qualifiers = "w360dp-h720dp-night-xhdpi")
     fun autoDarkSurvivesLoadingTransitions() = exercise("auto", true)
 
-    @Test @Config(qualifiers = "w360dp-h720dp-xhdpi-night")
+    @Test @Config(qualifiers = "w360dp-h720dp-night-xhdpi")
     fun explicitLightOverridesSystemDark() = exercise("light", false)
 
     @Test fun fixedDarkPresetRetainsItsOwnPalette() = exercise("light", true, appThemeId = AppThemes.Mono.id)
