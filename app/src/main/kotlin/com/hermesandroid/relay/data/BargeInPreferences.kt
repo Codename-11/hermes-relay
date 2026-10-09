@@ -23,8 +23,11 @@ import kotlinx.coroutines.flow.map
  * B4):
  *
  *  - [enabled] — master toggle for the whole barge-in path. When false, the
- *    listener never starts and TTS plays uninterrupted. Default on matches
- *    upstream Hermes full-duplex voice; users can opt out here.
+ *    listener never starts and TTS plays uninterrupted. Default off: on a
+ *    loudspeaker the gate can confirm the reply's own speech as an
+ *    interruption, which cancels the turn and drops the unspoken remainder.
+ *    Barge-in stays an explicit opt-in until echo/self-recording hardening
+ *    lands (see VoiceModePreset); an explicit user choice is preserved.
  *
  *  - [sensitivity] — maps to Silero VAD threshold + hysteresis tuning inside
  *    [com.hermesandroid.relay.audio.VadEngine]. [BargeInSensitivity.Off] is
@@ -72,7 +75,7 @@ enum class BargeInSensitivity {
     High,
 }
 
-const val DEFAULT_ENABLED: Boolean = true
+const val DEFAULT_ENABLED: Boolean = false
 val DEFAULT_SENSITIVITY: BargeInSensitivity = BargeInSensitivity.Default
 const val DEFAULT_RESUME_AFTER_INTERRUPTION: Boolean = true
 const val DEFAULT_THRESHOLD_MULTIPLIER: Float = 3f

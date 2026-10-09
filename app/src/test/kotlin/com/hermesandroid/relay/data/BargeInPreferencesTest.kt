@@ -30,9 +30,9 @@ class BargeInPreferencesTest {
     // --- Defaults ---
 
     @Test
-    fun defaults_enabled_isTrue() = runTest {
+    fun defaults_enabled_isFalse() = runTest {
         val prefs = repo.flow.first()
-        assertTrue("enabled should match upstream default", prefs.enabled)
+        assertFalse("barge-in must be an explicit opt-in", prefs.enabled)
     }
 
     @Test
@@ -52,7 +52,7 @@ class BargeInPreferencesTest {
         // The data class and the repo defaults must agree — belt-and-suspenders
         // because the repo re-materializes defaults on every read.
         val fromDataClass = BargeInPreferences()
-        assertEquals(true, fromDataClass.enabled)
+        assertEquals(false, fromDataClass.enabled)
         assertEquals(BargeInSensitivity.Default, fromDataClass.sensitivity)
         assertEquals(true, fromDataClass.resumeAfterInterruption)
         assertEquals(3f, fromDataClass.thresholdMultiplier)
@@ -68,6 +68,25 @@ class BargeInPreferencesTest {
         assertTrue(repo.flow.first().enabled)
 
         repo.setEnabled(false)
+        assertFalse(repo.flow.first().enabled)
+    }
+
+    @Test
+    fun explicitOptIn_isPreservedAndUnrelatedChangesDoNotResetIt() = runTest {
+        assertFalse(repo.flow.first().enabled)
+
+        repo.setEnabled(true)
+        repo.setSensitivity(BargeInSensitivity.High)
+        repo.setPlaybackGraceMs(750L)
+
+        assertTrue("an explicit opt-in must survive other preference writes", repo.flow.first().enabled)
+    }
+
+    @Test
+    fun explicitOptOut_isPreserved() = runTest {
+        repo.setEnabled(false)
+        repo.setSensitivity(BargeInSensitivity.Low)
+
         assertFalse(repo.flow.first().enabled)
     }
 
