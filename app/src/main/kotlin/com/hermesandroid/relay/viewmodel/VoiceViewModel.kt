@@ -5994,6 +5994,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     0
                 },
             hasPendingSynthFiles = pendingTtsFiles.isNotEmpty(),
+            // The play worker drops a file from pendingTtsFiles as soon as
+            // Media3 accepts it, so the file still being heard is visible only
+            // through the file player (`player` above is the PCM player).
+            filePlaybackActive = this.player?.isPlaying() == true,
             realtimePlaybackRemainingMs = effectiveRemaining,
             realtimeTailGuardRemainingMs = continuousResumeTailGuardRemainingMs(),
         )
@@ -7703,11 +7707,12 @@ internal fun decideAgentAudioCompletion(
     hasPendingSynthFiles: Boolean,
     realtimePlaybackRemainingMs: Long,
     realtimeTailGuardRemainingMs: Long,
+    filePlaybackActive: Boolean = false,
 ): AgentAudioCompletionDecision {
     if (!voiceMode || !observerStopped) {
         return AgentAudioCompletionDecision(finishNow = false)
     }
-    if (pendingTtsWork > 0 || hasPendingSynthFiles) {
+    if (pendingTtsWork > 0 || hasPendingSynthFiles || filePlaybackActive) {
         return AgentAudioCompletionDecision(finishNow = false, retryDelayMs = 100L)
     }
     val audioDelayMs = kotlin.math.max(

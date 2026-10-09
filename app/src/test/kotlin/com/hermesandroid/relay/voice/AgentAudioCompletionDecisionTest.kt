@@ -55,6 +55,22 @@ class AgentAudioCompletionDecisionTest {
     }
 
     @Test
+    fun `retries while the media file player is still playing the last synthesized file`() {
+        val decision = decideAgentAudioCompletion(
+            voiceMode = true,
+            observerStopped = true,
+            pendingTtsWork = 0,
+            hasPendingSynthFiles = false,
+            realtimePlaybackRemainingMs = 0,
+            realtimeTailGuardRemainingMs = 0,
+            filePlaybackActive = true,
+        )
+
+        assertFalse(decision.finishNow)
+        assertEquals(100L, decision.retryDelayMs)
+    }
+
+    @Test
     fun `finishes when stream tts and audio are drained`() {
         val decision = decideAgentAudioCompletion(
             voiceMode = true,
