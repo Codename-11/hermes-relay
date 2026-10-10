@@ -24,7 +24,7 @@ class FcmSenderUnitTests(unittest.TestCase):
             "type": "service_account",
             "project_id": "demo",
             "client_email": "a@b.iam.gserviceaccount.com",
-            "private_key": "[REDACTED PRIVATE KEY]\n",
+            "private_key": "k",
         }
         env = {"RELAY_FCM_SERVICE_ACCOUNT_JSON": json.dumps(sa)}
         loaded = load_service_account_from_env(env)
@@ -143,7 +143,7 @@ class FcmSenderUnitTests(unittest.TestCase):
         sa = {
             "project_id": "demo",
             "client_email": "a@b.iam.gserviceaccount.com",
-            "private_key": "-----BEGIN PRIVATE KEY-----\nK\n-----END PRIVATE KEY-----\n",
+            "private_key": "k",
         }
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
