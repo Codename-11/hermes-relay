@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - Unread markers in the session drawer and counts on profiles and the chat header make background completions easier to find.
 - Built-in English tool updates can be muted independently of assistant readback on Standard and Relay voice output.
+- **Sideload optional BYO FCM push wake for offline proactive delivery.** When the phone has no live Relay WebSocket, the host can send a high-priority data wake so the app reconnects and drains the offline buffer. Firebase client config is entered at runtime on the phone (Settings → Threads → Push wake); the Admin service account stays on the host (Dashboard Push wake, CLI install, or default secrets path). Google Play builds keep a no-op controller.
+- Secure Link reverse-proxies Relay HTTP under `/relay/*` (including `POST /push/token`) and Dashboard transport allowlists the push-token route so registration works behind pinned TLS.
 
 ### Changed
 
