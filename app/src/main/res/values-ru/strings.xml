@@ -1467,6 +1467,24 @@
     <string name="proactive_about">О программе</string>
     <string name="proactive_about_desc">Когда включено, ваш телефон сообщает Relay, что он открыт для сообщений, инициированных агентом. Агент доставляет их через то же сопряженное соединение, которое Relay уже использует — никаких новых разрешений, кроме уведомлений.</string>
     <string name="proactive_about_server_note">Ваш сервер также должен включить платформу телефона (установить PHONE_ENABLED на сервере). Пока обе стороны не включены и телефон не сопряжен, ничего не отправляется.</string>
+
+    <string name="proactive_fcm_title">Push-пробуждение (BYO FCM)</string>
+    <string name="proactive_fcm_desc">Необязательно. Используйте свой проект Firebase, чтобы Hermes мог разбудить телефон, когда живое соединение недоступно. Полный текст по-прежнему приходит через Relay после переподключения. Только sideload; нужны Google Play Services.</string>
+    <string name="proactive_fcm_enable">Включить FCM-пробуждение</string>
+    <string name="proactive_fcm_paste_json">Вставить google-services.json</string>
+    <string name="proactive_fcm_import_json">Импортировать поля JSON</string>
+    <string name="proactive_fcm_project_id">ID проекта</string>
+    <string name="proactive_fcm_application_id">ID приложения Mobile SDK</string>
+    <string name="proactive_fcm_api_key">API-ключ</string>
+    <string name="proactive_fcm_sender_id">GCM / messaging sender ID</string>
+    <string name="proactive_fcm_save">Сохранить настройки FCM</string>
+    <string name="proactive_fcm_clear">Очистить настройки FCM</string>
+    <string name="proactive_fcm_token_status">Токен устройства: %1$s</string>
+    <string name="proactive_fcm_not_paired">Сопрягите Relay, чтобы зарегистрировать токен устройства на хосте.</string>
+    <string name="proactive_fcm_mac_note">На этом хосте Hermes: Dashboard → Hermes-Relay → Settings → Push wake — выберите JSON сервисного аккаунта Firebase Admin (или: python -m plugin.relay.fcm_sender install ./sa.json). Никогда не кладите service account в приложение; телефону нужен только клиентский google-services.json.</string>
+    <string name="proactive_fcm_wake_title">Hermes</string>
+    <string name="proactive_fcm_wake_body">У Hermes есть сообщение — откройте, чтобы переподключиться и доставить.</string>
+    <string name="proactive_fcm_wake_channel">Push-пробуждение</string>
     <string name="profile_inspector_back">Назад</string>
     <string name="profile_inspector_refresh_all">Обновить все</string>
     <string name="profile_inspector_title">Инспектировать %1$s</string>

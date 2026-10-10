@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- **Sideload optional BYO FCM push wake for offline proactive delivery.** When the phone has no live Relay WebSocket, the host can send a high-priority data wake so the app reconnects and drains the offline buffer. Firebase client config is entered at runtime on the phone (Settings → Threads → Push wake); the Admin service account stays on the host (Dashboard Push wake, CLI install, or default secrets path). Google Play builds keep a no-op controller.
+- Secure Link reverse-proxies Relay HTTP under `/relay/*` (including `POST /push/token`) and Dashboard transport allowlists the push-token route so registration works behind pinned TLS.
+
 - Android marks unread completed conversations in the session drawer and shows unread conversation counts on profiles and the chat header.
 - Reply notifications show the owning agent's official profile name and cached avatar, plus the conversation title.
 

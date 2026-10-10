@@ -79,6 +79,15 @@ import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.data.proactiveEnabledFlow
 import com.hermesandroid.relay.data.setProactiveEnabled
+import com.hermesandroid.relay.data.fcmPushPreferencesFlow
+import com.hermesandroid.relay.data.setFcmClientConfig
+import com.hermesandroid.relay.data.setFcmPushEnabled
+import com.hermesandroid.relay.data.setFcmHideNotificationContent
+import com.hermesandroid.relay.data.setFcmLastToken
+import com.hermesandroid.relay.data.clearFcmClientConfig
+import com.hermesandroid.relay.data.FcmClientConfig
+import com.hermesandroid.relay.data.FcmPushPreferences
+import com.hermesandroid.relay.data.FcmClientConfigParser
 import com.hermesandroid.relay.data.DEFAULT_HIDDEN_SOURCES
 import com.hermesandroid.relay.data.ProactiveInboxEntry
 import com.hermesandroid.relay.data.ProactiveInboxRepository
@@ -3550,6 +3559,116 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    private val fcmPushController by lazy {
+        com.hermesandroid.relay.push.createFcmPushController(getApplication())
+    }
+
+    val fcmPushPreferences: StateFlow<com.hermesandroid.relay.data.FcmPushPreferences> =
+        getApplication<Application>().fcmPushPreferencesFlow()
+            .stateIn(
+                viewModelScope,
+                SharingStarted.WhileSubscribed(5_000),
+                com.hermesandroid.relay.data.FcmPushPreferences(),
+            )
+
+    val fcmSupported: Boolean get() = fcmPushController.isSupported
+
+    private val _fcmStatusMessage = MutableStateFlow("")
+    val fcmStatusMessage: StateFlow<String> = _fcmStatusMessage.asStateFlow()
+
+    /**
+     * Persist BYO Firebase client fields, optionally enable FCM, init runtime
+     * Firebase, and upload the device token when paired.
+     */
+    fun saveFcmClientConfig(
+        config: com.hermesandroid.relay.data.FcmClientConfig,
+        enabled: Boolean,
+    ) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            app.setFcmClientConfig(config)
+            app.setFcmPushEnabled(enabled)
+            val status = fcmPushController.applyConfig(config, enabled)
+            _fcmStatusMessage.value = status
+            if (!enabled) {
+                relayHttpClient.registerPushToken(token = "").onFailure { }
+                app.setFcmLastToken("")
+                return@launch
+            }
+            val token = fcmPushController.currentToken()
+            if (token.isNotBlank()) {
+                app.setFcmLastToken(token)
+                val result = relayHttpClient.registerPushToken(
+                    token = token,
+                    projectId = config.projectId,
+                    includePreview = !fcmPushPreferences.value.hideNotificationContent,
+                )
+                _fcmStatusMessage.value = if (result.isSuccess) {
+                    "FCM ready — token registered with relay"
+                } else {
+                    "FCM ready locally; relay register failed: ${result.exceptionOrNull()?.message}"
+                }
+            } else if (status == "FCM ready") {
+                _fcmStatusMessage.value = "FCM ready — waiting for device token"
+            }
+        }
+    }
+
+    fun clearFcmClientConfig() {
+        viewModelScope.launch {
+            fcmPushController.clear()
+            getApplication<Application>().clearFcmClientConfig()
+            relayHttpClient.registerPushToken(token = "")
+            _fcmStatusMessage.value = "FCM cleared"
+        }
+    }
+
+    /**
+     * Hide message content in notifications (FCM wake + chat replies). Default
+     * is show preview. When toggled, re-registers the device token so the Mac
+     * omits or includes ``preview`` on the FCM wire.
+     */
+    fun setFcmHideNotificationContent(hide: Boolean) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            app.setFcmHideNotificationContent(hide)
+            val prefs = fcmPushPreferences.value
+            if (!prefs.enabled || !prefs.config.isComplete) return@launch
+            val token = fcmPushController.currentToken().ifBlank { prefs.lastToken }
+            if (token.isBlank()) return@launch
+            relayHttpClient.registerPushToken(
+                token = token,
+                projectId = prefs.config.projectId,
+                includePreview = !hide,
+            ).onSuccess {
+                _fcmStatusMessage.value = if (hide) {
+                    "Notifications will hide message content"
+                } else {
+                    "Notifications will show message preview"
+                }
+            }
+        }
+    }
+
+    /** Re-upload token after pair / token refresh. */
+    fun syncFcmTokenIfNeeded() {
+        viewModelScope.launch {
+            val prefs = fcmPushPreferences.value
+            if (!prefs.enabled || !prefs.config.isComplete || !fcmPushController.isSupported) {
+                return@launch
+            }
+            fcmPushController.applyConfig(prefs.config, enabled = true)
+            val token = fcmPushController.currentToken().ifBlank { prefs.lastToken }
+            if (token.isBlank()) return@launch
+            getApplication<Application>().setFcmLastToken(token)
+            relayHttpClient.registerPushToken(
+                token = token,
+                projectId = prefs.config.projectId,
+                includePreview = !prefs.hideNotificationContent,
+            )
+        }
+    }
+
     /** Clear the Hermes inbox of agent-initiated messages. */
     fun clearProactiveInbox() {
         viewModelScope.launch { proactiveInbox.clear() }
@@ -4589,6 +4708,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 refreshPhoneThreadChatIds()
                 // Check whether the relay's plugin is behind the latest release.
                 refreshRelayUpdateInfo()
+                // Re-register BYO FCM token after pair / reconnect.
+                syncFcmTokenIfNeeded()
             }
         }
         // React to the toggle flipping while already connected. drop(1) skips
