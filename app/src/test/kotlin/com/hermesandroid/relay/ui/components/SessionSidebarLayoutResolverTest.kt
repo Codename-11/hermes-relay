@@ -65,35 +65,62 @@ class SessionSidebarLayoutResolverTest {
         )
     }
 
-    // resolveDrawerGesturesEnabled — edge-swipe must not open the modal
-    // drawer when supervised mode gates conversation history or when the
-    // pinned sidebar already renders as the persistent sessions surface.
+    // resolveDrawerGesturesEnabled — no swipe-to-open while closed (protects
+    // horizontal code/table scroll); swipe/scrim only while open; still off
+    // when supervised history is gated or the pinned sidebar owns sessions.
 
     @Test
-    fun gestures_enabledInDefaultState() {
+    fun gestures_enabledWhenDrawerOpenInDefaultState() {
         assertTrue(
-            resolveDrawerGesturesEnabled(supervisedHistoryAllowed = true, pinnedSidebar = false),
+            resolveDrawerGesturesEnabled(
+                supervisedHistoryAllowed = true,
+                pinnedSidebar = false,
+                drawerOpen = true,
+            ),
         )
     }
 
     @Test
-    fun gestures_disabledWhenSupervisedHistoryBlocked() {
+    fun gestures_disabledWhenDrawerClosed() {
         assertFalse(
-            resolveDrawerGesturesEnabled(supervisedHistoryAllowed = false, pinnedSidebar = false),
+            resolveDrawerGesturesEnabled(
+                supervisedHistoryAllowed = true,
+                pinnedSidebar = false,
+                drawerOpen = false,
+            ),
         )
     }
 
     @Test
-    fun gestures_disabledWhilePinnedSidebarActive() {
+    fun gestures_disabledWhenSupervisedHistoryBlockedEvenIfOpen() {
         assertFalse(
-            resolveDrawerGesturesEnabled(supervisedHistoryAllowed = true, pinnedSidebar = true),
+            resolveDrawerGesturesEnabled(
+                supervisedHistoryAllowed = false,
+                pinnedSidebar = false,
+                drawerOpen = true,
+            ),
+        )
+    }
+
+    @Test
+    fun gestures_disabledWhilePinnedSidebarActiveEvenIfOpen() {
+        assertFalse(
+            resolveDrawerGesturesEnabled(
+                supervisedHistoryAllowed = true,
+                pinnedSidebar = true,
+                drawerOpen = true,
+            ),
         )
     }
 
     @Test
     fun gestures_disabledWhenSupervisedAndPinnedBothActive() {
         assertFalse(
-            resolveDrawerGesturesEnabled(supervisedHistoryAllowed = false, pinnedSidebar = true),
+            resolveDrawerGesturesEnabled(
+                supervisedHistoryAllowed = false,
+                pinnedSidebar = true,
+                drawerOpen = true,
+            ),
         )
     }
 }
