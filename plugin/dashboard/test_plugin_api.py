@@ -772,7 +772,7 @@ class PushTests(PluginApiTestCase):
             "type": "service_account",
             "project_id": "unit-proj",
             "client_email": "unit@example.iam.gserviceaccount.com",
-            "private_key": "-----BEGIN PRIVATE KEY-----\nK\n-----END PRIVATE KEY-----\n",
+            "private_key": "k",
         }
         resp = self.client.post("/push/service-account", json={"json": sa})
         self.assertEqual(resp.status_code, 200, resp.text)
