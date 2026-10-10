@@ -121,8 +121,6 @@ class GatewayChatClient(
     private val turnIdleTimeoutMs: Long = TURN_TIMEOUT_MS,
     /** Test seam — lazy session.create/resume readiness barrier. */
     private val sessionReadyTimeoutMs: Long = SESSION_READY_TIMEOUT_MS,
-    /** Test seam — compaction idle lease. Production keeps [COMPACTING_TIMEOUT_MS]. */
-    private val compactingTimeoutMs: Long = COMPACTING_TIMEOUT_MS,
     /** Random source for ordinary reconnect full-jitter. */
     private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
 ) : GatewayProfileEditorClient {
@@ -145,36 +143,11 @@ class GatewayChatClient(
         private const val BOT_CHAT_TITLE = "Bot Chat"
 
         /**
-         * Idle-progress turn watchdog — reset on EVERY received gateway event
-         * (deltas, tool events, status lines), so it only fires after this
-         * long with no events at all. It is NOT a hard turn cap: a turn that
-         * keeps streaming lives indefinitely, and a slow `prompt.submit` ack
-         * is bounded separately by [PROMPT_SUBMIT_REQUEST_TIMEOUT_MS].
+         * Quiet-reporting interval for the idle-progress watchdog. Reset on
+         * every received gateway event, so it only trips after this long with
+         * no events at all. Tripping only logs the quiet; nothing acts on it.
          */
         private const val TURN_TIMEOUT_MS = 180_000L
-
-        /**
-         * Ask requests block the agent server-side with NO events flowing
-         * until answered — arm with headroom over each kind's upstream block
-         * timeout (clarify/secret 300s, sudo 120s; approval/terminal-read
-         * unbounded). The next regular event rearms [TURN_TIMEOUT_MS].
-         */
-        private const val ASK_CLARIFY_SECRET_TIMEOUT_MS = 330_000L
-        private const val ASK_SUDO_TIMEOUT_MS = 150_000L
-        private const val ASK_UNBOUNDED_TIMEOUT_MS = 600_000L
-
-        /**
-         * Server-side context compaction summarizes the transcript through a
-         * (possibly slow) model with NO deltas or tool events flowing until it
-         * finishes — near the context ceiling that silence routinely exceeds
-         * [TURN_TIMEOUT_MS], so the idle watchdog would `session.interrupt` a
-         * healthy compression, roll back its work, and retrigger on the next
-         * prompt forever. A `status.update` event with kind `compacting`
-         * (emitted at compaction start, and periodically by newer gateways)
-         * arms this longer leash instead; any regular event rearms
-         * [TURN_TIMEOUT_MS].
-         */
-        private const val COMPACTING_TIMEOUT_MS = 600_000L
 
         private const val RPC_TIMEOUT_MS = 15_000L
         const val PROFILE_AVATAR_MAX_BYTES = 2_000_000
@@ -250,16 +223,6 @@ class GatewayChatClient(
          * server then finished and whose answer was silently dropped.
          */
         private const val MAX_MIDTURN_REJOIN_MS = 20_000L
-
-        /**
-         * After a route RETARGET (LAN⇄Tailscale mid-turn), the fresh socket
-         * can't pick up the in-flight turn's events — upstream `session.resume`
-         * doesn't reattach to a running turn. So arm a SHORT settle on the
-         * reconnect: if nothing flows we fail fast and the post-turn reconcile
-         * recovers the server's answer, instead of waiting the full turn
-         * watchdog. Any live event resets it back to the normal timeout.
-         */
-        private const val POST_RETARGET_SETTLE_MS = 30_000L
 
         private const val DEFAULT_COLS = 80
 
@@ -1027,14 +990,9 @@ class GatewayChatClient(
         Log.i(TAG, "Gateway retargeting to a new route (turn active=${hasActiveTurn()})")
         routeTransport = RouteTransport(newDashboardClient, socketClient(newDashboardClient.okHttpClient))
         if (hasActiveTurn()) {
-            retargetedThisTurn = activeTurn?.ended == false
             webSocket?.cancel()
         }
     }
-
-    /** Set by [retarget] so the rejoin arms the short post-retarget settle once. */
-    @Volatile
-    private var retargetedThisTurn = false
 
     /**
      * Toggle the opt-in background keep-alive (sideload). While on, the socket
@@ -4606,18 +4564,9 @@ class GatewayChatClient(
                     "Gateway socket rejoined mid-turn (session=$storedSessionId) — " +
                         "rebound live session, awaiting tail",
                 )
-                // A reconnect that followed a route RETARGET gets a short settle
-                // (the fresh socket won't replay the in-flight turn); a normal
-                // blip-rejoin keeps the full turn watchdog. A live event resets
-                // either back to the per-event timeout.
-                turn.armWatchdog(
-                    if (retargetedThisTurn) {
-                        retargetedThisTurn = false
-                        POST_RETARGET_SETTLE_MS
-                    } else {
-                        turnIdleTimeoutMs
-                    },
-                )
+                // The fresh socket won't replay the in-flight turn; the watchdog
+                // only logs the quiet, so no shorter lease is needed.
+                turn.armWatchdog()
                 return
             }
             delay(fullJitterDelayMs(backoffMs, reconnectJitterUnit()))
@@ -4848,16 +4797,6 @@ class GatewayChatClient(
     // Turn handle
     // ------------------------------------------------------------------
 
-    /** Per-event idle-watchdog duration — asks block server-side with no events, so they arm longer. */
-    private fun watchdogTimeoutFor(eventType: String, payload: JsonObject? = null): Long = when {
-        eventType == "clarify.request" || eventType == "secret.request" -> ASK_CLARIFY_SECRET_TIMEOUT_MS
-        eventType == "sudo.request" -> ASK_SUDO_TIMEOUT_MS
-        eventType == "approval.request" -> ASK_UNBOUNDED_TIMEOUT_MS
-        eventType == "status.update" &&
-            payload?.stringField("kind") == "compacting" -> compactingTimeoutMs
-        else -> turnIdleTimeoutMs
-    }
-
     private inner class GatewayTurn(
         val callbacks: GatewayTurnCallbacks,
         dedupeAdjacentMessageStarts: Boolean = false,
@@ -5007,7 +4946,8 @@ class GatewayChatClient(
                 handoffQueuedSuccessor()
             } else {
                 // Map first: native asks own their deadline, including across unrelated events.
-                armWatchdog(watchdogTimeoutFor(type, payload))
+                // Rearm on every event; the duration only paces the log line.
+                armWatchdog()
             }
         }
 
@@ -5117,15 +5057,16 @@ class GatewayChatClient(
             }
         }
 
-        fun armWatchdog(timeoutMs: Long = turnIdleTimeoutMs) {
+        fun armWatchdog() {
             disarmWatchdog()
             if (mapper.currentInteraction?.serverRequest == true) return
             watchdog = scope.launch {
-                delay(timeoutMs)
-                if (!ended) {
-                    Log.w(TAG, "Gateway turn timed out after ${timeoutMs}ms")
-                    interruptServerSide()
-                    failFromTransport("Gateway turn timed out")
+                while (true) {
+                    delay(turnIdleTimeoutMs)
+                    if (ended) break
+                    // A healthy turn can be quiet for minutes (slow prefill, long
+                    // tool); log it and keep waiting. The server owns liveness.
+                    Log.w(TAG, "Gateway turn quiet for ${turnIdleTimeoutMs}ms; still waiting (no interrupt)")
                 }
             }
         }

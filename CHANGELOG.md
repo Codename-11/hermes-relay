@@ -24,6 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Android keeps the selected Appearance palette after the startup loading screen instead of leaving parts of the UI dark. (#678)
 
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
+- Android keeps a quiet turn alive instead of interrupting it: the idle watchdog now only logs the quiet and waits for the Gateway's own session state, so a slow provider prefill or a long background run is not mistaken for a dead turn.
 
 ## [0.4.0-beta.10] - 2026-10-08
 
