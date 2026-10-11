@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android drops live Thread proactive assistant bubbles when gateway history reload brings the same final, so open Threads no longer show duplicate answers after a turn settles or an offline buffer flush.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
