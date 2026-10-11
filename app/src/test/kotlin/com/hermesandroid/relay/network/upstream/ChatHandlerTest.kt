@@ -2547,15 +2547,15 @@ class ChatHandlerTest {
     // --- loadMessageHistory: proactive Thread finals vs gateway history ---
 
     @Test
-    fun loadMessageHistory_dropsProactiveThreadOrphanSupersededByServerAssistant() {
+    fun loadMessageHistory_adoptsServerIdForProactiveThreadFinal_carriesBadgesAndUiKey() {
         // Live Thread path: proactive push lands as clientOnly proactive-<id>.
-        // Post-turn / open-thread history reload adds the same final under a
-        // gateway id. Keeping both renders the final twice.
+        // Post-turn history must adopt the gateway id in place (same uiKey,
+        // badges kept, clientOnly cleared) — not drop-and-reinsert a second bubble.
         handler.addAgentThreadMessage(
             text = "Ship the fix tonight.",
             messageId = "b94439d755b3",
             agentName = "Hermes",
-            arrivedWhileAway = false,
+            arrivedWhileAway = true,
         )
         assertTrue(handler.messages.value.any { it.id == "proactive-b94439d755b3" })
 
@@ -2574,8 +2574,12 @@ class ChatHandlerTest {
         val msgs = handler.messages.value
         assertEquals(2, msgs.size)
         assertTrue(msgs.none { it.id.startsWith("proactive-") })
-        assertEquals("a1", msgs.single { it.role == MessageRole.ASSISTANT }.id)
-        assertEquals("Ship the fix tonight.", msgs.single { it.role == MessageRole.ASSISTANT }.content)
+        val assistant = msgs.single { it.role == MessageRole.ASSISTANT }
+        assertEquals("a1", assistant.id)
+        assertEquals("proactive-b94439d755b3", assistant.uiKey)
+        assertEquals("Ship the fix tonight.", assistant.content)
+        assertFalse(assistant.clientOnly)
+        assertTrue("While away" in assistant.badges)
     }
 
     @Test
@@ -2620,8 +2624,8 @@ class ChatHandlerTest {
     }
 
     @Test
-    fun loadMessageHistory_dropsOnlyOneProactiveOrphanPerMatchingServerAssistant() {
-        // Two live bubbles, one server row with same text → drop one orphan, keep one.
+    fun loadMessageHistory_adoptsOnlyOneProactiveOrphanPerMatchingServerAssistant() {
+        // Two live bubbles, one server row with same text → adopt once, keep one orphan.
         handler.addAgentThreadMessage("Same text", messageId = "m1", agentName = null)
         handler.addAgentThreadMessage("Same text", messageId = "m2", agentName = null)
         handler.loadMessageHistory(
@@ -2629,9 +2633,13 @@ class ChatHandlerTest {
                 MessageItem(id = "a1", role = "assistant", content = JsonPrimitive("Same text")),
             ),
         )
-        val proactiveLeft = handler.messages.value.filter { it.id.startsWith("proactive-") }
+        val msgs = handler.messages.value
+        val proactiveLeft = msgs.filter { it.id.startsWith("proactive-") }
         assertEquals(1, proactiveLeft.size)
-        assertEquals(1, handler.messages.value.count { it.id == "a1" })
+        assertTrue(proactiveLeft.single().clientOnly)
+        val adopted = msgs.single { it.id == "a1" }
+        assertFalse(adopted.clientOnly)
+        assertTrue(adopted.uiKey.startsWith("proactive-"))
     }
 
     @Test
