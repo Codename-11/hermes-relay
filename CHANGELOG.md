@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
-- Android drops live Thread proactive assistant bubbles when gateway history reload brings the same final, so open Threads no longer show duplicate answers after a turn settles or an offline buffer flush.
+- Android Thread live proactive assistant bubbles adopt the gateway history message id (stable Compose key, badges kept) when the same final reloads from the server, and drop orphan duplicates after a turn settles or an offline buffer flush.
 
 ## [Android 1.19.0] - 2026-10-20
 
