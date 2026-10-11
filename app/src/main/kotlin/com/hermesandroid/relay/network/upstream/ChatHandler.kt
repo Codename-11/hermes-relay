@@ -1462,6 +1462,10 @@ class ChatHandler {
         // found in this reload — used below to drop their superseded local
         // clientOnly bubbles (same exchange, pre-sync copy).
         val syncedRealtimeTurnContents = mutableSetOf<String>()
+        // Multiset of loaded server ASSISTANT display texts — used below to
+        // drop superseded live Thread proactive orphans (id proactive-*) so a
+        // post-turn history reload does not render the same final twice.
+        val serverAssistantContents = HashMap<String, Int>()
 
         val loaded = renderedItems.mapNotNull { item ->
             val displayKind = item.displayKind?.trim()?.lowercase()
@@ -1557,6 +1561,12 @@ class ChatHandler {
             val isSyncedRealtimeTurn = strippedRealtimeContent != null
             val cleanedContent = strippedRealtimeContent ?: cardCleanedContent
             if (isSyncedRealtimeTurn) syncedRealtimeTurnContents.add(cleanedContent.trim())
+            if (role == MessageRole.ASSISTANT) {
+                val key = cleanedContent.trim()
+                if (key.isNotEmpty()) {
+                    serverAssistantContents[key] = (serverAssistantContents[key] ?: 0) + 1
+                }
+            }
 
             val prior = priorById[messageId]
             // Outbound attachments: prefer an id-match (covers any future
@@ -1710,6 +1720,12 @@ class ChatHandler {
         // subtlety: a turn that errors *after* persisting keeps an "Error" badge
         // but IS in the transcript, so it reconciles normally; only clientOnly +
         // absent-from-transcript marks a preservable orphan.
+        //
+        // Explicit supersede cases (drop the orphan, keep the server row):
+        //  - synced realtime voice whose server copy just loaded
+        //  - Thread live proactive ASSISTANT (id proactive-*) whose content
+        //    matches a loaded server ASSISTANT (consume-once multiset) — live
+        //    push + history reload otherwise paints the same final twice
         val loadedIds = loaded.mapTo(HashSet()) { it.id }
         val preservedLocal = _messages.value.filter { msg ->
             if (!msg.clientOnly || msg.id in loadedIds) return@filter false
@@ -1719,10 +1735,28 @@ class ChatHandler {
             // Unsynced traces are always preserved: they are still the only
             // record of the turn.
             val trace = msg.realtimeTurn
-            !(
+            if (
                 trace != null && trace.syncedToServer &&
-                    trace.assistantText.trim() in syncedRealtimeTurnContents
-                )
+                trace.assistantText.trim() in syncedRealtimeTurnContents
+            ) {
+                return@filter false
+            }
+            // Drop a live Thread proactive final superseded by gateway history.
+            // Consume-once so N identical server rows can retire N orphans, and
+            // a single server row only retires one of several identical lives.
+            // Empty content never matches (avoids collapsing blank shells).
+            if (
+                msg.role == MessageRole.ASSISTANT &&
+                msg.id.startsWith("proactive-")
+            ) {
+                val key = msg.content.trim()
+                val remaining = serverAssistantContents[key] ?: 0
+                if (key.isNotEmpty() && remaining > 0) {
+                    serverAssistantContents[key] = remaining - 1
+                    return@filter false
+                }
+            }
+            true
         }
         val merged = if (preservedLocal.isEmpty()) {
             loaded

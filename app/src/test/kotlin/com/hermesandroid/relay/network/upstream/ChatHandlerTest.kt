@@ -2544,6 +2544,106 @@ class ChatHandlerTest {
         assertFalse(orphan.realtimeTurn!!.syncedToServer)
     }
 
+    // --- loadMessageHistory: proactive Thread finals vs gateway history ---
+
+    @Test
+    fun loadMessageHistory_dropsProactiveThreadOrphanSupersededByServerAssistant() {
+        // Live Thread path: proactive push lands as clientOnly proactive-<id>.
+        // Post-turn / open-thread history reload adds the same final under a
+        // gateway id. Keeping both renders the final twice.
+        handler.addAgentThreadMessage(
+            text = "Ship the fix tonight.",
+            messageId = "b94439d755b3",
+            agentName = "Hermes",
+            arrivedWhileAway = false,
+        )
+        assertTrue(handler.messages.value.any { it.id == "proactive-b94439d755b3" })
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "u1", role = "user", content = JsonPrimitive("status?"), timestamp = 1.0),
+                MessageItem(
+                    id = "a1",
+                    role = "assistant",
+                    content = JsonPrimitive("Ship the fix tonight."),
+                    timestamp = 2.0,
+                ),
+            ),
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(2, msgs.size)
+        assertTrue(msgs.none { it.id.startsWith("proactive-") })
+        assertEquals("a1", msgs.single { it.role == MessageRole.ASSISTANT }.id)
+        assertEquals("Ship the fix tonight.", msgs.single { it.role == MessageRole.ASSISTANT }.content)
+    }
+
+    @Test
+    fun loadMessageHistory_preservesProactiveThreadOrphanWhenNoServerMatch() {
+        // Interim / not-yet-persisted proactive must survive reload.
+        handler.addAgentThreadMessage(
+            text = "Still working…",
+            messageId = "interim-1",
+            agentName = null,
+        )
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "u1", role = "user", content = JsonPrimitive("go"), timestamp = 1.0),
+                MessageItem(id = "a1", role = "assistant", content = JsonPrimitive("Done."), timestamp = 2.0),
+            ),
+        )
+        val msgs = handler.messages.value
+        assertTrue(msgs.any { it.id == "proactive-interim-1" && it.content == "Still working…" })
+        assertTrue(msgs.any { it.id == "a1" && it.content == "Done." })
+    }
+
+    @Test
+    fun loadMessageHistory_preservesNonProactiveClientOnlyDespiteMatchingAssistantContent() {
+        // Generic clientOnly (system notice) must NOT be dropped by the proactive rule.
+        handler.addSystemNotice("Ship the fix tonight.")
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "a1",
+                    role = "assistant",
+                    content = JsonPrimitive("Ship the fix tonight."),
+                ),
+            ),
+        )
+        val msgs = handler.messages.value
+        assertTrue(
+            msgs.any {
+                it.role == MessageRole.SYSTEM && it.clientOnly && it.content == "Ship the fix tonight."
+            },
+        )
+        assertTrue(msgs.any { it.id == "a1" })
+    }
+
+    @Test
+    fun loadMessageHistory_dropsOnlyOneProactiveOrphanPerMatchingServerAssistant() {
+        // Two live bubbles, one server row with same text → drop one orphan, keep one.
+        handler.addAgentThreadMessage("Same text", messageId = "m1", agentName = null)
+        handler.addAgentThreadMessage("Same text", messageId = "m2", agentName = null)
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "a1", role = "assistant", content = JsonPrimitive("Same text")),
+            ),
+        )
+        val proactiveLeft = handler.messages.value.filter { it.id.startsWith("proactive-") }
+        assertEquals(1, proactiveLeft.size)
+        assertEquals(1, handler.messages.value.count { it.id == "a1" })
+    }
+
+    @Test
+    fun loadMessageHistory_doesNotDropEmptyProactiveAgainstEmptyServerAssistant() {
+        handler.addAgentThreadMessage(text = "   ", messageId = "empty", agentName = null)
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "a1", role = "assistant", content = JsonPrimitive("   "))),
+        )
+        // Empty keys must not participate in multiset matching.
+        assertTrue(handler.messages.value.any { it.id == "proactive-empty" })
+    }
+
     @Test
     fun restoreInFlightTurn_restoresThinkingAndToolState_withoutDuplicatingPersistedUser() {
         handler.addUserMessage(createUserMessage("old-user", "Earlier"))
