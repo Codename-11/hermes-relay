@@ -2653,6 +2653,63 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_adoptsBySharedPlatformMessageId_withoutContentMatch() {
+        // Live delivery id matches history platform_message_id even when text differs
+        // (stamped shared id is authoritative; content path is fallback only).
+        handler.addAgentThreadMessage(
+            text = "live wording",
+            messageId = "deadbeefcafe",
+            agentName = "Hermes",
+            arrivedWhileAway = true,
+        )
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "19952",
+                    role = "assistant",
+                    content = JsonPrimitive("history wording"),
+                    platformMessageId = "deadbeefcafe",
+                    timestamp = 2.0,
+                ),
+            ),
+        )
+        val msgs = handler.messages.value
+        assertEquals(1, msgs.size)
+        val assistant = msgs.single()
+        assertEquals("19952", assistant.id)
+        assertEquals("proactive-deadbeefcafe", assistant.uiKey)
+        assertFalse(assistant.clientOnly)
+        assertTrue("While away" in assistant.badges)
+        assertTrue(msgs.none { it.id.startsWith("proactive-") })
+    }
+
+    @Test
+    fun loadMessageHistory_prefersSharedPlatformIdOverContentWhenBothCouldMatch() {
+        handler.addAgentThreadMessage(text = "Same text", messageId = "id-primary", agentName = null)
+        handler.addAgentThreadMessage(text = "Same text", messageId = "id-other", agentName = null)
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "a-primary",
+                    role = "assistant",
+                    content = JsonPrimitive("Same text"),
+                    platformMessageId = "id-primary",
+                ),
+                MessageItem(
+                    id = "a-content",
+                    role = "assistant",
+                    content = JsonPrimitive("Same text"),
+                ),
+            ),
+        )
+        val msgs = handler.messages.value
+        assertEquals("a-primary", msgs.single { it.uiKey == "proactive-id-primary" }.id)
+        // Second live bubble content-adopts the remaining server row.
+        assertEquals("a-content", msgs.single { it.uiKey == "proactive-id-other" }.id)
+        assertTrue(msgs.none { it.id.startsWith("proactive-") })
+    }
+
+    @Test
     fun restoreInFlightTurn_restoresThinkingAndToolState_withoutDuplicatingPersistedUser() {
         handler.addUserMessage(createUserMessage("old-user", "Earlier"))
         handler.addPlaceholderMessage(

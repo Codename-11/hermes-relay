@@ -28,7 +28,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Long tools and provider waits stay active. Missing completion events recover from server state, including work started by another client, without sending Stop.
 - Oversized history responses retry with smaller pages while keeping the latest 500 messages in order. Individual messages above the safety limit show an explicit error.
 - Reopening a conversation includes messages archived by context compaction instead of showing only its summary and recent tail.
-- Gateway responses avoid duplicate history transfers. After a recorded out-of-memory crash, automatic reopening pauses while saved conversations and drafts remain intact.
 - Temporary reverse-proxy access failures preserve the native Dashboard session and allow a later refresh when the route is reachable again.
 - Notification permission defaults refresh after onboarding, and background alerts retain their original connection, profile, and conversation across navigation.
 - Replies from different running conversations have separate notification slots. Opening one preserves alerts from the others.
