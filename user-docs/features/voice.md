@@ -186,10 +186,12 @@ These controls always show and apply to both engines:
 
 Lets you interrupt the agent by speaking while it is thinking or talking. One
 listener stays active across the whole response, so the microphone does not
-re-arm between generation and playback. It is **on by default** to match Hermes
-Voice and can be disabled at any time.
+re-arm between generation and playback. It is **off by default** because, on a
+phone speaker, the app can mistake the reply's own audio for you speaking and
+cut the reply short. Turn it on when using headphones, or when you want to try
+it on the speaker. Your choice is remembered.
 
-- **Interrupt when I speak** — master toggle. Default on.
+- **Interrupt when I speak** — master toggle. Default off.
 - **Sensitivity** — `Off / Low / Default / High` controls Silero's speech confirmation. Higher values react to quieter or shorter speech; Off disables detection without changing the master switch.
 - **Room-noise threshold** — multiplier applied to the calibrated quiet-room RMS. The upstream default is `3×`; higher values require your speech to be louder relative to the room.
 - **Playback grace** — ignores likely echo immediately after playback starts. The upstream default is `0.50 s`.

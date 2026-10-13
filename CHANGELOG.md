@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Android marks unread completed conversations in the session drawer and shows unread conversation counts on profiles and the chat header.
 - Reply notifications show the owning agent's official profile name and cached avatar, plus the conversation title.
 
+### Changed
+
+- Android Voice barge-in ("Interrupt when I speak") is now off until enabled, because on a phone speaker the app could treat the reply's own audio as an interruption and cut the reply short. An existing explicit choice is kept; turn it on again under Voice settings → Barge-in.
+
 ### Fixed
 
 - Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
