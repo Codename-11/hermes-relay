@@ -1361,10 +1361,13 @@ class DashboardApiClient(
     ): Result<List<MessageItem>> = withContext(Dispatchers.IO) {
         val name = profile?.trim().orEmpty()
         loadSessionMessages(mode) { page ->
+            // include_compacted: same display contract as desktop/web — keep
+            // compaction-archived turns so reopen is not summary+tail only.
             val query = buildList {
                 add("limit=${page.limit}")
                 add("offset=${page.offset}")
                 add("order=${page.order}")
+                add("include_compacted=true")
                 if (name.isNotBlank()) add("profile=${pathSegment(name)}")
             }.joinToString(prefix = "?", separator = "&")
             getJson(

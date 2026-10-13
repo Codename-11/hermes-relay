@@ -730,11 +730,15 @@ class HermesApiClient(
     ): List<MessageItem> = withContext(Dispatchers.IO) {
         loadSessionMessages(mode) { page ->
             try {
+                // include_compacted: display history must keep turns archived by
+                // in-place compaction (active=0, compacted=1). Without it the
+                // chat reopens as summary + tail only after compression.
                 val url = "$baseUrl/api/sessions/$sessionId/messages".toHttpUrlOrNull()
                     ?.newBuilder()
                     ?.addQueryParameter("limit", page.limit.toString())
                     ?.addQueryParameter("offset", page.offset.toString())
                     ?.addQueryParameter("order", page.order)
+                    ?.addQueryParameter("include_compacted", "true")
                     ?.build()
                     ?: error("invalid session messages URL")
                 val request = authRequest(url.toString()).get().build()
