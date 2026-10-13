@@ -1462,6 +1462,24 @@
     <string name="proactive_about_desc">オンにすると、電話機はエージェントが開始したメッセージに対してオープンであることをRelayに伝えます。エージェントは、Relayがすでに使用しているのと同じペア接続を介してそれらを配信します。通知以外に新しい権限はありません。</string>
     <string name="proactive_about_server_note">サーバーでは電話プラットフォームも有効にする必要があります (サーバーで PHONE_ENABLED を設定)。両側の電源が入って電話機がペアリングされるまでは、何も押されません。</string>
 
+    <string name="proactive_fcm_title">プッシュ起床 (BYO FCM)</string>
+    <string name="proactive_fcm_desc">任意。独自の Firebase プロジェクトを使い、ライブ接続が切れたときに Hermes がこの端末を起床できます。本文は再接続後に Relay 経由で届きます。サイドロードのみ。Google Play 開発者サービスが必要です。</string>
+    <string name="proactive_fcm_enable">FCM 起床を有効化</string>
+    <string name="proactive_fcm_paste_json">google-services.json を貼り付け</string>
+    <string name="proactive_fcm_import_json">JSON フィールドをインポート</string>
+    <string name="proactive_fcm_project_id">プロジェクト ID</string>
+    <string name="proactive_fcm_application_id">Mobile SDK アプリ ID</string>
+    <string name="proactive_fcm_api_key">API キー</string>
+    <string name="proactive_fcm_sender_id">GCM / messaging センダー ID</string>
+    <string name="proactive_fcm_save">FCM 設定を保存</string>
+    <string name="proactive_fcm_clear">FCM 設定をクリア</string>
+    <string name="proactive_fcm_token_status">デバイストークン: %1$s</string>
+    <string name="proactive_fcm_not_paired">ホストにデバイストークンを登録するには Relay をペアリングしてください。</string>
+    <string name="proactive_fcm_mac_note">この Hermes ホスト: Dashboard → Hermes-Relay → Settings → Push wake で Firebase Admin サービスアカウント JSON を選択（または python -m plugin.relay.fcm_sender install ./sa.json）。サービスアカウントをアプリに入れないでください。端末にはクライアント google-services.json のみ。</string>
+    <string name="proactive_fcm_wake_title">Hermes</string>
+    <string name="proactive_fcm_wake_body">Hermes にメッセージがあります — 開いて再接続し配信します。</string>
+    <string name="proactive_fcm_wake_channel">プッシュ起床</string>
+
     <!-- ProfileInspectorScreen -->
     <string name="profile_inspector_back">戻る</string>
     <string name="profile_inspector_refresh_all">すべて更新</string>

@@ -67,6 +67,12 @@ from .channels.proactive import ProactiveChannel, ProactiveError
 from .channels.terminal import TerminalHandler
 from .channels.tui import TuiHandler
 from .config import RelayConfig
+from .fcm_sender import (
+    FcmTokenStore,
+    fcm_enabled,
+    load_service_account_from_env,
+    send_wake,
+)
 from .secure_proxy import (
     SECURE_LINK_CAPABILITIES,
     SECURE_LINK_DESCRIPTION,
@@ -284,6 +290,13 @@ class RelayServer:
         # never reached the phone (voice session died before resume) is pushed
         # as a proactive phone message — buffered while the phone is offline.
         self.realtime_agent.proactive_push = self.proactive.push
+        # BYO FCM token store + offline wake hook (service account on host).
+        hermes_home = Path(
+            os.environ.get("HERMES_HOME")
+            or Path(config.hermes_config_path).expanduser().parent
+        ).expanduser()
+        self.fcm_tokens = FcmTokenStore(hermes_home / "hermes-relay-fcm-tokens.json")
+        self.proactive.on_queued_wake = self._fcm_wake_offline_phones
         # Desktop CLI awareness channel — stashes workspace + active-editor
         # hints per session (ephemeral; no persistence). Wired in alpha.6
         # as the keystone for future prompt-injection plugin hooks.
@@ -303,6 +316,51 @@ class RelayServer:
     @property
     def client_count(self) -> int:
         return len(self._clients)
+
+    async def _fcm_wake_offline_phones(
+        self,
+        message_id: str,
+        title: str | None = None,
+        preview: str | None = None,
+    ) -> None:
+        """Send high-priority FCM data wakes to registered device tokens.
+
+        Message ``preview`` is included by default. Devices that registered with
+        ``include_preview: false`` get a wake without preview on the wire.
+        """
+        if not fcm_enabled():
+            return
+        sa = load_service_account_from_env()
+        if sa is None:
+            return
+        regs = self.fcm_tokens.registrations()
+        if not regs:
+            return
+
+        async def _one(token: str, include_preview: bool) -> None:
+            result = await asyncio.to_thread(
+                send_wake,
+                device_token=token,
+                message_id=message_id,
+                service_account=sa,
+                title=title,
+                preview=preview if include_preview else None,
+            )
+            if not result.ok:
+                logger.info(
+                    "FCM wake failed message_id=%s status=%s err=%s",
+                    message_id,
+                    result.status,
+                    result.error or result.body[:200],
+                )
+
+        await asyncio.gather(
+            *[
+                _one(str(r["token"]), bool(r.get("include_preview", True)))
+                for r in regs
+            ],
+            return_exceptions=True,
+        )
 
     async def close(self) -> None:
         """Shut down all channel handlers and close client connections."""
@@ -4052,6 +4110,70 @@ async def handle_phone_message(request: web.Request) -> web.Response:
     return web.json_response(result, status=200)
 
 
+async def handle_push_token(request: web.Request) -> web.Response:
+    """Register or clear a BYO FCM device token for the paired session.
+
+    POST /push/token  Authorization: Bearer <session>
+      {\"token\": \"...\", \"platform\": \"android\", \"project_id\": \"...\"}
+      → 200 {\"ok\": true}
+      empty token clears the registration for this device_id
+    """
+    try:
+        server, session = _require_bearer_session(request)
+    except web.HTTPUnauthorized as exc:
+        return web.json_response({"ok": False, "error": exc.text}, status=401)
+
+    try:
+        payload = await request.json()
+    except (json.JSONDecodeError, ValueError, aiohttp.ContentTypeError):
+        return web.json_response({"ok": False, "error": "invalid JSON body"}, status=400)
+    if not isinstance(payload, dict):
+        return web.json_response(
+            {"ok": False, "error": "body must be a JSON object"}, status=400
+        )
+
+    token = payload.get("token")
+    if token is None:
+        token = ""
+    if not isinstance(token, str):
+        return web.json_response({"ok": False, "error": "token must be a string"}, status=400)
+
+    device_id = session.device_id or session.token[:16]
+    if not token.strip():
+        server.fcm_tokens.remove(device_id)
+        return web.json_response({"ok": True, "cleared": True})
+
+    platform = payload.get("platform") or "android"
+    project_id = payload.get("project_id") or ""
+    if not isinstance(platform, str):
+        platform = "android"
+    if not isinstance(project_id, str):
+        project_id = ""
+    # Default True: Mac puts a short message preview on the FCM data wake.
+    # False = hide content (no preview field on the wire).
+    include_preview = payload.get("include_preview", True)
+    if not isinstance(include_preview, bool):
+        include_preview = True
+    try:
+        server.fcm_tokens.upsert(
+            device_id=device_id,
+            token=token.strip(),
+            platform=platform.strip() or "android",
+            project_id=project_id.strip(),
+            include_preview=include_preview,
+        )
+    except ValueError as exc:
+        return web.json_response({"ok": False, "error": str(exc)}, status=400)
+
+    logger.info(
+        "FCM token registered device_id=%s platform=%s len=%d",
+        device_id,
+        platform,
+        len(token),
+    )
+    return web.json_response({"ok": True, "device_id": device_id})
+
+
 async def handle_phone_outbound(request: web.Request) -> web.Response:
     """Inspect or cancel the queued agent→phone outbound messages.
 
@@ -5135,6 +5257,8 @@ def create_app(config: RelayConfig) -> web.Application:
     # Proactive push: agent → phone. Loopback-only (the phone platform
     # adapter POSTs here). Forwards over the phone WSS via ProactiveChannel.
     app.router.add_post("/phone/message", handle_phone_message)
+    # BYO FCM device token registration (paired phone → relay).
+    app.router.add_post("/push/token", handle_push_token)
     # Inbound reply leg (Phase 2c) — the gateway adapter long-polls here to
     # drain ``proactive.reply`` envelopes buffered by the ProactiveChannel.
     app.router.add_get("/phone/replies", handle_phone_replies)

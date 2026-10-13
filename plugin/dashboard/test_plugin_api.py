@@ -750,17 +750,47 @@ class MediaTests(PluginApiTestCase):
 
 
 class PushTests(PluginApiTestCase):
-    def test_push_is_static_and_hits_no_network(self) -> None:
+    def test_push_status_no_network(self) -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            raise AssertionError("push endpoint must not touch the network")
+            raise AssertionError("push status must not proxy the relay")
 
         captured = _install_mock_transport(self, handler)
         resp = self.client.get("/push")
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        self.assertEqual(body["configured"], False)
-        self.assertIn("FCM", body["reason"])
+        self.assertIn("configured", body)
+        self.assertIn("reason", body)
+        self.assertIn("default_path", body)
         self.assertEqual(len(captured), 0)
+
+    def test_push_install_and_clear_roundtrip(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError("push install must not proxy the relay")
+
+        _install_mock_transport(self, handler)
+        sa = {
+            "type": "service_account",
+            "project_id": "unit-proj",
+            "client_email": "unit@example.iam.gserviceaccount.com",
+            "private_key": "k",
+        }
+        resp = self.client.post("/push/service-account", json={"json": sa})
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertTrue(body["configured"])
+        self.assertEqual(body["project_id"], "unit-proj")
+        self.assertTrue(body["enabled"])
+
+        bad = self.client.post("/push/service-account", json={"json_text": "{not-json"})
+        self.assertEqual(bad.status_code, 400)
+
+        off = self.client.put("/push/enabled", json={"enabled": False})
+        self.assertEqual(off.status_code, 200)
+        self.assertFalse(off.json()["enabled"])
+
+        cleared = self.client.delete("/push/service-account")
+        self.assertEqual(cleared.status_code, 200)
+        self.assertFalse(cleared.json()["configured"])
 
 
 # ---------------------------------------------------------------------------

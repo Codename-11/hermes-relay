@@ -366,6 +366,7 @@ async def _proxy_http(
     *,
     dashboard: bool = False,
     forwarded_host: str | None = None,
+    extra_headers: dict[str, str] | None = None,
 ) -> web.StreamResponse:
     if request.method in {"CONNECT", "TRACE"}:
         raise web.HTTPMethodNotAllowed(request.method, [])
@@ -388,6 +389,8 @@ async def _proxy_http(
         dashboard=dashboard,
         forwarded_host=forwarded_host,
     )
+    if extra_headers:
+        headers.update(extra_headers)
     # Plain bodies so we can rewrite login HTML/JSON under /dashboard.
     if dashboard:
         headers = {
@@ -653,6 +656,31 @@ def create_secure_proxy_app(server: "RelayServer") -> web.Application:
             "X-Hermes-Proxy-Peer": request.remote or "unknown",
         })
 
+    async def relay_http(request: web.Request) -> web.StreamResponse:
+        # Phone HTTP uses the same /relay base as WSS (PluginProxyTransport).
+        # Only /relay/health + /relay/ws are special-cased above; everything else
+        # (sessions, push/token, phone/threads, voice, media, …) reverse-proxies
+        # to the plain loopback relay with the internal hop secret.
+        if request.headers.get("Upgrade", "").lower() == "websocket":
+            raise web.HTTPNotFound()
+        tail = _safe_tail(request, "/relay")
+        if tail is None:
+            raise web.HTTPBadRequest(text="unsafe proxy path")
+        if not tail or tail == "/":
+            raise web.HTTPNotFound()
+        upstream = f"http://127.0.0.1:{server.config.port}{tail}"
+        try:
+            return await _proxy_http(
+                request,
+                upstream,
+                extra_headers={
+                    "X-Hermes-Proxy-Secret": server.secure_proxy_internal_secret,
+                    "X-Hermes-Proxy-Peer": request.remote or "unknown",
+                },
+            )
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise web.HTTPBadGateway(text="Relay upstream unavailable") from exc
+
     async def api_proxy(request: web.Request) -> web.StreamResponse:
         tail = _safe_tail(request, "/api")
         if tail is None:
@@ -713,6 +741,8 @@ def create_secure_proxy_app(server: "RelayServer") -> web.Application:
     app.router.add_patch("/relay/sessions/{token_prefix}", relay_sessions)
     app.router.add_get("/relay/health", health, allow_head=True)
     app.router.add_get("/relay/ws", relay_ws)
+    # Catch-all after the dedicated health/ws routes so they stay authoritative.
+    app.router.add_route("*", "/relay/{tail:.*}", relay_http)
     # Bare /api and /dashboard (no trailing slash) must resolve — browsers and
     # clients often omit the slash; aiohttp's /{tail:.*} pattern does not match
     # the prefix alone and previously returned a plain 404.
