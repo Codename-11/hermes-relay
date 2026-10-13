@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Android Voice no longer ends a reply while the last synthesized audio file is still playing, so Continuous mode reopens the microphone only after playback has finished.
 - Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
 - Android pauses both wake-word listener modes before voice capture and resumes listening after voice exits, preventing microphone conflicts. (#681)
 - Android Relay sessions distinguish shortening from operator-approved renewal, retain actionable update failures, and expose accessible pairing duration controls. (#659)
