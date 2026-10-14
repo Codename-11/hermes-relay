@@ -31,7 +31,9 @@ play-publisher = "4.1.1"
 media3 = "1.11.1"
 androidVad = "2.0.10"
 sherpaOnnx = "v1.13.4"
-onnxRuntime = "1.31.0"
+# Must stay on sherpa-onnx v1.13.4's ORT ABI (VERS_1.27.0). 1.31.0 from
+# dependabot #706 breaks check-android-native-compat (JNI symbol version).
+onnxRuntime = "1.27.0"
 play-app-update = "2.1.0"
 
 [libraries]
