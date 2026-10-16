@@ -1,0 +1,154 @@
+# Relay Cockpit — Hermes dashboard theme
+# Drop-in: ~/.hermes/dashboard-themes/relay-cockpit.yaml
+#
+# The "Relay cockpit" language from the Hermes Relay UI refresh, packaged as a
+# dashboard theme: dark navy-black ops surfaces, hairline dividers, electric-blue
+# hard accent, lavender identity, and monospace telemetry. No gradients, no
+# decorative hero art — dense, tight, operational.
+
+name: relay-cockpit
+label: Relay Cockpit
+description: Relay cockpit — dense navy-black ops surface, electric-blue accents, lavender identity, mono telemetry.
+
+palette:
+  # Base canvas / primary text / top-layer sheen.
+  background: "#0A0A14"
+  midground: "#F9FAFB"
+  foreground:
+    hex: "#8B5CF6"
+    alpha: 0.06
+  warmGlow: "rgba(59, 130, 246, 0.30)"
+  noiseOpacity: 0.4
+
+typography:
+  fontSans: '"Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+  fontMono: '"JetBrains Mono", ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace'
+  fontDisplay: '"Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+  fontUrl: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+  baseSize: "14px"
+  lineHeight: "1.5"
+  letterSpacing: "0"
+
+layout:
+  radius: "12px"   # card 12 / button 8 (sm) / input pill 24
+  density: compact
+
+layoutVariant: cockpit
+
+componentStyles:
+  header:
+    background: "rgba(10, 10, 20, 0.94)"
+    borderImage: "linear-gradient(to bottom, #2D2D3D, #2D2D3D) 1"
+  sidebar:
+    background: "#0C0C16"
+    borderImage: "linear-gradient(to bottom, #2D2D3D, #2D2D3D) 1"
+
+colorOverrides:
+  # Electric blue = hard accent (primary actions, active states, focus, caret).
+  primary: "#3B82F6"
+  primaryForeground: "#0A0A14"
+  ring: "#3B82F6"
+  # Panels / raised surfaces.
+  card: "#12121E"
+  cardForeground: "#F9FAFB"
+  popover: "#1A1A24"
+  popoverForeground: "#F9FAFB"
+  # Hairlines.
+  border: "#2D2D3D"
+  input: "#2D2D3D"
+  # Status.
+  success: "#4ADE80"
+  warning: "#FBBF24"
+  destructive: "#F87171"
+  destructiveForeground: "#0A0A14"
+  # Muted telemetry text.
+  mutedForeground: "#9CA3AF"
+
+customCSS: |
+  /* Relay Cockpit — transcript polish, chrome, and texture.
+     All values mirror the repo's design tokens; no gradients or ornament. */
+
+  /* Sparse glyph texture: hairline dot grid. z-index 0 sits below the shell's
+     z-2 content and z-40/50 chrome, above the page background only. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image: radial-gradient(rgba(139, 92, 246, 0.30) 1px, transparent 1.3px);
+    background-size: 26px 26px;
+    opacity: 0.28;
+  }
+
+  /* Hairline scrollbars; electric on hover. */
+  * { scrollbar-width: thin; scrollbar-color: #2D2D3D #0C0C16; }
+  *::-webkit-scrollbar { width: 10px; height: 10px; }
+  *::-webkit-scrollbar-track { background: #0C0C16; }
+  *::-webkit-scrollbar-thumb {
+    background: #2D2D3D;
+    border: 2px solid #0C0C16;
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover { background: #3B82F6; }
+
+  /* Lavender selection = identity. */
+  ::selection { background: rgba(139, 92, 246, 0.35); color: #F9FAFB; }
+
+  /* Sidebar: mono nav labels (operator chrome), lavender brand mark,
+     electric-blue active state + tick. */
+  aside nav { font-family: var(--theme-font-mono, ui-monospace, monospace); }
+  aside > div:first-child .text-midground { color: #8B5CF6; }
+  aside a[aria-current="true"] { color: #3B82F6; }
+  aside a[aria-current="true"] span[aria-hidden] { background-color: #3B82F6; }
+
+  /* Chat surface: current Hermes renders the transcript through the xterm host,
+     so it inherits palette + mono from the theme tokens below — no HTML
+     transcript rows are targeted, because their shared utility classes are used
+     by unrelated panels (Profiles/Config/Models) and a generic selector would
+     restyle those too. */
+  div:has(> .hermes-chat-xterm-host) { border: 1px solid #2D2D3D; }
+
+  /* Code blocks — hard contrast against bubbles: a panel darker than the
+     page with a visible hairline (the stock code block all but disappears
+     into a tinted bubble). */
+  #root pre {
+    background-color: #07070C;
+    border-color: #2D2D3D;
+    border-radius: 8px;
+    color: #E5E7EB;
+  }
+  #root pre code { color: inherit; }
+  #root :not(pre) > code {
+    background-color: rgba(26, 26, 36, 0.92);
+    border: 1px solid rgba(45, 45, 61, 0.9);
+    border-radius: 4px;
+    color: #E5E7EB;
+  }
+
+  /* Composer / inputs — 24px pill for single-line text, card radius for
+     textareas; raised panel fill; electric caret. */
+  #root input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]):not([type="submit"]):not([type="button"]):not([type="reset"]) {
+    border-radius: 24px;
+    background-color: #10101B;
+    caret-color: #3B82F6;
+  }
+  #root textarea {
+    border-radius: 12px;
+    background-color: #10101B;
+    caret-color: #3B82F6;
+  }
+
+  /* Technical metadata reads in mono with tabular figures. */
+  .text-text-tertiary {
+    font-family: var(--theme-font-mono, ui-monospace, monospace);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Operational headings stay tight. */
+  h1, h2, h3 { letter-spacing: 0.02em; }
+
+  /* Phones: soften the texture, keep text crisp. */
+  @media (max-width: 640px) {
+    body::after { opacity: 0.16; }
+  }
