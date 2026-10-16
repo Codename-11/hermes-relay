@@ -64,6 +64,15 @@ that remain declared in those modules as missing.
 
 ---
 
+## Desktop transfer follow-ups
+
+- Add explicit progress/cancellation controls and resumable transfers only with
+  persisted, connection-bound ownership and fresh destination authorization.
+- Extend the host-to-desktop binary channel to Android file delivery separately;
+  the current tools do not add a phone upload or download UI.
+
+---
+
 ## Secure Link managed activation
 
 The first guided setup uses shared read-only checks, copyable startup settings,

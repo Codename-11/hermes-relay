@@ -48,6 +48,7 @@ import {
   type ComputerControlAuthority
 } from './computerControlSecurity.js'
 import { closeAllCuaControlSessions, closeCuaControlSession } from './cuaDriver.js'
+import { TransferSessions } from './transferSession.js'
 
 /** The payload shape server → client for a single tool invocation. */
 export interface ToolCallPayload {
@@ -115,6 +116,10 @@ export interface ToolContext {
   controlSession?: ComputerControlAuthority
   /** Hermes-owned snapshot/token binding state for this router lifecycle. */
   controlSecurity?: ComputerControlSecurityState
+  /** Emit a raw envelope on the desktop channel. Used by streaming handlers
+   * (file transfer) that produce more than one response envelope. */
+  transfers?: TransferSessions
+  emit?: (type: string, payload: Record<string, unknown>) => void
 }
 
 /** A tool handler. Throws → router responds with `{ok:false, error}`. */
@@ -275,6 +280,8 @@ function detectInteractive(): boolean {
 }
 
 export class DesktopToolRouter {
+  private readonly transfers = new TransferSessions()
+  private readonly closeTransfers = (): void => { void this.transfers.closeAll() }
   private readonly handlers: Record<string, ToolHandler>
   private readonly advertisedTools: string[]
   private readonly consentGranted: boolean
@@ -328,6 +335,8 @@ export class DesktopToolRouter {
     }
     this.attached = true
     this.relay = relay
+    relay.on('reconnecting', this.closeTransfers)
+    relay.on('exit', this.closeTransfers)
 
     relay.onChannel('desktop', (type, payload) => {
       if (type === 'desktop.command') {
@@ -349,6 +358,10 @@ export class DesktopToolRouter {
         void closeCuaControlSession(ended.id, ended.reason ?? 'relay control session ended')
         return
       }
+      if (type.startsWith('desktop.transfer_')) {
+        void this.transfers.handle(type, payload)
+        return
+      }
       // Unknown desktop.* types — ignore; server may extend later.
     })
 
@@ -362,6 +375,7 @@ export class DesktopToolRouter {
 
   /** Remove the channel listener and stop heartbeats. Idempotent. */
   detach(): void {
+    void this.transfers.closeAll()
     if (!this.attached) {
       this.revokeControlAuthority()
       return
@@ -373,6 +387,8 @@ export class DesktopToolRouter {
     }
     try {
       this.relay?.onChannel('desktop', null)
+      this.relay?.off('reconnecting', this.closeTransfers)
+      this.relay?.off('exit', this.closeTransfers)
     } catch {
       /* ignore */
     }
@@ -493,7 +509,11 @@ export class DesktopToolRouter {
       abortSignal: controller.signal,
       interactive: this.interactive,
       controlSession,
-      controlSecurity: this.controlSecurity
+      controlSecurity: this.controlSecurity,
+      transfers: this.transfers,
+      emit: (type, payload) => {
+        this.relay?.sendChannel('desktop', type, payload)
+      }
     }
 
     try {

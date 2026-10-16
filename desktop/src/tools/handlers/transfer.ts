@@ -380,3 +380,23 @@ async function sha256OfFile(file: string): Promise<string> {
 function jsonQuote(s: string): string {
   return JSON.stringify(s)
 }
+
+// ── Relay file-transfer channel (server-initiated push/pull) ────────────────
+export const transferReceiveHandler: ToolHandler = async (args, ctx) => {
+  if (!ctx.emit || !ctx.transfers) throw new Error('transfer not supported in this context')
+  if (typeof args.size !== 'number') throw new Error('size is required')
+  if (args.overwrite !== undefined && typeof args.overwrite !== 'boolean') throw new Error('overwrite must be boolean')
+  const transfer_id = argString(args.transfer_id, 'transfer_id')
+  await ctx.transfers.beginReceive({ transfer_id,
+    path: path.resolve(ctx.cwd, argString(args.path, 'path')), size: args.size,
+    sha256: argString(args.sha256, 'sha256'), overwrite: args.overwrite === true, emit: ctx.emit })
+  return { status: 'ready', transfer_id, protocol: 1 }
+}
+
+export const transferSendHandler: ToolHandler = async (args, ctx) => {
+  if (!ctx.emit || !ctx.transfers) throw new Error('transfer not supported in this context')
+  const transfer_id = argString(args.transfer_id, 'transfer_id')
+  const metadata = await ctx.transfers.prepareSend(transfer_id,
+    path.resolve(ctx.cwd, argString(args.path, 'path')), ctx.emit)
+  return { status: 'ready', transfer_id, protocol: 1, ...metadata }
+}

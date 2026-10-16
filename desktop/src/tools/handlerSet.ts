@@ -41,6 +41,8 @@ import { terminalHandler } from './handlers/terminal.js'
 import {
   checksumHandler,
   copyDirectoryHandler,
+  transferReceiveHandler,
+  transferSendHandler,
   unzipHandler,
   zipHandler
 } from './handlers/transfer.js'
@@ -102,6 +104,8 @@ const BASE_DESKTOP_HANDLERS: Record<string, ToolHandler> = {
   desktop_zip: zipHandler,
   desktop_unzip: unzipHandler,
   desktop_checksum: checksumHandler,
+  desktop_transfer_receive: transferReceiveHandler,
+  desktop_transfer_send: transferSendHandler,
 
   // ── User-context bridges ───────────────────────────────────────────────
   desktop_clipboard_read: clipboardReadHandler,
@@ -126,7 +130,8 @@ export const RAW_EXECUTION_TOOLS = Object.freeze([
 ])
 export const FILE_TOOLS = Object.freeze([
   'desktop_read_file', 'desktop_write_file', 'desktop_patch', 'desktop_search_files',
-  'desktop_copy_directory', 'desktop_zip', 'desktop_unzip', 'desktop_checksum', 'desktop_open_in_editor'
+  'desktop_copy_directory', 'desktop_zip', 'desktop_unzip', 'desktop_checksum', 'desktop_open_in_editor',
+  'desktop_transfer_receive', 'desktop_transfer_send'
 ])
 export const SCREEN_INPUT_TOOLS = Object.freeze([
   'desktop_clipboard_read', 'desktop_clipboard_write', 'desktop_screenshot', ...DESKTOP_COMPUTER_USE_TOOLS
