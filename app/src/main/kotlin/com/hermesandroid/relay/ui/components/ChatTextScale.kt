@@ -19,9 +19,9 @@ import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import kotlin.math.sqrt
 import com.hermesandroid.relay.data.normalizeChatTextScale
-import com.hermesandroid.relay.data.CHAT_TEXT_SCALE_DEFAULT
-import com.hermesandroid.relay.data.CHAT_TEXT_SCALE_MAX
-import com.hermesandroid.relay.data.CHAT_TEXT_SCALE_MIN
+import com.hermesandroid.relay.data.CHAT_TEXT_SCALE_DEFAULT as DATA_CHAT_TEXT_SCALE_DEFAULT
+import com.hermesandroid.relay.data.CHAT_TEXT_SCALE_MAX as DATA_CHAT_TEXT_SCALE_MAX
+import com.hermesandroid.relay.data.CHAT_TEXT_SCALE_MIN as DATA_CHAT_TEXT_SCALE_MIN
 
 /**
  * Conversation text scaling: a reusable pinch-to-scale state/gesture primitive shared by the
@@ -40,6 +40,13 @@ import com.hermesandroid.relay.data.CHAT_TEXT_SCALE_MIN
  */
 
 /** Smallest allowed conversation text scale (0.85x). */
+const val CHAT_TEXT_SCALE_MIN: Float = DATA_CHAT_TEXT_SCALE_MIN
+
+/** Largest allowed conversation text scale (2.0x). */
+const val CHAT_TEXT_SCALE_MAX: Float = DATA_CHAT_TEXT_SCALE_MAX
+
+/** Default conversation text scale before any pinch. */
+const val CHAT_TEXT_SCALE_DEFAULT: Float = DATA_CHAT_TEXT_SCALE_DEFAULT
 
 /**
  * Current conversation text scale for the enclosing chat surface.
