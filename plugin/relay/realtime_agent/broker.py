@@ -4383,6 +4383,7 @@ class RealtimeAgentHandler:
             )
             return
         text = text[:5000]
+        response_id = f"compat-{session.session_id}-{session.event_seq + 1}"
         await self._send(
             ws,
             session,
@@ -4403,6 +4404,7 @@ class RealtimeAgentHandler:
                 "voice": session.voice,
                 "session_id": session.session_id,
                 "chat_session_id": session.chat_session_id,
+                "response_id": response_id,
                 "input_audio_bytes": input_audio_bytes,
             },
         )
@@ -4439,7 +4441,13 @@ class RealtimeAgentHandler:
             await self._send_error(ws, session, "Hermes completed without assistant text")
             return
 
-        await self._render_provider_audio(ws, session, final_text, payload)
+        await self._render_provider_audio(
+            ws,
+            session,
+            final_text,
+            payload,
+            response_id=response_id,
+        )
 
     async def _render_provider_audio(
         self,

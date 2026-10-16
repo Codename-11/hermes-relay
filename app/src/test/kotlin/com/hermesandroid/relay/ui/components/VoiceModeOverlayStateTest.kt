@@ -241,7 +241,7 @@ class VoiceModeOverlayStateTest {
     }
 
     @Test
-    fun micTap_interruptsBusyNonContinuousTurns() {
+    fun micTap_stopsVoiceWithoutCancellingThinkingResponse() {
         val calls = mutableListOf<String>()
 
         dispatchVoiceMicTap(
@@ -251,11 +251,50 @@ class VoiceModeOverlayStateTest {
             ),
             onStartListening = { calls += "start" },
             onStopListening = { calls += "stop" },
+            onStopSpeaking = { calls += "stop-speaking" },
             onInterrupt = { calls += "interrupt" },
             onPauseAutoMode = { calls += "pause" },
         )
 
-        assertEquals(listOf("interrupt"), calls)
+        assertEquals(listOf("stop-speaking"), calls)
+    }
+
+    @Test
+    fun micTap_stopsOnlyPlaybackWhileSpeaking() {
+        val calls = mutableListOf<String>()
+
+        dispatchVoiceMicTap(
+            uiState = VoiceUiState(
+                state = VoiceState.Speaking,
+                interactionMode = InteractionMode.TapToTalk,
+            ),
+            onStartListening = { calls += "start" },
+            onStopListening = { calls += "stop" },
+            onStopSpeaking = { calls += "stop-speaking" },
+            onInterrupt = { calls += "interrupt" },
+            onPauseAutoMode = { calls += "pause" },
+        )
+
+        assertEquals(listOf("stop-speaking"), calls)
+    }
+
+    @Test
+    fun micTap_pausesContinuousSpeakingWithoutInterrupting() {
+        val calls = mutableListOf<String>()
+
+        dispatchVoiceMicTap(
+            uiState = VoiceUiState(
+                state = VoiceState.Speaking,
+                interactionMode = InteractionMode.Continuous,
+            ),
+            onStartListening = { calls += "start" },
+            onStopListening = { calls += "stop" },
+            onStopSpeaking = { calls += "stop-speaking" },
+            onInterrupt = { calls += "interrupt" },
+            onPauseAutoMode = { calls += "pause" },
+        )
+
+        assertEquals(listOf("pause"), calls)
     }
 
     @Test
@@ -269,6 +308,7 @@ class VoiceModeOverlayStateTest {
             ),
             onStartListening = { calls += "start" },
             onStopListening = { calls += "stop" },
+            onStopSpeaking = { calls += "stop-speaking" },
             onInterrupt = { calls += "interrupt" },
             onPauseAutoMode = { calls += "pause" },
         )

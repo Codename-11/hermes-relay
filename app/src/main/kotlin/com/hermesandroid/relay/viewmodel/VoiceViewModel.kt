@@ -115,6 +115,46 @@ internal fun ownsVoiceAudioCompletion(
     responseSpeechActive: Boolean,
 ): Boolean = voiceMode || responseSpeechActive
 
+/**
+ * Remembers response identities whose audio was explicitly stopped. A muted
+ * response stays muted for the lifetime of the realtime session, so delayed
+ * packets cannot resume playback after a newer response has started.
+ */
+internal class RealtimeAudioSuppressionFence {
+    private val mutedResponseIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val muteUnknownResponses = AtomicBoolean(false)
+
+    fun suppress(responseId: String?) {
+        val normalized = responseId?.trim().orEmpty()
+        if (normalized.isEmpty()) {
+            muteUnknownResponses.set(true)
+        } else {
+            mutedResponseIds.add(normalized)
+        }
+    }
+
+    fun reset() {
+        mutedResponseIds.clear()
+        muteUnknownResponses.set(false)
+    }
+
+    fun shouldSuppress(responseId: String?): Boolean {
+        val normalized = responseId?.trim().orEmpty()
+        return if (normalized.isEmpty()) {
+            muteUnknownResponses.get() || mutedResponseIds.isNotEmpty()
+        } else {
+            muteUnknownResponses.get() || mutedResponseIds.contains(normalized)
+        }
+    }
+}
+
+internal fun shouldSuppressRealtimeAudio(
+    applyResponseFence: Boolean,
+    fastSuppressed: Boolean,
+    fence: RealtimeAudioSuppressionFence,
+    responseId: String?,
+): Boolean = applyResponseFence && (fastSuppressed || fence.shouldSuppress(responseId))
+
 internal fun voiceSubmissionRejectedState(
     state: VoiceUiState,
     reason: String,
@@ -811,6 +851,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private val audioBytes = AtomicInteger(0)
     private val bargeInStarted = AtomicBoolean(false)
     private val lastRealtimeAudioEventId = AtomicLong(0L)
+    private val currentRealtimeResponseId = AtomicReference<String?>(null)
     private var responseText = StringBuilder()
     private var inputTranscript = StringBuilder()
     private val spokenStatusKeys = mutableSetOf<String>()
@@ -879,6 +920,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * audio and jitter during long Hermes tool work.
      */
     private val providerRealtimeAgentTurnActive = AtomicBoolean(false)
+    /** True only after the current voice prompt crossed its transport boundary. */
+    private val voiceTurnTransportAccepted = AtomicBoolean(false)
+    /** Hidden voice UI that is retaining its response socket until response.done. */
+    private val detachedVoiceResponse = AtomicBoolean(false)
 
     /**
      * Sentences that have been [Channel.trySend]-enqueued to [ttsQueue] but
@@ -962,15 +1007,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var lastRealtimeAudioDeltaAtMs: Long = 0L
 
     /**
-     * Set true when the user interrupts a realtime turn ([interruptSpeaking]).
-     * The persistent realtime socket stays open by design, so audio deltas
-     * already in flight can still arrive after we stop the player and would
-     * re-create the AudioTrack — making "Stop" feel like it didn't work. While
-     * suppressed, [handleRealtimeVoiceEvent] drops audio writes. Cleared when
-     * the next turn is actually sent ([submitRealtimeTurn] / [runRealtimeAgentTurn]).
+     * Fast-path mute for realtime audio. The event-id fence below preserves the
+     * mute across background delivery and persistent-session turn boundaries.
      */
     @Volatile
     private var realtimeAudioSuppressed: Boolean = false
+    private val realtimeAudioSuppressionFence = RealtimeAudioSuppressionFence()
     private var listeningStartedAtMs: Long = 0L
     // 2026-04-18: silence-based auto-stop watchdog. Runs for the duration
     // of a Listening turn in TapToTalk / Continuous modes when the user has
@@ -1912,7 +1954,41 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** User-facing Stop voice action: leave voice UI without killing a reply
+     * that has already been accepted by chat or the realtime provider. */
+    fun stopVoiceMode() {
+        var preserveAcceptedResponse = false
+        synchronized(realtimeSessionStateLock) {
+            val state = _uiState.value.state
+            val responseAccepted = voiceTurnTransportAccepted.get() ||
+                _uiState.value.backgroundRun != null
+            preserveAcceptedResponse =
+                (state == VoiceState.Thinking || state == VoiceState.Speaking) && responseAccepted
+            val retainRealtimeDelivery = preserveAcceptedResponse &&
+                providerRealtimeAgentTurnActive.get() && realtimeAgentControl != null
+            if (retainRealtimeDelivery) {
+                detachedVoiceResponse.set(true)
+                interruptSpeaking(cancelActiveTurn = false)
+                _uiState.update {
+                    it.copy(
+                        voiceMode = false,
+                        state = VoiceState.Idle,
+                        amplitude = 0f,
+                        outputAudioActive = false,
+                    )
+                }
+                return
+            }
+            exitVoiceMode(cancelActiveTurn = !preserveAcceptedResponse)
+            return
+        }
+    }
+
     fun exitVoiceMode() {
+        exitVoiceMode(cancelActiveTurn = true)
+    }
+
+    private fun exitVoiceMode(cancelActiveTurn: Boolean) {
         voiceOutputEpoch++
         retireInboundSpeech()
         cancelPendingListeningStart()
@@ -1936,7 +2012,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // If a caller ever needs unconditional teardown (e.g. onCleared), they
         // can bypass this guard by calling the primitives directly — or we
         // add a separate `forceExitVoiceMode()` when that need materializes.
-        if (!_uiState.value.voiceMode) return
+        if (!_uiState.value.voiceMode && !detachedVoiceResponse.get()) return
 
         assistantActivationId?.let { id ->
             viewModelScope.launch(Dispatchers.IO) {
@@ -1960,13 +2036,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             // this session. A late promotion/cancellation callback must land
             // either wholly before this decision or be rejected afterward.
             val currentRun = _uiState.value.backgroundRun
-            if (currentRun == null) {
+            if (currentRun == null && cancelActiveTurn) {
                 cancelRealtimeAgentTurn("exit voice mode")
+            } else if (!cancelActiveTurn) {
+                // A UI stop is not a response cancel. Close only the client
+                // side; Relay's bounded detached-session window lets the
+                // accepted response finish and sync into chat.
+                realtimeAgentControl?.detach()
             }
             deliveringChipClearJob?.cancel()
             deliveringChipClearJob = null
             retireBackgroundCancelWatchdogLocked()
             providerRealtimeAgentTurnActive.set(false)
+            voiceTurnTransportAccepted.set(false)
+            detachedVoiceResponse.set(false)
             realtimeAgentControl = null
             realtimeConfirmationControl = null
             closeRealtimeSession()
@@ -2177,6 +2260,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         bargeInCapture: Boolean = false,
     ): Boolean {
         return try {
+            synchronized(realtimeSessionStateLock) {
+                voiceTurnTransportAccepted.set(false)
+                detachedVoiceResponse.set(false)
+            }
             rec.startRecording()
             listeningStartedAtMs = System.currentTimeMillis()
             _uiState.update {
@@ -2359,7 +2446,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 listeningStartedAtMs = 0L
                 _uiState.update { it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false) }
             }
-            VoiceState.Speaking, VoiceState.Transcribing, VoiceState.Thinking -> {
+            VoiceState.Speaking -> {
+                stopSpeakingPlayback()
+            }
+            VoiceState.Transcribing, VoiceState.Thinking -> {
                 interruptSpeaking()
             }
             VoiceState.Idle, VoiceState.Error -> {
@@ -2506,6 +2596,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // Drop realtime audio deltas still in flight on the open socket so a
         // stopped turn's tail can't re-create the player and resume playback.
         realtimeAudioSuppressed = true
+        if (providerRealtimeAgentTurnActive.get()) {
+            realtimeAudioSuppressionFence.suppress(currentRealtimeResponseId.get())
+        }
         // B4: tear down the barge-in listener immediately so we don't
         // double-trigger on the ducking watchdog or emit another
         // bargeInDetected while the resume watchdog is deliberating.
@@ -2591,6 +2684,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     /** Stop one-shot message narration without cancelling chat generation. */
     fun stopResponseSpeech(): Boolean {
         if (!_responseSpeechActive.value) return false
+        return stopSpeakingPlayback()
+    }
+
+    /** Silence current response audio while allowing its chat turn to finish. */
+    fun stopSpeakingPlayback(): Boolean {
+        if (_uiState.value.state != VoiceState.Speaking) return false
+        // This observer only feeds local TTS. Detaching it prevents later text
+        // deltas from restarting playback while ChatViewModel keeps generating.
+        streamObserverJob?.cancel()
+        streamObserverJob = null
         interruptSpeaking(cancelActiveTurn = false)
         return true
     }
@@ -3210,7 +3313,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         when (action) {
-            VoiceCommandAction.EndVoiceChat -> exitVoiceMode()
+            VoiceCommandAction.EndVoiceChat -> stopVoiceMode()
             VoiceCommandAction.StopResponse -> interruptSpeaking()
             VoiceCommandAction.CancelBackgroundTask -> cancelBackgroundRun()
             VoiceCommandAction.PauseContinuousListening -> pauseContinuousMode()
@@ -3592,10 +3695,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             gatewayAttachments = turnPayload.gatewayAttachments,
             hasScreenContext = stagedContext != null,
             onTransportAccepted = {
-                assistantContextRetryAvailable = false
-                if (contextDisposition.consumeOnTransportAcceptance && contextActivationId != null) {
-                    viewModelScope.launch(Dispatchers.IO) {
-                        assistantContextStore(getApplication()).consume(contextActivationId)
+                synchronized(realtimeSessionStateLock) {
+                    voiceTurnTransportAccepted.set(true)
+                    assistantContextRetryAvailable = false
+                    if (contextDisposition.consumeOnTransportAcceptance && contextActivationId != null) {
+                        viewModelScope.launch(Dispatchers.IO) {
+                            assistantContextStore(getApplication()).consume(contextActivationId)
+                        }
                     }
                 }
             },
@@ -3708,8 +3814,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             realtimeSessionGeneration.get() == sessionGeneration
         if (!prewarm) providerRealtimeAgentTurnActive.set(true)
         cancelStandardSpeechStream("provider-native realtime turn")
-        // New turn requested → allow this response's audio through again.
+        // A new realtime session fences all callbacks from the prior generation.
         realtimeAudioSuppressed = false
+        realtimeAudioSuppressionFence.reset()
+        currentRealtimeResponseId.set(null)
         streamObserverJob?.cancel()
         streamObserverJob = null
         drainQueuedLocalTts()
@@ -3879,12 +3987,22 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         return@runRealtimeAgent
                     }
                     realtimeAgentControl = control
+                    if (event.type == "voice.input_audio.received" ||
+                        event.type == "voice.input_transcript.final" ||
+                        event.type == "voice.response.started"
+                    ) {
+                        voiceTurnTransportAccepted.set(true)
+                    }
                     val providerResponseEvent = event.type == "voice.response.started" ||
                         event.type == "voice.response.delta" ||
                         event.type == "voice.playback_drain.requested" ||
                         event.type == "voice.output_audio.delta" ||
                         event.type == "voice.output_audio.done" ||
                         event.type == "voice.response.done"
+                    if (event.type == "voice.response.started") {
+                        currentRealtimeResponseId.set(event.responseId)
+                        realtimeAudioSuppressed = false
+                    }
                     val deliveryResponseEvent = !event.delivery.isNullOrBlank()
                     if (suppressLocalCommandResponse && deliveryResponseEvent) {
                         // A completed background task owns this response, not the
@@ -4290,6 +4408,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             audioSeen = audioSeen,
                             audioBytes = audioBytes,
                             bargeInStarted = bargeInStarted,
+                            applyResponseFence = true,
                         )
                     }
                 }
@@ -4335,6 +4454,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                     providerRealtimeAgentTurnActive.set(false)
+                    voiceTurnTransportAccepted.set(false)
+                    if (detachedVoiceResponse.get()) {
+                        viewModelScope.launch {
+                            exitVoiceMode(cancelActiveTurn = false)
+                        }
+                    }
                 }
                 "voice.error" -> {
                     realtimeConfirmationControl = null
@@ -4354,6 +4479,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         java.io.IOException(rawDetail),
                         context = "voice_config",
                     )
+                    if (detachedVoiceResponse.get()) {
+                        viewModelScope.launch {
+                            exitVoiceMode(cancelActiveTurn = false)
+                        }
+                    }
                     }
                 }
             }
@@ -4534,6 +4664,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 assistantMessageId = assistantMessageId,
                 detail = delivered.exceptionOrNull()?.message ?: "Realtime voice connection was interrupted",
             )
+        } else {
+            synchronized(realtimeSessionStateLock) {
+                voiceTurnTransportAccepted.set(true)
+            }
         }
     }
 
@@ -4544,6 +4678,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         Log.w(TAG, "Realtime persistent turn delivery failed: $detail")
         providerRealtimeAgentTurnActive.set(false)
+        voiceTurnTransportAccepted.set(false)
         if (!assistantMessageId.isNullOrBlank()) {
             chatVm.failRealtimeAgentTurn(
                 assistantMessageId,
@@ -4591,6 +4726,23 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             realtimeAgentControl = control
             providerRealtimeAgentTurnActive.set(true)
             _uiState.update { it.copy(backgroundRun = run) }
+        }
+    }
+
+    internal fun seedActiveRealtimeTurnForTest(
+        control: RealtimeAgentSessionControl,
+    ) {
+        synchronized(realtimeSessionStateLock) {
+            realtimeAgentControl = control
+            providerRealtimeAgentTurnActive.set(true)
+            voiceTurnTransportAccepted.set(true)
+            _uiState.update {
+                it.copy(
+                    voiceMode = true,
+                    state = VoiceState.Thinking,
+                    backgroundRun = null,
+                )
+            }
         }
     }
 
@@ -5366,7 +5518,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     onHandoff = ::recordVoiceHandoff,
                 ) { event ->
                     if (outputEpoch == voiceOutputEpoch) {
-                        handleRealtimeVoiceEvent(event, pcmPlayer, audioSeen, audioBytes, bargeInStarted)
+                        handleRealtimeVoiceEvent(
+                            event,
+                            pcmPlayer,
+                            audioSeen,
+                            audioBytes,
+                            bargeInStarted,
+                            applyResponseFence = false,
+                        )
                     }
                 }
             } finally {
@@ -5503,12 +5662,20 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         audioSeen: AtomicBoolean,
         audioBytes: AtomicInteger,
         bargeInStarted: AtomicBoolean,
+        applyResponseFence: Boolean,
     ) {
         if (!event.isAudioDelta) return
-        // After an interrupt, ignore the cancelled turn's in-flight audio tail
-        // until the next turn is sent (which clears the flag). Otherwise these
-        // late deltas re-create the player and playback resumes after "Stop".
-        if (realtimeAudioSuppressed) return
+        // Provider audio is response-owned, so a stopped response stays muted
+        // even when delayed packets arrive after a newer response. Legacy
+        // Voice Output is fenced separately by voiceOutputEpoch.
+        if (
+            shouldSuppressRealtimeAudio(
+                applyResponseFence = applyResponseFence,
+                fastSuppressed = realtimeAudioSuppressed,
+                fence = realtimeAudioSuppressionFence,
+                responseId = event.responseId,
+            )
+        ) return
         val encoded = event.audioBase64 ?: return
         val audio = try {
             Base64.getDecoder().decode(encoded)
