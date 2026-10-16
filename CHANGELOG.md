@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Android moves model and reasoning selectors into the status footer and keeps attachment, voice, send, and stop actions at stable accessible touch targets on compact and large-font layouts. (#561)
 - Android avoids redundant conversation history in Gateway send/recovery responses and pauses automatic conversation reopening after a recorded out-of-memory crash, preserving saved conversations and drafts. (#700)
 - Android preserves native Dashboard sign-in during reverse-proxy access failures and retries refresh on a later request when the route is reachable again. (#711)
 - Secure Link accepts PEM certificate chains, exports only the leaf certificate for pairing, and reports invalid certificate/key configurations without exposing private file paths. (#712)

@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -74,6 +75,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.RelayRefresh
@@ -98,6 +100,22 @@ import kotlinx.coroutines.delay
 enum class ChatInputTrailing { SEND, VOICE, STOP, STEER, QUEUE }
 
 internal const val CHAT_INPUT_FIELD_TEST_TAG = "chat-input-field"
+internal const val CHAT_INPUT_ATTACH_BUTTON_TEST_TAG = "chat-input-attach-button"
+internal const val CHAT_INPUT_VOICE_BUTTON_TEST_TAG = "chat-input-voice-button"
+internal const val CHAT_INPUT_VOICE_BADGE_TEST_TAG = "chat-input-voice-badge"
+internal const val CHAT_INPUT_TRAILING_BUTTON_TEST_TAG = "chat-input-trailing-button"
+
+/**
+ * Explicit minimum touch target for every composer affordance (attachment,
+ * voice, send/stop/steer/queue). 48.dp is the platform minimum tap size; the
+ * box grows with the icon but never shrinks below it, and the glyph itself
+ * keeps a fixed [ComposerIconSize] so the touch area — not the selector text —
+ * stays stable.
+ */
+internal val ComposerTouchTarget: Modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp)
+
+/** Fixed icon size for composer affordances, independent of label length. */
+internal val ComposerIconSize: Dp = 22.dp
 
 data class ChatInputPickerOption(
     val label: String,
@@ -360,14 +378,90 @@ fun ChatInputBar(
                     }
                 }
 
-                Column(
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    // "+" Attachment menu button on the LEFT
+                    var attachMenuExpanded by remember { mutableStateOf(false) }
+                    Box {
+                        Box(
+                            modifier = Modifier
+                                .testTag(CHAT_INPUT_ATTACH_BUTTON_TEST_TAG)
+                                .then(ComposerTouchTarget)
+                                .clip(CircleShape)
+                                .combinedClickable(
+                                    onClick = { attachMenuExpanded = true },
+                                    onClickLabel = stringResource(R.string.chat_input_add_attachment),
+                                    onLongClick = onLongPressAttach,
+                                    onLongClickLabel = stringResource(R.string.chat_input_browse_commands),
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = stringResource(R.string.chat_input_add_attachment_hold),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(ComposerIconSize),
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = attachMenuExpanded,
+                            onDismissRequest = { attachMenuExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_input_photos)) },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.PhotoLibrary, contentDescription = null)
+                                },
+                                onClick = {
+                                    attachMenuExpanded = false
+                                    onAttachPhotos()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_input_files)) },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.InsertDriveFile, contentDescription = null)
+                                },
+                                onClick = {
+                                    attachMenuExpanded = false
+                                    onAttachFiles()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_input_camera)) },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.PhotoCamera, contentDescription = null)
+                                },
+                                onClick = {
+                                    attachMenuExpanded = false
+                                    onAttachCamera()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.chat_input_paste_image)) },
+                                leadingIcon = {
+                                    Icon(Icons.Filled.ContentPaste, contentDescription = null)
+                                },
+                                onClick = {
+                                    attachMenuExpanded = false
+                                    onPasteImage()
+                                },
+                            )
+                        }
+                    }
+
+                    // Text Field in the CENTER
                     BasicTextField(
                         value = value,
                         onValueChange = { updated ->
-                            val converted = largePasteThreshold
-                                ?.let { threshold -> detectLargeTextInsertion(value, updated, threshold) }
+                            val converted = if (largePasteThreshold != null) {
+                                detectLargeTextInsertion(value, updated, largePasteThreshold)
+                            } else null
                             if (converted != null) {
                                 onValueChange(converted.remainingText)
                                 onLargePaste(converted.insertedText)
@@ -376,9 +470,9 @@ fun ChatInputBar(
                             }
                         },
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 30.dp)
-                            .padding(horizontal = 10.dp, vertical = 2.dp)
+                            .weight(1f)
+                            .heightIn(min = 36.dp)
+                            .padding(horizontal = 4.dp, vertical = 6.dp)
                             // Keep directional keys inside the editor. Compose's
                             // BasicTextField owns normal caret/selection movement;
                             // cancelling focus traversal prevents a boundary arrow
@@ -429,12 +523,17 @@ fun ChatInputBar(
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         decorationBox = { inner ->
-                            Box(Modifier.fillMaxWidth()) {
+                            Box(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
                                 if (value.isEmpty()) {
                                     Text(
                                         text = placeholder,
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = RelayRefresh.Dim,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
                                 }
                                 inner()
@@ -442,162 +541,65 @@ fun ChatInputBar(
                         },
                     )
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 44.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    // "+" tap opens the attach menu (Photos / Files / Camera /
-                    // Paste image); long-press opens the command palette.
-                    var attachMenuExpanded by remember { mutableStateOf(false) }
-                    Box {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .combinedClickable(
-                                    onClick = { attachMenuExpanded = true },
-                                    onClickLabel = stringResource(R.string.chat_input_add_attachment),
-                                    onLongClick = onLongPressAttach,
-                                    onLongClickLabel = stringResource(R.string.chat_input_browse_commands),
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Add,
-                                contentDescription = stringResource(R.string.chat_input_add_attachment_hold),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        DropdownMenu(
-                            expanded = attachMenuExpanded,
-                            onDismissRequest = { attachMenuExpanded = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.chat_input_photos)) },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.PhotoLibrary, contentDescription = null)
-                                },
-                                onClick = {
-                                    attachMenuExpanded = false
-                                    onAttachPhotos()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.chat_input_files)) },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.InsertDriveFile, contentDescription = null)
-                                },
-                                onClick = {
-                                    attachMenuExpanded = false
-                                    onAttachFiles()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.chat_input_camera)) },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.PhotoCamera, contentDescription = null)
-                                },
-                                onClick = {
-                                    attachMenuExpanded = false
-                                    onAttachCamera()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.chat_input_paste_image)) },
-                                leadingIcon = {
-                                    Icon(Icons.Filled.ContentPaste, contentDescription = null)
-                                },
-                                onClick = {
-                                    attachMenuExpanded = false
-                                    onPasteImage()
-                                },
-                            )
-                        }
-                    }
-
-                    if (modelControl != null) {
-                        ChatInputPickerChip(
-                            control = modelControl,
-                            onSelect = onModelOptionSelected,
-                            modifier = Modifier.widthIn(max = 126.dp),
-                            onClickOverride = onModelPickerClick,
-                        )
-                    }
-
-                    if (effortControl != null) {
-                        ChatInputPickerChip(
-                            control = effortControl,
-                            onSelect = {},
-                            modifier = Modifier.widthIn(max = 104.dp),
-                            onClickOverride = onEffortPickerClick,
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.weight(1f))
-
-                    // Trailing slot
-                    val glow = trailing == ChatInputTrailing.SEND && enabled && isDarkTheme
-                    Box(
-                        modifier = if (glow) {
-                            Modifier.purpleGlow(radius = 24.dp, alpha = 0.35f, isDarkTheme = true)
-                        } else {
-                            Modifier
-                        },
+                    // Right side controls: Voice waves button + Send / Action button
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        AnimatedContent(
-                            targetState = trailing,
-                            transitionSpec = {
-                                (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f))
-                                    .togetherWith(fadeOut(tween(100)))
-                            },
-                            label = "chatInputTrailing",
-                        ) { state ->
-                            when (state) {
-                                ChatInputTrailing.SEND -> IconButton(
-                                    onClick = onSend,
-                                    enabled = canSubmit,
+                        // Voice waves button (where mic is in the picture)
+                        if (!suppressVoiceTrailing) {
+                            Box(modifier = Modifier.testTag(CHAT_INPUT_VOICE_BUTTON_TEST_TAG)) {
+                                IconButton(
+                                    onClick = onVoice,
+                                    modifier = ComposerTouchTarget,
                                 ) {
                                     Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = stringResource(R.string.chat_input_send_message),
-                                        tint = if (canSubmit) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        imageVector = Icons.Filled.GraphicEq,
+                                        contentDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
+                                            else stringResource(R.string.chat_input_voice_setup_needed),
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(ComposerIconSize),
                                     )
                                 }
-
-                                ChatInputTrailing.VOICE -> {
-                                    if (!suppressVoiceTrailing) {
-                                        Box {
-                                            IconButton(onClick = onVoice) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.GraphicEq,
-                                                    contentDescription = if (voiceReady) stringResource(R.string.chat_input_start_voice)
-                                                        else stringResource(R.string.chat_input_voice_setup_needed),
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                )
-                                            }
-                                            // "Needs setup" badge — full-alpha button + Amber
-                                            // dot instead of a half-dimmed broken-looking mic.
-                                            if (!voiceReady) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .align(Alignment.TopEnd)
-                                                        .padding(top = 8.dp, end = 8.dp)
-                                                        .size(6.dp)
-                                                        .clip(CircleShape)
-                                                        .background(RelayRefresh.Amber),
-                                                )
-                                            }
-                                        }
-                                    }
+                                // "Needs setup" badge — full-alpha button + Amber
+                                // dot instead of a half-dimmed broken-looking mic.
+                                if (!voiceReady) {
+                                    Box(
+                                        modifier = Modifier
+                                            .testTag(CHAT_INPUT_VOICE_BADGE_TEST_TAG)
+                                            .align(Alignment.TopEnd)
+                                            .padding(top = 8.dp, end = 8.dp)
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(RelayRefresh.Amber),
+                                    )
                                 }
+                            }
+                        }
 
-                                ChatInputTrailing.STOP -> {
-                                    if (!suppressVoiceTrailing) {
-                                        IconButton(onClick = onStop) {
+                        // Send / Stop / Steer / Queue Action button (to the right of Voice)
+                        val glow = trailing == ChatInputTrailing.SEND && enabled && isDarkTheme
+                        Box(
+                            modifier = if (glow) {
+                                Modifier.purpleGlow(radius = 24.dp, alpha = 0.35f, isDarkTheme = true)
+                            } else {
+                                Modifier
+                            },
+                        ) {
+                            AnimatedContent(
+                                targetState = trailing,
+                                transitionSpec = {
+                                    (fadeIn(tween(150)) + scaleIn(initialScale = 0.8f))
+                                        .togetherWith(fadeOut(tween(100)))
+                                },
+                                label = "chatInputTrailing",
+                            ) { state ->
+                                when (state) {
+                                    ChatInputTrailing.STOP -> {
+                                        IconButton(
+                                            onClick = onStop,
+                                            modifier = Modifier.testTag(CHAT_INPUT_TRAILING_BUTTON_TEST_TAG).then(ComposerTouchTarget),
+                                        ) {
                                             Box(
                                                 modifier = Modifier
                                                     .size(32.dp)
@@ -608,42 +610,60 @@ fun ChatInputBar(
                                                     imageVector = Icons.Filled.Stop,
                                                     contentDescription = stringResource(R.string.chat_input_stop_streaming),
                                                     tint = MaterialTheme.colorScheme.error,
-                                                    modifier = Modifier.size(18.dp),
+                                                    modifier = Modifier.size(ComposerIconSize),
                                                 )
                                             }
                                         }
                                     }
-                                }
 
-                                ChatInputTrailing.STEER -> IconButton(
-                                    onClick = onSend,
-                                    enabled = canSubmit,
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.Send,
-                                        contentDescription = stringResource(R.string.chat_input_steer_response),
-                                        tint = MaterialTheme.colorScheme.tertiary,
-                                    )
-                                }
-
-                                ChatInputTrailing.QUEUE -> IconButton(
-                                    onClick = onSend,
-                                    enabled = canSubmit,
-                                ) {
-                                    Box {
+                                    ChatInputTrailing.STEER -> IconButton(
+                                        onClick = onSend,
+                                        enabled = canSubmit,
+                                        modifier = Modifier.testTag(CHAT_INPUT_TRAILING_BUTTON_TEST_TAG).then(ComposerTouchTarget),
+                                    ) {
                                         Icon(
                                             imageVector = Icons.AutoMirrored.Filled.Send,
-                                            contentDescription = stringResource(R.string.chat_input_queue_message),
+                                            contentDescription = stringResource(R.string.chat_input_steer_response),
                                             tint = MaterialTheme.colorScheme.tertiary,
+                                            modifier = Modifier.size(ComposerIconSize),
                                         )
+                                    }
+
+                                    ChatInputTrailing.QUEUE -> IconButton(
+                                        onClick = onSend,
+                                        enabled = canSubmit,
+                                        modifier = Modifier.testTag(CHAT_INPUT_TRAILING_BUTTON_TEST_TAG).then(ComposerTouchTarget),
+                                    ) {
+                                        Box {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.Send,
+                                                contentDescription = stringResource(R.string.chat_input_queue_message),
+                                                tint = MaterialTheme.colorScheme.tertiary,
+                                                modifier = Modifier.size(ComposerIconSize),
+                                            )
+                                            Icon(
+                                                imageVector = Icons.Filled.Schedule,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.tertiary,
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .offset(x = 5.dp, y = (-3).dp)
+                                                    .size(10.dp),
+                                            )
+                                        }
+                                    }
+
+                                    else -> IconButton(
+                                        onClick = onSend,
+                                        enabled = canSubmit,
+                                        modifier = Modifier.testTag(CHAT_INPUT_TRAILING_BUTTON_TEST_TAG).then(ComposerTouchTarget),
+                                    ) {
                                         Icon(
-                                            imageVector = Icons.Filled.Schedule,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.tertiary,
-                                            modifier = Modifier
-                                                .align(Alignment.TopEnd)
-                                                .offset(x = 5.dp, y = (-3).dp)
-                                                .size(10.dp),
+                                            imageVector = Icons.AutoMirrored.Filled.Send,
+                                            contentDescription = stringResource(R.string.chat_input_send_message),
+                                            tint = if (canSubmit) MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(ComposerIconSize),
                                         )
                                     }
                                 }
@@ -654,7 +674,6 @@ fun ChatInputBar(
             }
         }
     }
-}
 }
 }
 

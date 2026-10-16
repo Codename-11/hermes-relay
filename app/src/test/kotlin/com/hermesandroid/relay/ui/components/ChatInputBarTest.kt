@@ -1,6 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -253,6 +254,159 @@ class ChatInputBarTest {
         compose.runOnIdle { assertEquals(0, sent) }
     }
 
+    // xhdpi test qualifier: 1dp == 2px, so the 48dp minimum is 96px.
+    private val minTouchPx = 96
+
+    @Test
+    fun `every trailing affordance exposes an explicit 48dp minimum touch target`() {
+        // One parameterized pass over all five ChatInputTrailing states: the
+        // trailing slot morphs in place, so each state must keep the same
+        // minimum hit area.
+        var stateTrailing by mutableStateOf(ChatInputTrailing.SEND)
+        compose.setContent { MaterialTheme { bar(trailing = stateTrailing) } }
+        for (trailing in ChatInputTrailing.entries) {
+            compose.runOnIdle { stateTrailing = trailing }
+            compose.waitForIdle()
+            compose.onNodeWithTag(CHAT_INPUT_TRAILING_BUTTON_TEST_TAG)
+                .assertTouchTargetAtLeast(minTouchPx)
+        }
+    }
+
+    @Test
+    fun `attachment button exposes an explicit 48dp minimum touch target`() {
+        setComposer(value = "")
+        compose.onNodeWithTag(CHAT_INPUT_ATTACH_BUTTON_TEST_TAG)
+            .assertTouchTargetAtLeast(minTouchPx)
+    }
+
+    @Test
+    fun `voice button exposes an explicit 48dp minimum touch target`() {
+        setComposer(value = "")
+        compose.onNodeWithTag(CHAT_INPUT_VOICE_BUTTON_TEST_TAG)
+            .assertTouchTargetAtLeast(minTouchPx)
+    }
+
+    @Test
+    fun `trailing touch target stays stable while the draft grows`() {
+        // The bar is a single row: a long draft must not stretch the send
+        // button, and neither may it push the affordance below 48dp.
+        var value by mutableStateOf("short")
+        compose.setContent { MaterialTheme { bar(value = value) } }
+        compose.waitForIdle()
+        val short = compose.onNodeWithTag(CHAT_INPUT_TRAILING_BUTTON_TEST_TAG)
+            .fetchSemanticsNode().boundsInRoot
+
+        compose.runOnIdle { value = "x".repeat(2_000) }
+        compose.waitForIdle()
+        val long = compose.onNodeWithTag(CHAT_INPUT_TRAILING_BUTTON_TEST_TAG)
+            .fetchSemanticsNode().boundsInRoot
+        org.junit.Assert.assertEquals(short.width, long.width)
+        org.junit.Assert.assertEquals(short.height, long.height)
+        org.junit.Assert.assertTrue(long.width >= minTouchPx && long.height >= minTouchPx)
+    }
+
+    @Test
+    fun `composer affordances keep their accessible names while targets grow`() {
+        setComposer(value = "")
+        compose.onNodeWithContentDescription("Add attachment; hold for commands").assertExists()
+        compose.onNodeWithContentDescription("Start voice conversation").assertExists()
+        compose.onNodeWithContentDescription("Send message").assertExists()
+    }
+
+    @Test
+    fun `voice setup badge stays inside the 48dp voice target`() {
+        // The amber "needs setup" dot is decoration: it must not poke outside
+        // the touchable box, and it must not announce itself (the button's
+        // content description already names the state).
+        setComposer(value = "", voiceReady = false)
+        compose.runOnIdle {
+            val button = compose.onNodeWithTag(CHAT_INPUT_VOICE_BUTTON_TEST_TAG)
+                .fetchSemanticsNode().boundsInRoot
+            val badge = compose.onNodeWithTag(CHAT_INPUT_VOICE_BADGE_TEST_TAG)
+                .fetchSemanticsNode().boundsInRoot
+            org.junit.Assert.assertTrue(badge.left >= button.left)
+            org.junit.Assert.assertTrue(badge.top >= button.top)
+            org.junit.Assert.assertTrue(badge.right <= button.right)
+            org.junit.Assert.assertTrue(badge.bottom <= button.bottom)
+        }
+    }
+
+    @Test
+    fun `status strip model pill keeps a bounded width and accessible name`() {
+        compose.setContent {
+            MaterialTheme {
+                RelayStatusStrip(
+                    leadingBadge = { },
+                    routeLabel = "gateway",
+                    modelLabel = "anthropic-claude-opus-4-6-20260205-long-horizon-preview",
+                    onModelClick = {},
+                )
+            }
+        }
+        compose.runOnIdle {
+            val pill = compose.onNodeWithContentDescription("Select model")
+            pill.assertExists()
+            // The label is capped (140dp == 280px at xhdpi), with bounded
+            // padding and the affordance icon kept inside the pill.
+            org.junit.Assert.assertTrue(
+                pill.fetchSemanticsNode().boundsInRoot.width <= 480,
+            )
+        }
+    }
+
+    @Test
+    fun `status strip effort pill keeps its own accessible name`() {
+        compose.setContent {
+            MaterialTheme {
+                RelayStatusStrip(
+                    leadingBadge = { },
+                    routeLabel = "gateway",
+                    modelLabel = "model",
+                    effortLabel = "high",
+                    onModelClick = {},
+                    onEffortClick = {},
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("Select reasoning effort").assertExists()
+    }
+
+    private fun androidx.compose.ui.test.SemanticsNodeInteraction.assertTouchTargetAtLeast(minPx: Int) {
+        val bounds = fetchSemanticsNode().boundsInRoot
+        org.junit.Assert.assertTrue(
+            "touch target ${bounds.width}x${bounds.height}px is below the ${minPx}px minimum",
+            bounds.width >= minPx && bounds.height >= minPx,
+        )
+    }
+
+    /** Renders a bare [ChatInputBar] with defaults; [bar] overrides one state at a time. */
+    @Composable
+    private fun bar(
+        value: String = "",
+        trailing: ChatInputTrailing = ChatInputTrailing.SEND,
+    ) {
+        ChatInputBar(
+            value = value,
+            onValueChange = {},
+            placeholder = "Message",
+            trailing = trailing,
+            onSend = {},
+            onVoice = {},
+            onStop = {},
+            onAttachPhotos = {},
+            onAttachFiles = {},
+            onAttachCamera = {},
+            onPasteImage = {},
+            onLongPressAttach = {},
+            charLimit = 4_000,
+            caption = null,
+            voiceReady = true,
+            showVoiceHint = false,
+            onVoiceHintShown = {},
+            isDarkTheme = false,
+        )
+    }
+
     private fun setComposer(
         value: String,
         onValueChange: (String) -> Unit = {},
@@ -263,6 +417,7 @@ class ChatInputBarTest {
         onLargePaste: (String) -> Unit = {},
         charLimit: Int = 4_000,
         submitEnabled: Boolean = true,
+        voiceReady: Boolean = true,
         onSend: () -> Unit = {},
     ) {
         var currentValue by mutableStateOf(value)
@@ -286,7 +441,7 @@ class ChatInputBarTest {
                     onLongPressAttach = {},
                     charLimit = charLimit,
                     caption = caption,
-                    voiceReady = true,
+                    voiceReady = voiceReady,
                     showVoiceHint = false,
                     onVoiceHintShown = {},
                     isDarkTheme = false,

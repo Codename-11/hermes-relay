@@ -83,6 +83,8 @@ FOCUSED_TESTS = (
     "com.hermesandroid.relay.ui.components.AttachmentGalleryLayoutTest",
     "com.hermesandroid.relay.ui.components.ChangelogParserTest",
     "com.hermesandroid.relay.ui.components.MarkdownStreamingParserTest",
+    "com.hermesandroid.relay.ui.components.ChatInputBarTest",
+    "com.hermesandroid.relay.ui.components.ChatBusyControlsTest",
     "com.hermesandroid.relay.ui.screens.ChangelogScreenTest",
     "com.hermesandroid.relay.ui.screens.ChatUnreadStateTest",
 )
