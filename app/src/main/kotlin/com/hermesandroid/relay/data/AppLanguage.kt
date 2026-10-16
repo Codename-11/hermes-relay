@@ -7,6 +7,7 @@ import java.util.Locale
 enum class AppLanguage(val languageTag: String) {
     SYSTEM_DEFAULT(""),
     ENGLISH("en"),
+    FRENCH("fr"),
     GERMAN("de"),
     BRAZILIAN_PORTUGUESE("pt-BR"),
     JAPANESE("ja"),
@@ -33,6 +34,7 @@ enum class AppLanguage(val languageTag: String) {
             return when (locale.language.lowercase(Locale.ROOT)) {
                 "de" -> GERMAN
                 "en" -> ENGLISH
+                "fr" -> FRENCH
                 "es" -> SPANISH
                 "ja" -> JAPANESE
                 "pt" -> BRAZILIAN_PORTUGUESE

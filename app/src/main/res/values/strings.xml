@@ -1475,6 +1475,7 @@
     <string name="appearance_language_desc">Choose the language used by Hermes-Relay. System default follows your device setting.</string>
     <string name="appearance_language_system">System default</string>
     <string name="appearance_language_english">English</string>
+    <string name="appearance_language_french">Français</string>
     <string name="appearance_language_german">Deutsch</string>
     <string name="appearance_language_brazilian_portuguese">Português (Brasil)</string>
     <string name="appearance_language_japanese">日本語</string>
