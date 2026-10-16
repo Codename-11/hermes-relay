@@ -7,6 +7,7 @@ const defaultRepositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), '
 
 export const desktopUiScreenshotSourceFiles = Object.freeze([
   'desktop/tray/ui/App.tsx',
+  'desktop/tray/ui/computerActivity.ts',
   'desktop/tray/ui/main.tsx',
   'desktop/tray/ui/styles.css',
   'desktop/tray/ui/types.ts',

@@ -68,7 +68,7 @@ import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.data.secureLinkCoversAllServices
 import com.hermesandroid.relay.data.routeAuthority
-import com.hermesandroid.relay.ui.components.SessionTtlPickerDialog
+import com.hermesandroid.relay.ui.components.SessionLifetimeDialog
 import com.hermesandroid.relay.ui.components.TransportSecurityBadge
 import com.hermesandroid.relay.ui.components.TransportSecuritySize
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -112,7 +112,6 @@ fun PairedDevicesScreen(
 
     var pendingRevoke by remember { mutableStateOf<PairedDeviceInfo?>(null) }
     var pendingExtend by remember { mutableStateOf<PairedDeviceInfo?>(null) }
-    val isTailscaleDetected by connectionViewModel.isTailscaleDetected.collectAsState()
 
     // === PER-CHANNEL-REVOKE: state for per-channel revoke confirm dialog ===
     var pendingChannelRevoke by remember {
@@ -259,38 +258,25 @@ fun PairedDevicesScreen(
     }
 
     pendingExtend?.let { target ->
-        // Pre-select the session's CURRENT remaining lifetime rounded to
-        // the nearest picker option, so the dialog reflects what's
-        // already in place. Falls back to 30 days if the session is
-        // unbounded or expired.
-        val nowSec = System.currentTimeMillis() / 1000L
-        val remaining: Long = target.expiresAt?.let { (it.toLong() - nowSec).coerceAtLeast(0L) }
-            ?: 0L  // 0 = never expire (matches the picker's "Never" option)
-        val initialTtl = if (target.expiresAt == null) 0L else remaining
-        val setNeverMessage = stringResource(R.string.paired_devices_session_never)
         val updatedMessage = stringResource(R.string.paired_devices_session_updated)
-        val failedToUpdateMessage = stringResource(R.string.paired_devices_session_update_failed)
-        SessionTtlPickerDialog(
-            initialTtlSeconds = initialTtl,
-            isTailscaleDetected = isTailscaleDetected,
-            transportHint = target.transportHint,
-            onConfirm = { newTtl ->
-                val toExtend = target
-                pendingExtend = null
-                scope.launch {
-                    val success = connectionViewModel.extendDevice(
-                        toExtend.tokenPrefix, newTtl
-                    )
-                    if (success) {
-                        snackbarHostState.showSnackbar(
-                            if (newTtl == 0L) setNeverMessage else updatedMessage
-                        )
-                    } else {
-                        snackbarHostState.showSnackbar(failedToUpdateMessage)
-                    }
+        SessionLifetimeDialog(
+            expiresAt = target.expiresAt,
+            onUpdate = { ttl ->
+                if (connectionViewModel.extendDevice(target.tokenPrefix, ttl)) {
+                    Result.success(Unit)
+                } else {
+                    Result.failure(IllegalStateException(connectionViewModel.pairedDevicesError.value))
                 }
             },
-            onCancel = { pendingExtend = null }
+            onSuccess = {
+                pendingExtend = null
+                scope.launch { snackbarHostState.showSnackbar(updatedMessage) }
+            },
+            onCancel = { pendingExtend = null },
+            onRenew = {
+                pendingExtend = null
+                onRequestRepair()
+            },
         )
     }
 
@@ -684,16 +670,17 @@ private fun DeviceCard(
                 MetaRow(label = stringResource(R.string.paired_devices_last_seen), value = formatEpoch(device.lastSeen.toLong()))
             }
 
-            // Extend + Revoke actions
+            // Session lifetime and revocation actions
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(
                     onClick = onExtend,
+                    enabled = isCurrent,
                     modifier = Modifier.weight(1f)
                 ) {
-                    Text(stringResource(R.string.paired_devices_extend))
+                    Text(stringResource(R.string.paired_devices_lifetime))
                 }
                 OutlinedButton(
                     onClick = onRevoke,

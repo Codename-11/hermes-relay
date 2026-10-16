@@ -51,9 +51,10 @@
   "sourceFingerprint": {
     "algorithm": "sha256",
     "normalization": "text-lf-lockfile-root-version-v2",
-    "digest": "530b6e8ebbbbae7fc0a9ea384b9406b9ced7acf47d1feee881d3af784db05b8c",
+    "digest": "bf3e0c10627a2f40cc7bd9075a9056db56bfcb25e71d1869f708c927660d03be",
     "files": [
       "desktop/tray/ui/App.tsx",
+      "desktop/tray/ui/computerActivity.ts",
       "desktop/tray/ui/main.tsx",
       "desktop/tray/ui/styles.css",
       "desktop/tray/ui/types.ts",

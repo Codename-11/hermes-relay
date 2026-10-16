@@ -206,14 +206,14 @@ def _check_session_initialization(server: SourceFile) -> CheckResult:
         return CheckResult(SESSION_INITIALIZATION, False, (), str(exc))
 
 
-def _check_settled_info(server: SourceFile) -> CheckResult:
+def _check_settled_info(server: SourceFile, helper_source: SourceFile, turn_source: SourceFile) -> CheckResult:
     contract = GATEWAY_SETTLED_INFO
     try:
         info = server.function("_session_info")
-        helper = server.function("_emit_settled_session_info")
-        turn = server.function("_run_prompt_submit")
+        helper = helper_source.function("_emit_settled_session_info")
+        turn = turn_source.function("_run_prompt_submit")
         info_strings = _string_constants(info)
-        helper_text = server.segment(helper)
+        helper_text = helper_source.segment(helper)
         if "running" not in info_strings or ".get(\"running\")" not in server.segment(info):
             raise ValueError("session.info no longer derives running from live session state")
         if '"session.info"' not in helper_text or "_session_info(" not in helper_text:
@@ -229,8 +229,8 @@ def _check_settled_info(server: SourceFile) -> CheckResult:
             True,
             (
                 server.evidence(info, "session.info includes running"),
-                server.evidence(helper, "settled session.info emission"),
-                f"{SERVER}:{running_line}:running=false before line {settle_line}",
+                helper_source.evidence(helper, "settled session.info emission"),
+                f"{turn_source.relative}:{running_line}:running=false before line {settle_line}",
             ),
         )
     except ValueError as exc:
@@ -294,8 +294,24 @@ def _check_resume(methods: SourceFile) -> CheckResult:
     contract = SESSION_RESUME
     try:
         handler = methods.method_handler("session.resume")
-        text = methods.segment(handler)
-        strings = _string_constants(handler)
+        # Current upstream extracted resume into local helpers and a _Resume
+        # context. Follow only definitions reachable from this handler, so an
+        # unused legacy implementation cannot satisfy the contract.
+        definitions = {
+            node.name: node for node in methods.tree.body
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name != "_"
+        }
+        nodes = [handler]
+        seen = {id(handler)}
+        for node in nodes:
+            for call in ast.walk(node):
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name):
+                    target = definitions.get(call.func.id)
+                    if target is not None and id(target) not in seen:
+                        nodes.append(target)
+                        seen.add(id(target))
+        text = "\n".join(methods.segment(node) for node in nodes)
+        strings = set().union(*(_string_constants(node) for node in nodes))
         required_markers = (
             "db.get_session(",
             "db.resolve_resume_session_id(",
@@ -316,7 +332,7 @@ def _check_resume(methods: SourceFile) -> CheckResult:
         if not {4007, 4130}.issubset(
             {
                 child.value
-                for child in ast.walk(handler)
+                for node in nodes for child in ast.walk(node)
                 if isinstance(child, ast.Constant) and isinstance(child.value, int)
             }
         ):
@@ -586,7 +602,8 @@ def _check_server_requests(root: Path) -> CheckResult:
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id == "server_request" and node.args and isinstance(node.args[0], ast.Constant)}
     passed = (
-        expected == declared
+        # Additive request methods can be declined with JSON-RPC method-not-found.
+        expected <= declared
         and {"jsonrpc", "id", "method", "params", "session_id"} <= _string_constants(frame)
         and "answers" in _string_constants(snapshot)
         and {"error", "result", "answers"} <= _string_constants(resolve)
@@ -640,7 +657,11 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
     prompt_methods = SourceFile(root, PROMPT_METHODS)
     active_sessions = SourceFile(root, ACTIVE_SESSIONS)
     api = SourceFile(root, API_SERVER)
-    source_files = (server, methods, prompt_methods, active_sessions, api)
+    registry = (
+        SourceFile(root, "tui_gateway/session_registry.py")
+        if (root / "tui_gateway/session_registry.py").is_file() else server
+    )
+    source_files = (server, registry, methods, prompt_methods, active_sessions, api)
     fork_hits = [
         f"{source.relative}:{marker}"
         for source in source_files
@@ -661,10 +682,16 @@ def audit_sources(root: Path, requirements: Iterable[str]) -> list[CheckResult]:
             SourceFile(root, "tui_gateway/prompt_turn.py")
             if (root / "tui_gateway/prompt_turn.py").is_file() else server
         ),
-        GATEWAY_SETTLED_INFO: lambda: _check_settled_info(server),
-        SESSION_ACTIVATE: lambda: _check_activate(server, methods),
+        GATEWAY_SETTLED_INFO: lambda: _check_settled_info(
+            server,
+            SourceFile(root, "tui_gateway/session_workdir.py")
+            if (root / "tui_gateway/session_workdir.py").is_file() else server,
+            SourceFile(root, "tui_gateway/prompt_turn.py")
+            if (root / "tui_gateway/prompt_turn.py").is_file() else server,
+        ),
+        SESSION_ACTIVATE: lambda: _check_activate(registry, methods),
         SESSION_RESUME: lambda: _check_resume(methods),
-        SESSION_ACTIVE_LIST: lambda: _check_active_list(server, methods),
+        SESSION_ACTIVE_LIST: lambda: _check_active_list(registry, methods),
         SESSION_EXCLUSIVE_SUBMIT: lambda: _check_session_exclusive_submit(
             server, methods, prompt_methods, active_sessions,
         ),

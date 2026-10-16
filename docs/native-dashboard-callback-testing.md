@@ -63,6 +63,41 @@ Android 16 local-network protections are
 That policy alone does not establish the reporter's cause. Do not relax callback
 validation or add permissions based only on the reported Android version.
 
+## Refresh failure ownership
+
+Issue [#711](https://github.com/Codename-11/hermes-relay/issues/711) concerns an
+established native session encountering a proxy-generated refresh failure.
+The reported server logs do not establish device-side token deletion.
+
+Upstream [`hermes_cli/dashboard_auth/routes.py`](https://github.com/NousResearch/hermes-agent/blob/046094df28b712f62a5e3c728a9e59da05dcbf1e/hermes_cli/dashboard_auth/routes.py)
+returns HTTP 401 with JSON
+`error: "session_expired"` when all providers reject the refresh token, including
+expired, invalid or revoked tokens. A provider outage returns HTTP 503; a missing
+refresh token returns HTTP 400. The reported upstream revision
+`71d34bad1045610252eda02ee79549436896e784` has the same refresh contract.
+Android only invalidates the matching saved
+session for that recognized 401 JSON error without an authentication challenge.
+Unknown JSON, HTML, empty/malformed responses, authentication challenges and
+transport failures preserve credentials. Error inspection is bounded and no
+response body, challenge value or token is retained in diagnostics.
+
+The bearer interceptor surfaces recoverable refresh failures rather than
+silently issuing an unauthenticated request or quarantining a restored Nous
+session for the process lifetime. A later request can refresh on the same route;
+there is no new automatic retry loop. A restored Nous access token still cannot
+be attached until refresh succeeds. Cookie preference and origin-scoped bearer
+construction remain unchanged. Interactive code exchange shares the bounded
+error classification but cannot clear an existing session. Explicit sign-out,
+single-use refresh coordination and authorization generation fencing remain in
+place.
+
+`NativeDashboardAuthTest` exercises seeded credentials through the production
+HTTP client against loopback fixtures: ambiguous errors, recognized rejection,
+concurrent replacement, token rotation, explicit sign-out, and recovery through
+the bearer consumer for both restored and established sessions. These tests do
+not certify the reporter's nginx policy, Android 16 network changes or physical
+device behavior. Phone replay requires a separately coordinated test window.
+
 ## Reproducible lanes
 
 Run narrow JVM feedback through the shared Windows lane:

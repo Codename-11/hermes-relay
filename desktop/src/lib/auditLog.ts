@@ -30,7 +30,7 @@ export interface AuditEntry {
   requester_device_id?: string
   run_id?: string
   target_device_id?: string
-  backend?: 'cua' | 'legacy_compat' | 'system_capture'
+  backend?: 'cua' | 'cua_driver' | 'legacy_compat' | 'system_capture'
   dispatch?: 'background' | 'foreground_compatibility'
   control_session_id?: string
   target_app?: string

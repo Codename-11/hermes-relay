@@ -13,12 +13,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Android avoids redundant conversation history in Gateway send/recovery responses and pauses automatic conversation reopening after a recorded out-of-memory crash, preserving saved conversations and drafts. (#700)
+- Android preserves native Dashboard sign-in during reverse-proxy access failures and retries refresh on a later request when the route is reachable again. (#711)
+- Secure Link accepts PEM certificate chains, exports only the leaf certificate for pairing, and reports invalid certificate/key configurations without exposing private file paths. (#712)
+- Android keeps ONNX Runtime on 1.27.0 so sherpa-onnx native libs match the packaged runtime ABI.
+- Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
+- Android pauses both wake-word listener modes before voice capture and resumes listening after voice exits, preventing microphone conflicts. (#681)
+- Android Relay sessions distinguish shortening from operator-approved renewal, retain actionable update failures, and expose accessible pairing duration controls. (#659)
+
 - Android avoids a startup crash when profile state arrives during connection setup.
 - Android refreshes background-alert permission defaults after onboarding and keeps notification delivery tied to the original connection, profile, and conversation across navigation.
 - Replies from conversations left running get separate notification slots; opening one conversation preserves alerts from others.
 - Chat progress stays above the composer while scrolling and disappears when the turn finishes or waits for input.
+- Android keeps the selected Appearance palette after the startup loading screen instead of leaving parts of the UI dark. (#678)
 
 - Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
+- Android keeps quiet tools and provider waits alive, including turns submitted by another client, and recovers missing completion events from authoritative Gateway state without sending Stop.
+
+## [0.4.0-beta.10] - 2026-10-08
+
+### Fixed
+
+- Structured CUA clicks, value changes, and scrolling accept current driver handles, including hexadecimal snapshot generations. (#680)
+- Windows Activity identifies CUA snapshots and system captures correctly and avoids assuming a backend or dispatch mode when neither was recorded. (#682)
+
+## [0.4.0-beta.9] - 2026-10-07
+
+### Added
+
+- The Windows management UI imports full Dashboard pairing invites through a native Paste invite control, preserving route candidates and Secure Link certificate trust.
+
+### Changed
+
+- CLI pairing displays advertised routes with protocols and ports and gives actionable direct-route guidance when Dashboard authentication is unsupported.
+
+## [Plugin 1.13.0] - 2026-10-07
+
+### Added
+
+- Dashboard pairing offers an explicit CLI+UI client choice and full invites containing route candidates and Secure Link certificate trust. Full-invite import requires a compatible CLI build newer than 0.4.0-beta.8.
+
+### Fixed
+
+- Pairing shows internal and remote addresses with protocols and ports, includes direct Tailscale Relay routes for CLI+UI, and avoids inferring public Relay listeners from Dashboard URLs.
+- Dashboard pairing handles expired and oversized invites, keeps QR codes fully visible, and distinguishes Plugin activation from discovery.
 
 ## [0.4.0-beta.8] - 2026-10-02
 

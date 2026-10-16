@@ -110,6 +110,9 @@ import com.hermesandroid.relay.auth.AuthState
 import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.ConnectionValidation
 import com.hermesandroid.relay.data.EndpointCandidate
+import com.hermesandroid.relay.data.PairingPreferences
+import com.hermesandroid.relay.data.RelayEndpoint
+import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
 import com.hermesandroid.relay.data.displayLabel
 import com.hermesandroid.relay.data.hasSecureProxy
 import com.hermesandroid.relay.data.hasHermesReach
@@ -648,7 +651,7 @@ fun ConnectionWizard(
                     apiServerUrl = trimmedApi,
                     relayUrl = manualRelayUrl.trim(),
                 )
-                applyManualPair(connectionViewModel, trimmedApi, manualRelayUrl.trim(), code)
+                applyManualPair(connectionViewModel, trimmedApi, manualRelayUrl.trim(), code, relayScopedFlow)
                 step = WizardStep.Verify
                 verifyAttempt += 1
             }
@@ -1196,6 +1199,7 @@ fun ConnectionWizard(
                                     manualApiUrl.trim(),
                                     manualRelayUrl.trim(),
                                     code,
+                                    relayScopedFlow,
                                 )
                                 pendingManualCode = null
                                 step = WizardStep.Verify
@@ -1234,12 +1238,40 @@ private fun applyManualPair(
     apiUrl: String,
     relayUrl: String,
     code: String,
+    relayOnly: Boolean,
 ) {
+    if (relayOnly) {
+        vm.applyPairingPayload(
+            relayOnlyCodePayload(relayUrl, code, vm.activeConnection.value?.routeCandidates.orEmpty()),
+            PairingPreferences.DEFAULT_TTL_SECONDS,
+            preserveStandardConfig = true,
+        )
+        return
+    }
     if (apiUrl.isNotBlank()) vm.updateApiServerUrl(apiUrl)
     vm.updateRelayUrl(relayUrl)
     vm.authManager.applyServerIssuedCodeAndReset(code.trim().uppercase())
     vm.disconnectRelay()
     vm.connectRelay(relayUrl)
+}
+
+/** Keep operator-approved trust for the exact selected Relay route. */
+internal fun relayOnlyCodePayload(
+    relayUrl: String,
+    code: String,
+    routes: List<EndpointCandidate>,
+): HermesPairingPayload {
+    val url = relayUrl.trim()
+    val matching = routes.filter {
+        it.relay?.url == url || it.pluginProxyRoutesOrNull()?.relayWebSocketUrl == url
+    }
+    val relayRoutes = matching.ifEmpty {
+        listOf(EndpointCandidate(role = "manual", relay = RelayEndpoint(url = url)))
+    }
+    return HermesPairingPayload(
+        relay = RelayPairing(url = url, code = code.trim().uppercase()),
+        endpoints = relayRoutes,
+    )
 }
 
 /**

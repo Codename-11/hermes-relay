@@ -723,6 +723,36 @@ def _recommended_tailscale_listener(status: Optional[dict[str, Any]]) -> int:
     return _RECOMMENDED_DASHBOARD_LISTENER_PORT
 
 
+def _tailscale_direct_relay_endpoint(
+    status: dict[str, Any],
+    relay_port: int,
+    relay_tls: bool,
+    priority: int,
+) -> Optional[dict[str, Any]]:
+    """Advertise the Relay listener over a verified tailnet address after opt-in."""
+    raw = status.get("tailscale_ip") or status.get("ip") or status.get("address")
+    if not isinstance(raw, str):
+        return None
+    try:
+        address = ipaddress.ip_address(raw.strip())
+    except ValueError:
+        return None
+    if (
+        address not in ipaddress.ip_network("100.64.0.0/10")
+        and address not in ipaddress.ip_network("fd7a:115c:a1e0::/48")
+    ):
+        return None
+    host = f"[{address}]" if address.version == 6 else str(address)
+    scheme = "wss" if relay_tls else "ws"
+    return {
+        "role": "tailscale",
+        "priority": priority,
+        "recommended": True,
+        "legacy": True,
+        "relay": {"url": f"{scheme}://{host}:{relay_port}", "transport_hint": scheme},
+    }
+
+
 def _tailscale_endpoint(
     status: dict[str, Any],
     api_port: int,
@@ -1100,17 +1130,13 @@ def _legacy_public_relay_endpoint(
     relay_port: int,
     priority: int,
 ) -> dict[str, Any]:
-    """Build the old public direct-Relay route after explicit opt-in."""
+    """Preserve an explicitly configured public Relay path or listener port."""
     dashboard_url = normalize_public_url(public_url)
     parsed = urlparse(dashboard_url)
     scheme = "wss" if parsed.scheme == "https" else "ws"
-    host = parsed.hostname or ""
-    url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
-    relay_url = (
-        f"{scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
-        if is_explicit_relay_url(dashboard_url)
-        else f"{scheme}://{url_host}:{relay_port}"
-    )
+    if not is_explicit_relay_url(dashboard_url) and parsed.port != relay_port:
+        raise ValueError("a public Relay route needs an explicit Relay path or port")
+    relay_url = f"{scheme}://{parsed.netloc}{parsed.path.rstrip('/')}"
     return {
         "role": "public_legacy",
         "priority": priority,
@@ -1183,6 +1209,12 @@ def build_endpoint_candidates(
     if want_tailscale:
         tailscale_status = _tailscale_status()
         if tailscale_status is not None:
+            if legacy_direct_relay:
+                _emit(
+                    _tailscale_direct_relay_endpoint(
+                        tailscale_status, relay_port, relay_tls, next_priority,
+                    )
+                )
             _emit(
                 _tailscale_endpoint(
                     tailscale_status,
@@ -1231,8 +1263,10 @@ def build_endpoint_candidates(
                 effective_public_url = detected
 
         if effective_public_url:
-            explicit_relay_url = is_explicit_relay_url(
-                normalize_public_url(effective_public_url)
+            normalized_public_url = normalize_public_url(effective_public_url)
+            explicit_relay_url = (
+                is_explicit_relay_url(normalized_public_url)
+                or urlparse(normalized_public_url).port == relay_port
             )
             if explicit_relay_url and not legacy_direct_relay:
                 raise ValueError(
@@ -1270,7 +1304,10 @@ def build_endpoint_candidates(
         )
 
     if legacy_direct_relay:
-        if effective_public_url:
+        if effective_public_url and (
+            is_explicit_relay_url(normalize_public_url(effective_public_url))
+            or urlparse(effective_public_url).port == relay_port
+        ):
             _emit(
                 _legacy_public_relay_endpoint(
                     effective_public_url,
@@ -1648,6 +1685,7 @@ def render_text_block(
     invite_url: Optional[str] = None,
     dashboard_url: Optional[str] = None,
     api_enabled: bool = True,
+    endpoints: Optional[list[dict[str, Any]]] = None,
 ) -> str:
     """Return formatted connection details — always shown (works in any terminal).
 
@@ -1661,7 +1699,7 @@ def render_text_block(
 
     lines: list[Optional[str]] = [
         "",
-        "  Hermes Android Pairing",
+        "  Hermes-Relay Pairing",
         "  " + "-" * 40,
         "",
         f"  Dashboard: {dashboard_url}" if dashboard_url else None,
@@ -1707,12 +1745,112 @@ def render_text_block(
             "  Copy/paste pairing invite",
             "  " + "-" * 40,
             f"  URL  : {invite_url}",
-            "  Use  : Hermes Relay Desktop -> Pair -> Paste invite",
-            "         or: hermes-relay pair --pair-qr '<URL>'",
+            "  Use  : Scan in Hermes-Relay Android.",
+            "         CLI+UI: use a compatible direct or Secure Link route.",
+            "         CLI: hermes-relay pair --pair-qr '<URL>'",
         ])
 
+    if endpoints:
+        lines.extend(["", render_endpoint_routes(endpoints)])
     lines.append("")
     return "\n".join(lines)
+
+
+def render_endpoint_routes(endpoints: list[dict[str, Any]]) -> str:
+    """Display advertised routes, protocols and effective ports without credentials."""
+    labels = {
+        "lan": "Internal / LAN", "tailscale": "Remote / Tailscale",
+        "public": "External / public", "legacy_direct": "Direct Relay / LAN",
+        "public_legacy": "External / direct Relay",
+    }
+    lines = ["  Advertised connection addresses (verify from the client)"]
+    has_remote = False
+    has_compatible_relay = False
+
+    def surface(label: str, raw: Any) -> bool:
+        if not isinstance(raw, str) or any(char.isspace() for char in raw):
+            return False
+        try:
+            parsed = urlparse(raw)
+            if (parsed.scheme not in {"http", "https", "ws", "wss"}
+                    or not parsed.hostname or parsed.username or parsed.password
+                    or parsed.query or parsed.fragment):
+                return False
+            port = parsed.port or (443 if parsed.scheme in {"https", "wss"} else 80)
+        except ValueError:
+            return False
+        lines.append(f"    {label}: {raw} ({parsed.scheme.upper()}, port {port})")
+        return True
+
+    for candidate in endpoints:
+        if not isinstance(candidate, dict):
+            continue
+        role = str(candidate.get("role") or "route")
+        label = labels.get(role, "Secure Link" if candidate.get("proxy") else "Other route")
+        lines.append(f"  {label}")
+        has_remote = has_remote or role in {"tailscale", "public", "public_legacy", "outbound_broker"}
+        proxy = candidate.get("proxy")
+        if isinstance(proxy, dict):
+            base = str(proxy.get("url") or "").rstrip("/")
+            services = proxy.get("surfaces") or []
+            for name, suffix in (("dashboard", "/dashboard"), ("api", "/api"), ("relay", "/relay/ws")):
+                if name in services:
+                    route_base = base.replace("https://", "wss://", 1) if name == "relay" else base
+                    shown = surface("Relay WebSocket" if name == "relay" else name.title(), route_base + suffix)
+                    has_compatible_relay = has_compatible_relay or (name == "relay" and shown)
+            lines.append("    Import the signed invite to retain certificate trust.")
+        else:
+            dashboard = candidate.get("dashboard") or {}
+            relay = candidate.get("relay") or {}
+            api = candidate.get("api") or {}
+            if isinstance(dashboard, dict):
+                surface("Dashboard", dashboard.get("url"))
+            if isinstance(relay, dict):
+                raw = relay.get("url")
+                shown = surface("Relay WebSocket", raw)
+                has_compatible_relay = has_compatible_relay or (
+                    shown and "/api/plugins/hermes-relay/transport" not in urlparse(raw).path
+                )
+            if isinstance(api, dict) and api.get("host"):
+                host = str(api["host"])
+                if ":" in host and not host.startswith("["):
+                    host = f"[{host}]"
+                surface("Optional API", f"{'https' if api.get('tls') else 'http'}://{host}:{api.get('port')}")
+        broker = candidate.get("broker")
+        if isinstance(broker, dict):
+            surface("Outbound broker (invite required)", broker.get("url"))
+    if not has_remote:
+        lines.append("  External route: not configured.")
+    if not has_compatible_relay:
+        lines.extend([
+            "  CLI+UI cannot authenticate through Dashboard Relay ingress yet.",
+            "  On the host, mint a CLI+UI invite: hermes pair --legacy-direct-relay",
+            "  Use only a deliberately reachable direct Relay route; a public Dashboard URL",
+            "  does not expose the direct Relay port.",
+        ])
+    return "\n".join(lines)
+
+
+def render_host_connection_routes() -> str:
+    """Read-only address receipt for code-only host pairing surfaces."""
+    config = read_server_config()
+    relay = read_relay_config()
+    endpoints = build_endpoint_candidates(
+        mode="auto", api_host=_resolve_lan_ip(config["host"]),
+        api_port=config["port"], api_tls=config["tls"],
+        relay_host=relay["host"], relay_port=relay["port"], relay_tls=bool(relay.get("tls")),
+    )
+    if not config.get("enabled", True):
+        endpoints = [
+            {key: value for key, value in candidate.items() if key != "api"}
+            for candidate in endpoints
+        ]
+    # Code-only pairing has no signed endpoint list. Show the configured direct
+    # listener as a separate address, without enabling or publishing a route.
+    endpoints.append({"role": "legacy_direct", "relay": {
+        "url": _relay_lan_base_url(relay["host"], relay["port"], tls=bool(relay.get("tls"))),
+    }})
+    return render_endpoint_routes(endpoints)
 
 
 def render_qr_terminal(payload: str) -> str:
@@ -1851,7 +1989,7 @@ def register_code_command(args) -> int:
     print("  Hermes-Relay manual pairing")
     print("  " + "-" * 40)
     print(f"  Code         : {code}")
-    print(f"  Relay        : http://127.0.0.1:{relay_port}")
+    print(f"  Host-only pairing API: http://127.0.0.1:{relay_port}")
     print(f"  Transport    : {transport_hint}")
     if ttl_seconds == 0:
         print(f"  Session TTL  : {ttl_label} (never expires)")
@@ -1865,6 +2003,11 @@ def register_code_command(args) -> int:
     print()
     print("  Code registered. The pairing code is single-use and expires")
     print("  in 10 minutes.")
+    print()
+    try:
+        print(render_host_connection_routes())
+    except (OSError, ValueError):
+        print("  Could not read connection addresses. Run hermes pair on this host.")
     print()
     print("  In the Hermes-Relay app:")
     print("    1. Open Settings -> Connection -> Manual pairing code (fallback).")
@@ -2103,6 +2246,8 @@ def pair_command(args) -> None:
             relay=relay_block,
             invite_url=invite_url,
             dashboard_url=dashboard_url,
+            api_enabled=api_enabled,
+            endpoints=json.loads(payload).get("endpoints"),
         )
     )
 

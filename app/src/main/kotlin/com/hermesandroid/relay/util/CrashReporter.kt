@@ -24,11 +24,18 @@ object CrashReporter {
     @Volatile
     private var installed = false
 
+    /** Latched before UI/report dismissal; acknowledging a report cannot reopen the failed chat. */
+    var pauseAutomaticSessionRestore: Boolean = false
+        private set
+
     fun install(context: Context) {
         ReliabilityCenter.initialize(context)
         migrateLegacy(context)
         if (installed) return
         installed = true
+        pauseAutomaticSessionRestore = runCatching {
+            isMemoryFailure(ReliabilityCenter.pendingCrash(context))
+        }.getOrDefault(false)
         val appContext = context.applicationContext
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
@@ -51,6 +58,9 @@ object CrashReporter {
         migrateLegacy(context)
         return ReliabilityCenter.pendingCrash(context)
     }
+
+    fun isMemoryFailure(report: ReliabilityReport?): Boolean =
+        report?.summary?.let { it == "OutOfMemoryError" || it.startsWith("OutOfMemoryError:") } == true
 
     fun clearPending(context: Context, reportId: String? = null) {
         val target = reportId ?: peekPending(context)?.reportId ?: return

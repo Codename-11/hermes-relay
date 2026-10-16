@@ -175,6 +175,117 @@ class GatewayExternalFixtureInstrumentedTest {
         assertEquals("2", state["history_rows"].toString())
     }
 
+    @Test
+    fun quietTurns_surviveToolAndProviderSilenceAndRecoverUnsolicitedHistory() {
+        val answer = "Background work finished quietly."
+        val fixtureBaseUrl = InstrumentationRegistry.getArguments()
+            .getString(ARG_FIXTURE_BASE_URL)
+            ?.trim()
+            ?.trimEnd('/')
+        assumeTrue(
+            "Pass -e $ARG_FIXTURE_BASE_URL <url> to run the external fixture lane",
+            !fixtureBaseUrl.isNullOrBlank(),
+        )
+        requireNotNull(fixtureBaseUrl)
+
+        val okHttp = OkHttpClient.Builder()
+            .callTimeout(10, TimeUnit.SECONDS)
+            .build()
+        val initialState = readFixtureJson(okHttp, "$fixtureBaseUrl/__fixture__/state")
+        assertEquals("quiet_turn_recovery", initialState["scenario"]?.jsonString())
+        assertEquals("1", initialState["remaining_turns"].toString())
+        val dashboard = DashboardApiClient(fixtureBaseUrl, okHttp)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO).also { gatewayScope = it }
+        val gateway = GatewayChatClient(
+            initialDashboardClient = dashboard,
+            okHttpClient = okHttp,
+            callbackDispatcher = { block -> Handler(Looper.getMainLooper()).post(block) },
+            scope = scope,
+            reconnectJitterUnit = { 0.0 },
+            turnIdleTimeoutMs = 200L,
+        ).also { gatewayClient = it }
+        val handler = ChatHandler().also { it.setSessionId(STORED_SESSION_ID) }
+        val vm = ChatViewModel().also {
+            // Deliberately omit HermesApiClient: this lane has no API-server
+            // fallback surface, so a passing turn proves Gateway ownership.
+            it.initialize(null, handler)
+            it.streamingEndpoint = "gateway"
+            it.setProfileMessageLoaderWithMode { profile, sessionId, mode ->
+                dashboard.getSessionMessages(sessionId, profile, mode)
+            }
+            it.updateGatewayClient(gateway)
+            it.setChatVisible(true)
+        }.also { viewModel = it }
+
+        compose.setContent {
+            val messages by vm.messages.collectAsStateWithLifecycle()
+            val streaming by vm.isStreaming.collectAsStateWithLifecycle()
+            MaterialTheme {
+                Column(Modifier.testTag("external-contract-transcript")) {
+                    Text(
+                        text = if (streaming) "STREAMING" else "IDLE",
+                        modifier = Modifier.testTag("external-stream-state"),
+                    )
+                    messages.forEach { message ->
+                        Text(
+                            text = "${message.role.name}:${message.content}",
+                            modifier = Modifier.testTag("external-message-${message.id}"),
+                        )
+                    }
+                }
+            }
+        }
+
+        assertTrue(runBlocking { gateway.prewarmAwait(STORED_SESSION_ID) })
+        vm.sendMessage("Exercise quiet turns.")
+        compose.waitUntil(5_000) { gateway.hasActiveTurn() && handler.isStreaming.value }
+        Thread.sleep(600)
+        compose.onNodeWithTag("external-stream-state").assertTextEquals("STREAMING")
+        compose.waitUntil(5_000) {
+            handler.messages.value.any { it.content == "Quiet tool finished." }
+        }
+        compose.waitUntil(5_000) {
+            handler.messages.value.any { it.content == "Background work" }
+        }
+        Thread.sleep(600)
+        compose.onNodeWithTag("external-stream-state").assertTextEquals("STREAMING")
+
+        compose.waitUntil(10_000) {
+            !handler.isStreaming.value &&
+                !gateway.hasActiveTurn() &&
+                handler.messages.value.any {
+                    it.role == MessageRole.ASSISTANT && it.content == answer
+                }
+        }
+
+        compose.onNodeWithTag("external-contract-transcript").assertIsDisplayed()
+        compose.onNodeWithTag("external-stream-state").assertTextEquals("IDLE")
+        compose.onAllNodesWithText("${MessageRole.ASSISTANT.name}:$answer")
+            .assertCountEquals(1)
+
+        val messages = handler.messages.value
+        assertEquals(
+            1,
+            messages.count {
+                it.role == MessageRole.ASSISTANT && it.content == answer
+            },
+        )
+        assertEquals(1, messages.count { it.role == MessageRole.USER })
+        assertFalse(messages.any { it.isStreaming || it.isThinkingStreaming })
+        assertEquals("gateway", vm.streamingEndpoint)
+
+        val evidence = readFixtureJson(okHttp, "$fixtureBaseUrl/__fixture__/evidence")
+        assertEquals("quiet_turn_recovery", evidence["scenario"]?.jsonString())
+        val entries = evidence["entries"] as? JsonArray ?: JsonArray(emptyList())
+        assertEquals(1, entries.rpcCount("prompt.submit"))
+        assertEquals(0, entries.rpcCount("session.activate"))
+        assertEquals(0, entries.rpcCount("session.interrupt"))
+
+        val state = readFixtureJson(okHttp, "$fixtureBaseUrl/__fixture__/state")
+        assertEquals("quiet_turn_recovery", state["scenario"]?.jsonString())
+        assertEquals("3", state["history_rows"].toString())
+    }
+
     private fun readFixtureJson(client: OkHttpClient, url: String): JsonObject {
         val request = Request.Builder().url(url).get().build()
         return client.newCall(request).execute().use { response ->

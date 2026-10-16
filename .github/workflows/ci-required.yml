@@ -72,6 +72,9 @@ jobs:
       - name: Test path classifier
         run: node .github/scripts/classify-ci-paths.test.cjs
 
+      - name: Test dependency auto-merge protection
+        run: node --test .github/scripts/check-dependabot-merge.test.cjs
+
       - name: Record checked tree
         id: tree
         run: echo "tree=$(git rev-parse 'HEAD^{tree}')" >> "$GITHUB_OUTPUT"

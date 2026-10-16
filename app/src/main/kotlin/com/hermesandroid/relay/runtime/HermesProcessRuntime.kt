@@ -78,6 +78,9 @@ class HermesProcessRuntime internal constructor(
 
     val chatViewModel: ChatViewModel by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         viewModelProvider[ChatViewModel::class.java].also { chat ->
+            chat.pauseAutomaticSessionRestoreAfterMemoryFailure(
+                com.hermesandroid.relay.util.CrashReporter.pauseAutomaticSessionRestore,
+            )
             chat.installComposerDraftStore(
                 PersistentChatComposerDraftStore(
                     File(application.noBackupFilesDir, "chat-composer-drafts"),

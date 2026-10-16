@@ -56,8 +56,23 @@ never fall back to browser-side configuration writes.
 - The TLS private key is created atomically with owner-only permissions. The
   certificate SAN matches the advertised hostname or IP. Changing the
   advertised authority requires deliberate certificate/pin rotation.
+- Configured PEM chains put the leaf certificate first, followed by its
+  intermediates. The leaf must match the configured private key. Secure Link
+  validates TLS loading before advertising the identity, exports only that leaf
+  as pairing `cert_der`, and derives the SPKI pin from the same first certificate.
+  The complete PEM chain remains unchanged for TLS serving. Invalid identities
+  disable Secure Link with a diagnostic that omits private paths and contents;
+  ordinary Relay remains available.
 - The listener has exactly three fixed namespaces under one pinned origin: `/relay`, `/api`, and
-  `/dashboard`. `/relay` contains only health and the authenticated WebSocket;
+  `/dashboard`. `/relay` contains health, the authenticated WebSocket, and
+  `GET /relay/sessions`, `PATCH /relay/sessions/{token_prefix}`, and
+  `DELETE /relay/sessions/{token_prefix}` using the production Relay session
+  handlers. Session REST always requires a valid Relay bearer, including on
+  loopback connections; it never inherits the Dashboard's local operator shortcut.
+  PATCH permits only self-service lifetime/grant reductions; renewal and grant
+  expansion require fresh operator-approved pairing. Listing and revocation
+  retain the ordinary Relay bearer contract, including revoking another paired
+  device and closing its active Relay sockets.
   `/api/*` maps only to the loopback API server; `/dashboard/*` maps only to
   the loopback Dashboard. No client-controlled upstream is accepted.
 - API requests retain the API server bearer and never receive Relay or

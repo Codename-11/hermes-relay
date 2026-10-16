@@ -205,7 +205,12 @@ class RelayServer:
                 logger.error(
                     "%s disabled: identity setup failed: %s",
                     SECURE_LINK_NAME,
-                    exc,
+                    # Our ValueErrors are actionable and omit file contents/paths.
+                    # OS/subprocess errors may expose private paths or commands.
+                    str(exc) if isinstance(exc, ValueError) else (
+                        "check identity file access and OpenSSL availability "
+                        f"({type(exc).__name__})"
+                    ),
                 )
 
         broker_url = config.secure_link_broker_url
@@ -826,9 +831,10 @@ async def handle_pairing_mint(request: web.Request) -> web.Response:
         lan = [candidate for candidate in existing
                if str(candidate.get("role", "")).lower() == "lan"]
         legacy = [candidate for candidate in existing
-                  if candidate.get("legacy") is True
-                  or str(candidate.get("role", "")).lower()
-                  in {"legacy_direct", "public_legacy"}]
+                  if str(candidate.get("role", "")).lower() not in {"tailscale", "public", "lan"}
+                  and (candidate.get("legacy") is True
+                       or str(candidate.get("role", "")).lower()
+                       in {"legacy_direct", "public_legacy"})]
         other = [candidate for candidate in existing
                  if str(candidate.get("role", "")).lower()
                  not in {

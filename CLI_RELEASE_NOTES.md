@@ -1,20 +1,29 @@
 # Hermes-Relay CLI+UI v__VERSION__
 
-**Release Date:** 2026-10-02
+**Release Date:** 2026-10-08
 
-This patch beta fixes Windows CLI+UI installation failing while resolving the latest release. It also restores reusable management windows and image attachments for desktop screenshots.
+## Summary
 
-**Beta phase.** Assets remain unsigned, so Windows SmartScreen and macOS Gatekeeper may warn on first launch. Standalone CLI binaries ship for Windows x64, Linux x64/arm64, and macOS x64/arm64; the management UI is Windows-only.
+Structured computer control accepts current CUA Driver element handles, and Windows Activity shows the backend actually recorded for each operation.
 
-## What's changed
+**Beta phase.** Assets remain unsigned. Standalone CLI binaries ship for Windows x64, Linux x64/arm64, and macOS x64/arm64; the management UI is Windows-only.
 
-### Fixed
+## Fixed
 
-- The Windows bootstrap installer correctly selects CLI+UI releases from GitHub pages containing Android and Plugin releases and continues discovery across full pages.
-- Tray notices, screenshot evidence, and grant prompts remain reusable after dismissal; screenshot evidence retains the selected image.
-- Desktop computer screenshots attach validated image bytes to host tool results instead of returning base64 as plain text.
+- CUA clicks, value changes, and element scrolling accept snapshot handles, including hexadecimal generations after the first nine snapshots. Legacy handles remain supported. (#680)
+- Activity correctly identifies CUA snapshots and system captures. Entries without backend or dispatch metadata no longer appear as compatibility input in the background. (#682)
+
+## Known issue
+
+The startup crash reported on Windows Insider build 26200.8875 remains under investigation in #496. This release does not change the pinned Bun runtime.
+
+## Compatibility
+
+Dashboard CLI+UI pairing requires Plugin 1.13.0 or newer. Existing direct URL-and-code pairing and saved hosts remain supported.
 
 ## Install
+
+**Windows CLI + management UI:** download [hermes-relay-windows-x64-setup.exe](https://github.com/Codename-11/hermes-relay/releases/download/__TAG__/hermes-relay-windows-x64-setup.exe). Release assets are covered by `SHA256SUMS.txt`.
 
 **Windows CLI + management tray (PowerShell):**
 

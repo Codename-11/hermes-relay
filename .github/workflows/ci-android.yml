@@ -71,7 +71,7 @@ jobs:
           java-version: 17
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6.3.0
+        uses: gradle/actions/setup-gradle@v6.4.0
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
@@ -117,7 +117,7 @@ jobs:
           java-version: 17
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6.3.0
+        uses: gradle/actions/setup-gradle@v6.4.0
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
@@ -170,7 +170,7 @@ jobs:
           java-version: 17
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6.3.0
+        uses: gradle/actions/setup-gradle@v6.4.0
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 
@@ -183,6 +183,8 @@ jobs:
           ./gradlew :app:testSideloadDebugUnitTest \
             --tests com.hermesandroid.relay.network.ArchitectureBoundaryTest \
             --tests com.hermesandroid.relay.network.relay.RelayUrlDeriverTest \
+            --tests com.hermesandroid.relay.data.RelayEndpointContractTest \
+            --tests com.hermesandroid.relay.network.relay.RelayHttpClientSessionPolicyTest \
             --tests com.hermesandroid.relay.network.shared.PluginProxyTransportTest \
             --tests '*GatewayChatClientTest*retarget*' \
             --tests '*RelayVoiceClientRoutingTest.proxyProviderOwnsBothVoiceSessionAndWebSocketRequests' \
@@ -204,12 +206,16 @@ jobs:
             --tests com.hermesandroid.relay.notifications.InteractionRequestNotifierTest \
             --tests com.hermesandroid.relay.ui.ChatNotificationNavigationTest \
             --tests com.hermesandroid.relay.ui.ChatNotificationNavigationUiTest \
+            --tests com.hermesandroid.relay.ui.StartupLoadingThemeTest \
             --tests com.hermesandroid.relay.viewmodel.ConnectionViewModelChatAlertsTest \
             --tests com.hermesandroid.relay.screenshots.ChatComposerProgressScreenshotTest \
             --tests com.hermesandroid.relay.screenshots.UnreadConversationsScreenshotTest \
             --tests com.hermesandroid.relay.ui.components.ProfileShelfPolicyTest \
             --tests com.hermesandroid.relay.viewmodel.VoiceInboundCompletionTest \
             --tests com.hermesandroid.relay.voice.VoiceViewModelBargeInTest \
+            --tests com.hermesandroid.relay.wake.WakeWordCoreTest \
+            --tests com.hermesandroid.relay.wake.WakeWordRecognitionTest \
+            --tests com.hermesandroid.relay.wake.WakeWordServiceHandoffTest \
             --tests com.hermesandroid.relay.voice.VoiceOutputFallbackTest \
             --tests com.hermesandroid.relay.voice.LegacyTtsTimingTest \
             --tests com.hermesandroid.relay.voice.VoiceViewModelPipelineTest \
@@ -261,7 +267,7 @@ jobs:
           java-version: 17
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v6.3.0
+        uses: gradle/actions/setup-gradle@v6.4.0
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
 

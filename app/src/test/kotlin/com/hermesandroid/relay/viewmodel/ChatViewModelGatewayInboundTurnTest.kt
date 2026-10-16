@@ -2171,6 +2171,38 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun unsolicitedMissingTerminalReplacesPartialTextWithAuthoritativeHistory() =
+        verifyUnsolicitedMissingTerminal(boundedWindow = false)
+
+    @Test
+    fun unsolicitedMissingTerminalRecoversWhenLatestHistoryWindowDoesNotGrow() =
+        verifyUnsolicitedMissingTerminal(boundedWindow = true)
+
+    private fun verifyUnsolicitedMissingTerminal(boundedWindow: Boolean) {
+        val spoken = mutableListOf<String>()
+        viewModel.gatewayInboundSpeechReceiver = { { text -> spoken.add(text); Unit } }
+        if (boundedWindow) {
+            handler.loadMessageHistory(persistedAnswerHistory("Earlier saved answer", "earlier"))
+        }
+        serverWs.send(gatewayHarness.eventFrame("message.start", null, "live-resumed"))
+        serverWs.send(gatewayHarness.eventFrame("message.delta", buildJsonObject {
+            put("text", "Partial background answer")
+        }, "live-resumed"))
+        awaitCondition { handler.messages.value.lastOrNull()?.content == "Partial background answer" }
+        persistedHistory = persistedAnswerHistory()
+        serverWs.send(gatewayHarness.eventFrame("session.info", buildJsonObject {
+            put("running", false)
+        }, "live-resumed"))
+
+        awaitCondition {
+            !handler.isStreaming.value &&
+                handler.messages.value.singleOrNull()?.content == BACKGROUND_ANSWER
+        }
+        assertTrue(spoken.isEmpty())
+        assertFalse(gatewayHarness.rpcLog.any { it.first in setOf("prompt.submit", "session.interrupt") })
+    }
+
+    @Test
     fun unsolicitedGatewayCompletionAppearsAsOneAssistantTurnAndSettles() {
         val spoken = mutableListOf<String>()
         var admissions = 0

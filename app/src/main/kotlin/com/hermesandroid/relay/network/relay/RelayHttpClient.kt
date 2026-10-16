@@ -1100,25 +1100,9 @@ class RelayHttpClient(
     }
 
     /**
-     * Extend (or update) a paired device's session TTL and/or per-channel
-     * grants.
-     *
-     * Backs the "Extend" button on the Paired Devices card. At least one
-     * of [ttlSeconds] / [grants] must be non-null — both null is an
-     * immediate `Result.failure` without hitting the network.
-     *
-     * * [ttlSeconds] — new session lifetime in seconds, `0` means never
-     *   expire. When provided, the server restarts the clock from now
-     *   (i.e. "extend by 30 days" = "30 days from now", not "add 30 days
-     *   to the existing expiry"). `null` leaves session expiry alone.
-     * * [grants] — seconds-from-now per channel. When provided, grants
-     *   are re-materialized and clamped to the (possibly new) session
-     *   lifetime. `null` leaves grants alone, though they'll be re-clamped
-     *   server-side if [ttlSeconds] was provided and shortens the session.
-     *
-     * Returns [Result.success] on HTTP 200. 404 is a hard failure here
-     * (unlike revoke — "already gone" is a surprise when you're trying to
-     * extend an active session).
+     * Reduce this bearer session's TTL or grants. Omitted grants are preserved;
+     * any lifetime or grant expansion requires fresh operator-approved pairing.
+     * Durations are measured from server receipt, and zero means never-expire.
      */
     suspend fun extendSession(
         tokenPrefix: String,
@@ -1194,8 +1178,9 @@ class RelayHttpClient(
             callClient(relayUrl).newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val reason = when (response.code) {
-                        400 -> "Invalid extend request (check TTL/grants)"
-                        401, 403 -> "Unauthorized — re-pair with the relay"
+                        400 -> "Invalid session policy request (check TTL/grants)"
+                        401 -> "Session authorization expired. Pair again with the relay."
+                        403 -> "Operator approval required. Pair again with a fresh operator-approved code to renew the session or its grants."
                         404 -> "Session not found — it may have expired"
                         409 -> "Ambiguous token prefix — retry with more chars"
                         in 500..599 -> "Relay error (HTTP ${response.code})"

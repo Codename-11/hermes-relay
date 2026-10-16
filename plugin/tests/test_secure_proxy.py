@@ -1,21 +1,28 @@
 from __future__ import annotations
 
+import asyncio
+import base64
+import hashlib
 import json
 import os
 import shutil
 import ssl
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs, urlsplit
 
-from aiohttp.test_utils import AioHTTPTestCase
+import aiohttp
+from aiohttp.test_utils import AioHTTPTestCase, TestClient, TestServer
 
 from plugin.pair import build_pairing_qr_payload
 from plugin.relay.config import RelayConfig
 from plugin.relay.secure_proxy import (
     SECURE_LINK_NAME,
     advertised_candidate,
+    certificate_der_base64,
     create_secure_proxy_app,
     ensure_tls_identity,
     spki_pin_sha256,
@@ -63,7 +70,6 @@ class SecureProxyRouteTests(AioHTTPTestCase):
         )
 
         for path in (
-            "/relay/sessions",
             "/relay/voice/config",
             "/relay/desktop/_ping", "/relay/pairing/register", "/health",
         ):
@@ -89,6 +95,19 @@ class SecureProxyMintTests(AioHTTPTestCase):
         app["server"].secure_proxy_candidate = self.proxy
         app.on_startup.remove(_on_secure_proxy_startup)
         return app
+
+    async def test_cli_tailnet_route_is_signed_once_before_secure_link(self) -> None:
+        tailnet = {"role": "tailscale", "priority": 0, "recommended": True, "legacy": True,
+            "relay": {"url": "ws://100.64.0.1:8767", "transport_hint": "ws"}}
+        response = await self.client.post("/pairing/mint", json={
+            "legacy_direct_relay": True, "endpoints": [tailnet],
+        })
+        self.assertEqual(response.status, 200, await response.text())
+        candidates = json.loads((await response.json())["qr_payload"])["endpoints"]
+        matches = [c for c in candidates if c.get("relay", {}).get("url") == "ws://100.64.0.1:8767"]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(candidates[0]["relay"]["url"], "ws://100.64.0.1:8767")
+        self.assertEqual([c["priority"] for c in candidates], list(range(len(candidates))))
 
     async def test_dashboard_mint_signs_proxy_before_fallback_routes(self) -> None:
         lan = {
@@ -253,6 +272,231 @@ class SecureProxyIdentityTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "explicitly remove/replace"):
                 ensure_tls_identity(cert, key, "192.0.2.11")
             self.assertEqual(spki_pin_sha256(cert), first)
+
+
+@unittest.skipUnless(shutil.which("openssl"), "openssl is required")
+class SecureProxyCertificateChainTests(unittest.IsolatedAsyncioTestCase):
+    """Use disposable CA/leaf identities; never read an operator's certificates."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fixture_dir = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.fixture_dir.cleanup)
+        root = Path(cls.fixture_dir.name)
+
+        def openssl(*args: str) -> bytes:
+            return subprocess.run(
+                ["openssl", *args], cwd=root, check=True,
+                capture_output=True, timeout=30,
+            ).stdout
+
+        openssl(
+            "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
+            "-subj", "/CN=Test Root", "-addext", "basicConstraints=critical,CA:TRUE",
+            "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+            "-keyout", "root.key", "-out", "root.pem",
+        )
+        for name, issuer, serial, extensions in (
+            ("intermediate", "root", "2", "basicConstraints=critical,CA:TRUE\n"
+             "keyUsage=critical,keyCertSign,cRLSign\n"),
+            ("leaf", "intermediate", "3", "basicConstraints=critical,CA:FALSE\n"
+             "subjectAltName=IP:127.0.0.1\n"
+             "extendedKeyUsage=serverAuth\n"),
+        ):
+            openssl(
+                "req", "-new", "-newkey", "rsa:2048", "-nodes",
+                "-subj", f"/CN=Test {name}", "-keyout", f"{name}.key",
+                "-out", f"{name}.csr",
+            )
+            (root / "extensions.cnf").write_text(extensions, encoding="ascii")
+            openssl(
+                "x509", "-req", "-in", f"{name}.csr", "-CA", f"{issuer}.pem",
+                "-CAkey", f"{issuer}.key", "-set_serial", serial, "-days", "2",
+                "-extfile", "extensions.cnf", "-out", f"{name}.pem",
+            )
+        # An unpadded leaf forces the old whole-file base64 decoder to consume
+        # the following PEM boundary instead of accidentally stopping at '='.
+        leaf_der = ssl.PEM_cert_to_DER_cert((root / "leaf.pem").read_text())
+        if len(leaf_der) % 3:
+            serial = "128" if len(leaf_der) % 3 == 2 else "32768"
+            openssl(
+                "x509", "-req", "-in", "leaf.csr", "-CA", "intermediate.pem",
+                "-CAkey", "intermediate.key", "-set_serial", serial, "-days", "2",
+                "-extfile", "extensions.cnf", "-out", "leaf.pem",
+            )
+        cls.leaf = (root / "leaf.pem").read_bytes()
+        cls.intermediate = (root / "intermediate.pem").read_bytes()
+        cls.root_cert = (root / "root.pem").read_bytes()
+        cls.leaf_key = (root / "leaf.key").read_bytes()
+        cls.leaf_der = ssl.PEM_cert_to_DER_cert(cls.leaf.decode("ascii"))
+        cls.chain = cls.leaf + cls.intermediate + cls.root_cert
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.directory = Path(directory.name)
+        self.cert = self.directory / "private-cert.pem"
+        self.key = self.directory / "private-key.pem"
+        self.cert.write_bytes(self.chain)
+        self.key.write_bytes(self.leaf_key)
+        self.enterContext(patch.dict(os.environ, {"HERMES_HOME": str(self.directory)}))
+        self.enterContext(patch("plugin.relay.secure_proxy._api_available",
+                                new=AsyncMock(return_value=False)))
+        self.enterContext(patch("plugin.relay.secure_proxy._dashboard_gate_enabled",
+                                new=AsyncMock(return_value=False)))
+        self.enterContext(patch("plugin.pair._tailscale_status", return_value=None))
+
+    def config(self) -> RelayConfig:
+        return RelayConfig(
+            host="127.0.0.1",
+            secure_proxy_enabled=True, secure_proxy_host="127.0.0.1",
+            secure_proxy_port=0, secure_proxy_cert=str(self.cert),
+            secure_proxy_key=str(self.key),
+            hermes_config_path=str(self.directory / "config.yaml"),
+        )
+
+    def test_single_and_multiple_certificates_export_only_leaf(self) -> None:
+        self.assertEqual(len(self.leaf_der) % 3, 0, "exercise an unpadded PEM leaf")
+        for pem in (self.leaf, self.leaf + self.intermediate, self.chain):
+            with self.subTest(certificates=pem.count(b"BEGIN CERTIFICATE")):
+                self.cert.write_bytes(pem)
+                encoded = certificate_der_base64(self.cert)
+                self.assertEqual(base64.b64decode(encoded, validate=True), self.leaf_der)
+                # Derive SPKI from the exported DER, independently of the PEM path.
+                public_key = subprocess.run(
+                    ["openssl", "x509", "-inform", "DER", "-pubkey", "-noout"],
+                    input=base64.b64decode(encoded), check=True,
+                    capture_output=True, timeout=10,
+                ).stdout
+                spki = subprocess.run(
+                    ["openssl", "pkey", "-pubin", "-outform", "DER"],
+                    input=public_key, check=True, capture_output=True, timeout=10,
+                ).stdout
+                expected_pin = "sha256/" + base64.b64encode(
+                    hashlib.sha256(spki).digest()
+                ).decode("ascii")
+                self.assertEqual(spki_pin_sha256(self.cert), expected_pin)
+                self.assertEqual(self.cert.read_bytes(), pem)
+
+    def test_empty_and_malformed_leaf_fail_with_safe_diagnostic(self) -> None:
+        for pem in (b"", b"not a certificate", b"\xff",
+                    b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+                    b"-----BEGIN CERTIFICATE-----\ntruncated"):
+            with self.subTest(pem=pem):
+                self.cert.write_bytes(pem)
+                with self.assertRaisesRegex(ValueError, "leaf certificate.*PEM") as caught:
+                    certificate_der_base64(self.cert)
+                self.assertNotIn(str(self.directory), str(caught.exception))
+
+    def test_identity_tool_failures_do_not_log_private_details(self) -> None:
+        for error in (
+            OSError(f"cannot open {self.key}"),
+            subprocess.CalledProcessError(
+                1, ["openssl", str(self.key)], stderr=b"private diagnostic contents",
+            ),
+        ):
+            with self.subTest(error=type(error).__name__):
+                with patch("plugin.relay.server.ensure_tls_identity", side_effect=error):
+                    with self.assertLogs("hermes_relay", level="ERROR") as logs:
+                        server = RelayServer(self.config())
+                self.assertIsNone(server.secure_proxy_candidate)
+                diagnostic = "\n".join(logs.output)
+                self.assertIn("file access and OpenSSL availability", diagnostic)
+                self.assertNotIn(str(self.directory), diagnostic)
+                self.assertNotIn("private diagnostic contents", diagnostic)
+
+    async def test_invalid_chain_or_key_is_not_advertised_and_relay_stays_healthy(self) -> None:
+        for pem, key in (
+            (b"", self.leaf_key),
+            (self.intermediate + self.leaf, self.leaf_key),
+            (self.chain, (Path(self.fixture_dir.name) / "root.key").read_bytes()),
+            (self.leaf + b"-----BEGIN CERTIFICATE-----\ninvalid\n"
+             b"-----END CERTIFICATE-----\n", self.leaf_key),
+        ):
+            with self.subTest(pem_length=len(pem), key_length=len(key)):
+                self.cert.write_bytes(pem)
+                self.key.write_bytes(key)
+                with self.assertLogs("hermes_relay", level="ERROR") as logs:
+                    app = create_app(self.config())
+                diagnostic = "\n".join(logs.output)
+                self.assertIn("leaf certificate first", diagnostic)
+                self.assertIn("matching private key", diagnostic)
+                self.assertNotIn(str(self.directory), diagnostic)
+                self.assertNotIn("BEGIN", diagnostic)
+                async with TestClient(TestServer(app)) as client:
+                    self.assertIsNone(app["server"].secure_proxy_candidate)
+                    self.assertIsNone(app["server"].secure_proxy_runner)
+                    response = await client.get("/health")
+                    self.assertEqual(response.status, 200)
+                    self.assertNotIn("secure_proxy", await response.json())
+                self.assertEqual(self.cert.read_bytes(), pem)
+                self.assertEqual(self.key.read_bytes(), key)
+
+    async def test_configured_chain_is_served_and_pairing_exports_leaf(self) -> None:
+        app = create_app(self.config())
+        async with TestClient(TestServer(app)) as client:
+            server = app["server"]
+            self.assertIsNotNone(server.secure_proxy_runner)
+            candidate = server.secure_proxy_candidate
+            self.assertIsNotNone(candidate)
+            self.assertEqual(
+                base64.b64decode(candidate["proxy"]["cert_der"]), self.leaf_der,
+            )
+            # Trust only the root: success requires the listener to send the intermediate.
+            context = ssl.create_default_context(cadata=self.root_cert.decode("ascii"))
+            port = server.secure_proxy_runner.addresses[0][1]
+            _, writer = await asyncio.open_connection("127.0.0.1", port, ssl=context)
+            try:
+                self.assertEqual(
+                    writer.get_extra_info("ssl_object").getpeercert(binary_form=True),
+                    base64.b64decode(candidate["proxy"]["cert_der"]),
+                )
+            finally:
+                writer.close()
+                await writer.wait_closed()
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"https://127.0.0.1:{port}/relay/health", ssl=context,
+                ) as response:
+                    self.assertEqual(response.status, 200)
+            response = await client.post("/pairing/mint", json={"ttl_seconds": 3600})
+            self.assertEqual(response.status, 200)
+            receipt = await response.json()
+            payload = json.loads(receipt["qr_payload"])
+            invite = urlsplit(receipt["pairing_url"])
+            self.assertEqual((invite.scheme, invite.netloc), ("hermes-relay", "pair"))
+            encoded = parse_qs(invite.query)["payload"][0]
+            self.assertEqual(
+                json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))),
+                payload,
+            )
+            proxy = next(item["proxy"] for item in payload["endpoints"]
+                         if item["role"] == "plugin_proxy")
+            self.assertEqual(proxy, candidate["proxy"])
+            from plugin.relay.qr_sign import load_or_create_secret, verify_payload
+            self.assertTrue(verify_payload(payload, payload["sig"], load_or_create_secret()))
+        self.assertEqual(self.cert.read_bytes(), self.chain)
+
+    async def test_generated_identity_exports_the_served_certificate(self) -> None:
+        config = self.config()
+        config.secure_proxy_cert = None
+        config.secure_proxy_key = None
+        app = create_app(config)
+        async with TestClient(TestServer(app)):
+            server = app["server"]
+            cert = Path(config.secure_proxy_cert)
+            exported = server.secure_proxy_candidate["proxy"]["cert_der"]
+            self.assertEqual(base64.b64decode(exported),
+                             ssl.PEM_cert_to_DER_cert(cert.read_text(encoding="ascii")))
+            self.assertEqual(server.secure_proxy_candidate["proxy"]["pin_sha256"],
+                             spki_pin_sha256(cert))
+            context = ssl.create_default_context(cafile=str(cert))
+            port = server.secure_proxy_runner.addresses[0][1]
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"https://127.0.0.1:{port}/relay/health", ssl=context,
+                ) as response:
+                    self.assertEqual(response.status, 200)
 
 
 class SecureProxyAdvertisementTests(unittest.TestCase):

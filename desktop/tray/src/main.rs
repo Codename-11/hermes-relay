@@ -72,6 +72,7 @@ mod app {
     const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
     const ACTION_TIMEOUT: Duration = Duration::from_secs(45);
     const LONG_ACTION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+    const PAIRING_CLIPBOARD_SCRIPT: &str = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); $text=Get-Clipboard -Format Text -Raw; if($null -ne $text){[Console]::Write($text)}";
     const OFFICIAL_URLS: &[&str] = &[
         "https://hermes-relay.dev/docs/",
         "https://hermes-relay.dev/docs/desktop/",
@@ -704,6 +705,8 @@ mod app {
         command
             .args(args)
             .env("NODE_USE_SYSTEM_CA", "1")
+            .env_remove("HERMES_RELAY_PAIR_QR")
+            .env_remove("HERMES_RELAY_CODE")
             .env(key, value);
         let probe = format!("cli.{}", args.first().copied().unwrap_or("unknown"));
         let output = run_bounded(&mut command, &probe, ACTION_TIMEOUT, false)?;
@@ -1612,6 +1615,62 @@ mod app {
     }
 
     #[tauri::command]
+    async fn pair_host_invite(invite: String) -> Result<(), String> {
+        tauri::async_runtime::spawn_blocking(move || {
+            let invite = invite.trim();
+            if invite.is_empty() || invite.len() > 16 * 1024 {
+                return Err("Paste a complete pairing invite, up to 16 KiB".to_string());
+            }
+            run_cli_checked_with_env(
+                &["pair", "--non-interactive"],
+                "HERMES_RELAY_PAIR_QR",
+                invite,
+            )?;
+            append_management_event("host.pair", "Host paired from invite", None, None);
+            Ok(())
+        })
+        .await
+        .map_err(|error| format!("invite pairing task failed: {error}"))?
+    }
+
+    fn pairing_clipboard_text(bytes: &[u8]) -> Result<String, String> {
+        let text = std::str::from_utf8(bytes)
+            .map_err(|_| "Clipboard text could not be decoded. Use Ctrl+V instead.".to_string())?
+            .trim();
+        if text.is_empty() {
+            return Err("Clipboard is empty. Copy an invite first.".to_string());
+        }
+        if text.len() > 16 * 1024 {
+            return Err("Clipboard text is too large. Copy an invite up to 16 KiB.".to_string());
+        }
+        Ok(text.to_string())
+    }
+
+    #[tauri::command]
+    async fn read_pairing_invite_clipboard(window: tauri::WebviewWindow) -> Result<String, String> {
+        if window.label() != "main" {
+            return Err("Invite paste is available in the management window only.".to_string());
+        }
+        tauri::async_runtime::spawn_blocking(|| {
+            let mut command = Command::new("powershell.exe");
+            command.args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                PAIRING_CLIPBOARD_SCRIPT,
+            ]);
+            let output = run_bounded(&mut command, "clipboard.invite.read", PROBE_TIMEOUT, false)?;
+            if !output.status.success() {
+                return Err("Could not read the clipboard. Use Ctrl+V instead.".to_string());
+            }
+            pairing_clipboard_text(&output.stdout.bytes)
+        })
+        .await
+        .map_err(|_| "Could not read the clipboard. Use Ctrl+V instead.".to_string())?
+    }
+
+    #[tauri::command]
     async fn test_host_route(remote: String) -> Result<Value, String> {
         tauri::async_runtime::spawn_blocking(move || {
             run_json_with_timeout(
@@ -2393,6 +2452,8 @@ mod app {
                 revoke_authorized_client,
                 resolve_grant,
                 pair_host,
+                pair_host_invite,
+                read_pairing_invite_clipboard,
                 test_host_route,
                 open_management_from_grant,
                 open_management_from_notice,
@@ -2531,6 +2592,50 @@ mod app {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn clipboard_invite_preserves_unicode_and_multiline_text() {
+            let invite = "{\r\n  \"device\": \"Portable 🤖\",\r\n  \"code\": \"ABC123\"\r\n}";
+            assert_eq!(pairing_clipboard_text(invite.as_bytes()).unwrap(), invite);
+        }
+
+        #[test]
+        fn clipboard_invite_rejects_empty_oversize_and_invalid_utf8() {
+            assert!(pairing_clipboard_text(b" \r\n").is_err());
+            assert!(pairing_clipboard_text(&[0xff]).is_err());
+            assert!(pairing_clipboard_text("é".repeat(8193).as_bytes()).is_err());
+            assert_eq!(
+                pairing_clipboard_text("é".repeat(8192).as_bytes())
+                    .unwrap()
+                    .len(),
+                16384
+            );
+        }
+
+        #[test]
+        fn clipboard_invite_native_helper_keeps_raw_text_without_reading_operator_clipboard() {
+            let invite = "{\r\n  \"device\": \"Portable 🤖\",\r\n  \"code\": \"ABC123\"\r\n}";
+            let script = format!(
+                "function Get-Clipboard {{ param($Format, [switch]$Raw) $env:PAIRING_CLIPBOARD_TEST_TEXT }}; {PAIRING_CLIPBOARD_SCRIPT}"
+            );
+            let mut command = Command::new("powershell.exe");
+            command
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    &script,
+                ])
+                .env("PAIRING_CLIPBOARD_TEST_TEXT", invite);
+            let output =
+                run_bounded(&mut command, "clipboard.invite.test", PROBE_TIMEOUT, false).unwrap();
+            assert!(output.status.success());
+            assert_eq!(
+                pairing_clipboard_text(&output.stdout.bytes).unwrap(),
+                invite
+            );
+        }
 
         #[test]
         fn installed_cli_resolution_prefers_explicit_then_sibling_then_home() {

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import QRCode from "qrcode";
 
-import { pairingQrRenderOptions } from "../src/lib/pairing-qr.mjs";
+import { pairingQrRenderOptions, pairingQrErrorMessage } from "../src/lib/pairing-qr.mjs";
 
 import {
   classifyPublicRouteInput,
@@ -10,6 +10,8 @@ import {
   pairingEndpointReceipt,
   pairingProbeStatus,
   pairingSurfaceProbes,
+  desktopPairingRoutes,
+  pairingAddressProtocol,
 } from "../src/lib/pairing-receipt.mjs";
 
 test("pairing QR keeps integer modules and a four-module quiet zone", () => {
@@ -19,6 +21,16 @@ test("pairing QR keeps integer modules and a four-module quiet zone", () => {
     errorCorrectionLevel: "L",
   });
   assert.equal(Object.hasOwn(pairingQrRenderOptions(), "width"), false);
+});
+
+test("dense QR uses whole modules that fit the panel or offers copying", () => {
+  const options = pairingQrRenderOptions({ modules: 177, availableWidth: 420 });
+  assert.equal(options.scale, 2);
+  assert.ok((177 + 2 * options.margin) * options.scale <= 420);
+  assert.throws(() => pairingQrRenderOptions({ modules: 177, availableWidth: 300 }), (error) => {
+    assert.match(pairingQrErrorMessage(error), /wider window/);
+    return true;
+  });
 });
 
 test("certificate-bearing pairing invite fits the Dashboard QR renderer", () => {
@@ -33,6 +45,18 @@ test("certificate-bearing pairing invite fits the Dashboard QR renderer", () => 
   assert.throws(() => QRCode.create(payload, { errorCorrectionLevel: "M" }), /too big/i);
   const qr = QRCode.create(payload, pairingQrRenderOptions());
   assert.ok(qr.version <= 40);
+});
+
+test("multi-route certificate invite reports QR capacity without discarding the invite", () => {
+  const payload = JSON.stringify({hermes:3, endpoints:[{role:"plugin_proxy", proxy:{
+    url:"https://relay.example:9443", cert_der:"a".repeat(3200),
+    pin_sha256:"sha256/"+"A".repeat(43)+"=", surfaces:["relay","dashboard"],
+  }}]});
+  assert.throws(() => QRCode.create(payload, pairingQrRenderOptions()), (error) => {
+    assert.match(pairingQrErrorMessage(error), /too large.*Copy the full invite/);
+    return true;
+  });
+  assert.match(pairingQrErrorMessage(new Error("Canvas unavailable")), /could not be drawn/);
 });
 
 test("Secure Link receipt derives only its advertised namespaces without exposing trust material", () => {
@@ -50,7 +74,7 @@ test("Secure Link receipt derives only its advertised namespaces without exposin
   ]);
   const probes = pairingSurfaceProbes(receipt);
   assert.ok(probes.every(probe => probe.requires_paired_client));
-  assert.deepEqual(pairingProbeStatus(probes[0]), { healthy: null, label: "Import QR to verify" });
+  assert.deepEqual(pairingProbeStatus(probes[0]), { healthy: null, label: "Verify after pairing" });
   assert.equal(JSON.stringify(receipt).includes("public-certificate"), false);
   assert.equal(JSON.stringify(receipt).includes("sha256/"), false);
   payload.endpoints[0].proxy.pin_sha256 = "wrong";
@@ -271,4 +295,31 @@ test("public route input distinguishes dashboard origins from legacy Relay paths
   );
   assert.equal(classifyPublicRouteInput("https://user:secret@agent.example").kind, "invalid");
   assert.equal(classifyPublicRouteInput("https://agent.example?token=secret").kind, "invalid");
+});
+
+test("CLI compatibility distinguishes Dashboard ingress from direct and pinned routes", () => {
+  const ingress = { role: "public", dashboard: { url: "https://hermes.example" },
+    relay: { url: "wss://hermes.example/api/plugins/hermes-relay/transport" } };
+  assert.equal(desktopPairingRoutes(pairingEndpointReceipt({endpoints:[ingress]})).length, 0);
+  const receipt = pairingEndpointReceipt({endpoints:[ingress,
+    {role:"legacy_direct", relay:{url:"ws://192.168.1.50:8767"}},
+  ]});
+  assert.deepEqual(desktopPairingRoutes(receipt).map(route=>route.role), ["legacy_direct"]);
+  assert.equal(desktopPairingRoutes(pairingEndpointReceipt({endpoints:[{
+    role:"public_legacy", relay:{url:"ws://hermes.example:8767"},
+  }]})).length, 0);
+  const pinned = pairingEndpointReceipt({endpoints:[{role:"secure_link", proxy:{
+    url:"https://secure.example:9443", surfaces:["relay","dashboard","api"],
+    pin_sha256:"sha256/"+"A".repeat(43)+"=", cert_der:"test-cert",
+  }}]});
+  assert.equal(desktopPairingRoutes(pinned).length, 1);
+  assert.deepEqual(desktopPairingRoutes(pinned)[0].surfaces.map(surface=>surface.surface), ["relay"]);
+  assert.deepEqual(pinned.routes[0].surfaces.map(surface=>surface.surface), ["dashboard","relay","api"]);
+});
+
+test("address protocol makes default and non-default ports explicit", () => {
+  assert.equal(pairingAddressProtocol("wss://hermes.example/relay"), "WSS · port 443");
+  assert.equal(pairingAddressProtocol("http://192.168.1.50:9119"), "HTTP · port 9119");
+  assert.equal(pairingAddressProtocol("ws://[fd00::5]:8767"), "WS · port 8767");
+  assert.equal(pairingAddressProtocol("invalid"), "");
 });

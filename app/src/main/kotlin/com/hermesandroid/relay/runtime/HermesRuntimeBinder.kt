@@ -558,10 +558,9 @@ internal class HermesRuntimeBinder(
         currentCoroutineContext().ensureActive()
         check(isCurrent()) { "Assistant activation was superseded" }
         if (!manualMic) {
-            voice.startListening()
-            check(voice.uiState.value.state == VoiceState.Listening) {
-                voice.uiState.value.error ?: "Voice recorder did not enter Listening"
-            }
+            voice.startListeningAwaitingHandoff()
+            currentCoroutineContext().ensureActive()
+            check(isCurrent()) { "Assistant activation was superseded" }
         }
         _voiceActivationReadiness.value = readiness
     }

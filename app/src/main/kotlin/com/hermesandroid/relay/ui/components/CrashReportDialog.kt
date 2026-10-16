@@ -128,7 +128,10 @@ private fun CrashReportDialog(report: ReliabilityReport, onDismiss: () -> Unit) 
 
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = stringResource(R.string.crash_body),
+                        text = stringResource(
+                            if (CrashReporter.isMemoryFailure(report)) R.string.crash_memory_recovery_body
+                            else R.string.crash_body,
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

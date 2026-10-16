@@ -302,6 +302,21 @@ Superseded Android runs on `dev` and PR refs are canceled automatically; `main`
 runs are never canceled because each release-branch commit must complete its
 independent validation.
 
+### Dependency auto-merge protection
+
+The `dev` branch requires the aggregate `Required checks` status from GitHub
+Actions, with the branch up to date before merging. Keep this repository rule
+enabled; the workflow name alone does not enforce a merge gate.
+
+Dependabot may enable auto-merge only for patch and minor updates after checking
+the target branch's enforced rules. Missing protection fails closed. The workflow
+loads its policy from the trusted target branch and pins the requested PR head;
+GitHub then waits for the required checks before creating a merge commit.
+
+Native dependencies still need compatible packaged binaries. Update ONNX Runtime
+and sherpa-onnx together only after the APK native compatibility check passes;
+a successful Gradle assembly alone does not establish JNI compatibility.
+
 ## Questions?
 
 - **Architecture context?** [docs/spec.md](docs/spec.md) covers protocols, UI layouts, and the channel model. [docs/decisions.md](docs/decisions.md) covers the forks in the road and why we picked what we did.

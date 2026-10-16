@@ -599,6 +599,7 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         public_url: str | None = "https://example.com",
         tailscale_status: dict | None = None,
         legacy_direct_relay: bool = False,
+        relay_tls: bool = False,
     ) -> list[dict]:
         from plugin.pair import build_endpoint_candidates
 
@@ -621,7 +622,7 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
                 api_tls=False,
                 relay_host="10.0.0.42",
                 relay_port=8767,
-                relay_tls=False,
+                relay_tls=relay_tls,
                 public_url=public_url,
                 prefer=prefer,
                 legacy_direct_relay=legacy_direct_relay,
@@ -632,6 +633,48 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         roles = [c["role"] for c in endpoints]
         self.assertEqual(roles, ["tailscale", "public", "lan"])
         self.assertEqual([c["priority"] for c in endpoints], [0, 1, 2])
+
+    def test_cli_invite_has_direct_tailnet_relay_independent_of_dashboard_serve(self) -> None:
+        status = {
+            "hostname": "test.tail-xyz.ts.net", "tailscale_ip": "100.64.0.1",
+            "serve_ports": [10443],
+            "serve_services": {"dashboard": {"active": True, "listen_ports": [10443]}},
+        }
+        endpoints = self._build(tailscale_status=status, legacy_direct_relay=True)
+        direct = endpoints[0]
+        self.assertEqual(direct["role"], "tailscale")
+        self.assertEqual(direct["relay"]["url"], "ws://100.64.0.1:8767")
+        self.assertTrue(direct["legacy"])
+        self.assertTrue(direct["recommended"])
+        self.assertNotIn("dashboard", direct)
+        self.assertNotIn("api", direct)
+        self.assertEqual(endpoints[1]["dashboard"]["url"], "https://test.tail-xyz.ts.net:10443")
+        android = self._build(tailscale_status=status)
+        self.assertNotIn("ws://100.64.0.1:8767", json.dumps(android))
+
+    def test_direct_tailnet_relay_supports_ipv6_and_uses_relay_tls_setting(self) -> None:
+        endpoints = self._build(mode="tailscale", public_url=None,
+            tailscale_status={"tailscale_ip": "fd7a:115c:a1e0::10"},
+            legacy_direct_relay=True, relay_tls=True)
+        self.assertEqual(endpoints[0]["relay"]["url"], "wss://[fd7a:115c:a1e0::10]:8767")
+        self.assertEqual(endpoints[0]["relay"]["transport_hint"], "wss")
+
+    def test_direct_tailnet_relay_requires_a_valid_tailnet_ip(self) -> None:
+        for address in (None, "", "192.168.1.20", "203.0.113.10", "not-an-ip"):
+            with self.subTest(address=address):
+                endpoints = self._build(mode="tailscale", public_url=None,
+                    tailscale_status={"hostname": "test.tail-xyz.ts.net", "tailscale_ip": address},
+                    legacy_direct_relay=True)
+                self.assertFalse(any(e["role"] == "tailscale" and e.get("legacy") for e in endpoints))
+
+    def test_signed_candidate_normalization_preserves_direct_tailnet_relay(self) -> None:
+        from plugin.pair import normalize_endpoint_candidates
+        endpoints = self._build(mode="tailscale", public_url=None, legacy_direct_relay=True)
+        with mock.patch("plugin.pair._tailscale_status", return_value={
+            "hostname": "test.tail-xyz.ts.net", "tailscale_ip": "100.64.0.1", "serve_ports": [10443],
+        }):
+            normalized = normalize_endpoint_candidates(endpoints)
+        self.assertEqual(normalized[0]["relay"]["url"], "ws://100.64.0.1:8767")
 
     def test_prefer_tailscale_promotes_to_priority_0(self) -> None:
         endpoints = self._build(prefer="tailscale")
@@ -692,16 +735,27 @@ class BuildEndpointCandidatesPreferTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "legacy-direct-relay"):
             self._build(mode="public", public_url="https://public.example/relay")
 
-    def test_explicit_legacy_mode_keeps_public_and_lan_direct_last(self) -> None:
+    def test_cli_compatibility_does_not_infer_public_relay_from_dashboard_origin(self) -> None:
         endpoints = self._build(legacy_direct_relay=True)
 
         self.assertEqual(
             [candidate["role"] for candidate in endpoints],
-            ["tailscale", "public", "lan", "public_legacy", "legacy_direct"],
+            ["tailscale", "tailscale", "public", "lan", "legacy_direct"],
         )
-        self.assertEqual(endpoints[-2]["relay"]["url"], "wss://example.com:8767")
+        self.assertNotIn("wss://example.com:8767", json.dumps(endpoints))
         self.assertEqual(endpoints[-1]["relay"]["url"], "ws://10.0.0.42:8767")
-        self.assertTrue(all(candidate.get("recommended") is False for candidate in endpoints[-2:]))
+        self.assertFalse(endpoints[-1]["recommended"])
+
+    def test_explicit_public_relay_path_or_port_is_preserved_for_cli_compatibility(self) -> None:
+        for public_url, relay_url in (
+            ("https://relay.example.com/relay", "wss://relay.example.com/relay"),
+            ("https://relay.example.com:8767", "wss://relay.example.com:8767"),
+        ):
+            with self.subTest(public_url=public_url):
+                endpoints = self._build(mode="public", public_url=public_url, legacy_direct_relay=True)
+                public = next(c for c in endpoints if c["role"] == "public_legacy")
+                self.assertEqual(public["relay"]["url"], relay_url)
+                self.assertFalse(any(c["role"] == "public" for c in endpoints))
 
     def test_tailscale_uses_raw_ip_for_direct_tailnet_ports(self) -> None:
         endpoints = self._build(mode="tailscale", public_url=None)

@@ -21,6 +21,9 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 FOCUSED_TESTS = (
+    "com.hermesandroid.relay.network.upstream.GatewayPayloadMemoryTest",
+    "com.hermesandroid.relay.viewmodel.ChatMemoryRecoveryTest",
+    "com.hermesandroid.relay.reliability.ReliabilityReportTest",
     "com.hermesandroid.relay.data.ChatUnreadStoreTest",
     "com.hermesandroid.relay.data.ChatTurnCheckpointStoreTest",
     "com.hermesandroid.relay.notifications.ChatNotificationIntentTest",
@@ -29,6 +32,7 @@ FOCUSED_TESTS = (
     "com.hermesandroid.relay.notifications.InteractionRequestNotifierTest",
     "com.hermesandroid.relay.ui.ChatNotificationNavigationTest",
     "com.hermesandroid.relay.ui.ChatNotificationNavigationUiTest",
+    "com.hermesandroid.relay.ui.StartupLoadingThemeTest",
     "com.hermesandroid.relay.viewmodel.ConnectionViewModelChatAlertsTest",
     "com.hermesandroid.relay.screenshots.ChatComposerProgressScreenshotTest",
     "com.hermesandroid.relay.screenshots.UnreadConversationsScreenshotTest",
@@ -50,6 +54,9 @@ FOCUSED_TESTS = (
     "com.hermesandroid.relay.viewmodel.ChatViewModelGatewayInboundTurnTest",
     "com.hermesandroid.relay.viewmodel.VoiceInboundCompletionTest",
     "com.hermesandroid.relay.voice.VoiceViewModelBargeInTest",
+    "com.hermesandroid.relay.wake.WakeWordCoreTest",
+    "com.hermesandroid.relay.wake.WakeWordRecognitionTest",
+    "com.hermesandroid.relay.wake.WakeWordServiceHandoffTest",
     "com.hermesandroid.relay.voice.VoiceOutputFallbackTest",
     "com.hermesandroid.relay.voice.LegacyTtsTimingTest",
     "com.hermesandroid.relay.voice.VoiceViewModelPipelineTest",
@@ -60,6 +67,8 @@ FOCUSED_TESTS = (
     "com.hermesandroid.relay.voice.VoiceOverlayPresentationTest",
     "com.hermesandroid.relay.network.ArchitectureBoundaryTest",
     "com.hermesandroid.relay.network.relay.RelayUrlDeriverTest",
+    "com.hermesandroid.relay.data.RelayEndpointContractTest",
+    "com.hermesandroid.relay.network.relay.RelayHttpClientSessionPolicyTest",
     "com.hermesandroid.relay.viewmodel.ConnectionSwitchTest",
     "com.hermesandroid.relay.util.ServerAddressTest",
     "com.hermesandroid.relay.util.IssueReportAndDiagnosticsTest",

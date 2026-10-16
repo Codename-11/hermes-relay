@@ -106,6 +106,9 @@ def ensure_tls_identity(cert_path: Path, key_path: Path, advertised_host: str) -
     """Create an atomic private identity whose SAN matches its advertised URL."""
     if cert_path.is_file() and key_path.is_file():
         os.chmod(key_path, 0o600)
+        # TLS, SAN inspection, SPKI, and pairing must agree on the first cert.
+        # Validate the full chain and matching key before advertising its leaf.
+        tls_context(cert_path, key_path)
         try:
             san_text = subprocess.run(
                 [
@@ -145,6 +148,7 @@ def ensure_tls_identity(cert_path: Path, key_path: Path, advertised_host: str) -
         )
         _private_write(key_path, generated_key.read_bytes())
         _private_write(cert_path, generated_cert.read_bytes())
+    tls_context(cert_path, key_path)
 
 
 def spki_pin_sha256(cert_path: Path) -> str:
@@ -160,8 +164,19 @@ def spki_pin_sha256(cert_path: Path) -> str:
 
 
 def certificate_der_base64(cert_path: Path) -> str:
-    """Return the public leaf certificate as compact DER base64 for pairing."""
-    der = ssl.PEM_cert_to_DER_cert(cert_path.read_text(encoding="ascii"))
+    """Export the first (leaf) PEM certificate; leave the serving chain intact."""
+    try:
+        # Use the same parser/leaf ordering as spki_pin_sha256 and TLS serving.
+        # PEM_cert_to_DER_cert decodes a single block, not a concatenated chain.
+        der = subprocess.run(
+            ["openssl", "x509", "-in", str(cert_path), "-outform", "DER"],
+            check=True, capture_output=True, timeout=10,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        raise ValueError(
+            "could not export Secure Link leaf certificate; check readable PEM "
+            "with the leaf certificate first and OpenSSL availability"
+        ) from None
     return base64.b64encode(der).decode("ascii")
 
 
@@ -556,7 +571,16 @@ async def _proxy_websocket(
 
 
 def create_secure_proxy_app(server: "RelayServer") -> web.Application:
+    # Imported at app creation because server imports this module for startup.
+    from .server import (
+        _require_bearer_session,
+        handle_sessions_extend,
+        handle_sessions_list,
+        handle_sessions_revoke,
+    )
+
     app = web.Application(client_max_size=16 * 1024 * 1024)
+    app["server"] = server
     api_base = _loopback_http_base(server.config.webapi_url, "API")
     dashboard_base = _loopback_http_base(
         server.config.secure_proxy_dashboard_url, "Dashboard"
@@ -689,6 +713,19 @@ def create_secure_proxy_app(server: "RelayServer") -> web.Application:
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
             raise web.HTTPBadGateway(text="Dashboard upstream unavailable") from exc
 
+    async def relay_sessions(request: web.Request) -> web.Response:
+        # Secure Link is remote ingress even when Reach connects on loopback.
+        # Never inherit the co-hosted Dashboard's no-bearer operator shortcut.
+        _require_bearer_session(request)
+        if request.method == "DELETE":
+            return await handle_sessions_revoke(request)
+        if request.method == "PATCH":
+            return await handle_sessions_extend(request)
+        return await handle_sessions_list(request)
+
+    app.router.add_get("/relay/sessions", relay_sessions)
+    app.router.add_delete("/relay/sessions/{token_prefix}", relay_sessions)
+    app.router.add_patch("/relay/sessions/{token_prefix}", relay_sessions)
     app.router.add_get("/relay/health", health, allow_head=True)
     app.router.add_get("/relay/ws", relay_ws)
     # Bare /api and /dashboard (no trailing slash) must resolve — browsers and
@@ -704,7 +741,13 @@ def create_secure_proxy_app(server: "RelayServer") -> web.Application:
 def tls_context(cert_path: Path, key_path: Path) -> ssl.SSLContext:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
-    context.load_cert_chain(cert_path, key_path)
+    try:
+        context.load_cert_chain(cert_path, key_path)
+    except (OSError, ValueError):
+        raise ValueError(
+            "could not load Secure Link TLS identity; check readable PEM files, "
+            "leaf certificate first, then intermediates, and its matching private key"
+        ) from None
     return context
 
 

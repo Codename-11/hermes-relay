@@ -319,6 +319,259 @@ class NativeDashboardAuthTest {
     }
 
     @Test
+    fun refresh_preservesSessionOnAmbiguousFailuresAndRecoversOnSameRoute() {
+        val original = NativeDashboardTokens("saved-access", "saved-refresh", 1005, "nous")
+        val failures = listOf(
+            MockResponse().setResponseCode(401).setHeader("Content-Type", "text/html")
+                .setHeader("WWW-Authenticate", "Basic realm=proxy")
+                .setBody("<html>private-proxy-error</html>"),
+            MockResponse().setResponseCode(400).setHeader("Content-Type", "text/html")
+                .setBody("<html>private-proxy-error</html>"),
+            MockResponse().setResponseCode(401).setHeader("Content-Type", "application/json")
+                .setHeader("WWW-Authenticate", "Basic realm=proxy")
+                .setBody("""{"error":"session_expired"}"""),
+            MockResponse().setResponseCode(401).setHeader("Content-Type", "application/json")
+                .setBody("""{"detail":"Unauthorized"}"""),
+            MockResponse().setResponseCode(401).setHeader("Content-Type", "application/json")
+                .setBody("""{"error":"unknown_error"}"""),
+            MockResponse().setResponseCode(401).setHeader("Content-Type", "application/json")
+                .setBody("malformed-private-response"),
+            MockResponse().setResponseCode(401),
+            MockResponse().setResponseCode(401).setBody("""{"error":"session_expired"}"""),
+            MockResponse().setResponseCode(401).setHeader("Content-Type", "application/json")
+                .setBody("""{"error":401}"""),
+            MockResponse().setResponseCode(401).setHeader("Content-Type", "application/json")
+                .setBody("""{"error":"session_expired","detail":"${"x".repeat(5000)}"}"""),
+            MockResponse().setResponseCode(401).setHeader("Content-Type", "application/json")
+                .setBody("""{"error":"session_expired"}""" + " ".repeat(4096) + "trailing-data"),
+            MockResponse().setResponseCode(400).setHeader("Content-Type", "application/json")
+                .setBody("""{"error":"session_expired"}"""),
+            MockResponse().setResponseCode(503).setHeader("Content-Type", "application/json")
+                .setBody("""{"error":"session_expired"}"""),
+            MockResponse().setResponseCode(403),
+        )
+        val client = NativeDashboardAuthClient(server.url("/").toString(), store)
+        failures.forEachIndexed { index, response ->
+            store.save(original)
+            server.enqueue(response)
+            val error = runCatching { client.refresh() }.exceptionOrNull()
+            assertTrue("failure $index", error is IOException)
+            assertEquals("preserve failure $index", original, store.load())
+            assertFalse(error.toString().contains("private-"))
+            assertFalse(error.toString().contains(original.refreshToken))
+            assertEquals(index + 1, server.requestCount)
+            val request = server.takeRequest()
+            assertEquals("/auth/native/refresh", request.path)
+            assertEquals(null, request.getHeader("Authorization"))
+            assertEquals(null, request.getHeader("Cookie"))
+        }
+        server.enqueue(MockResponse().setBody(
+            """{"access_token":"recovered-access","refresh_token":"rotated-refresh","expires_at":3000,"provider":"nous"}""",
+        ))
+        assertEquals("rotated-refresh", client.refresh().refreshToken)
+        assertEquals("recovered-access", store.load()?.accessToken)
+        assertTrue(server.takeRequest().body.readUtf8().contains("saved-refresh"))
+        assertEquals(failures.size + 1, server.requestCount)
+    }
+
+    @Test
+    fun refresh_dashboardSessionExpiredClearsOnlyMatchingSession() {
+        store.save(NativeDashboardTokens("saved-access", "rejected-refresh", 1005, "nous"))
+        server.enqueue(MockResponse().setResponseCode(401)
+            .setHeader("Content-Type", "application/json; charset=utf-8")
+            .setBody("""{"error":"session_expired","detail":"Refresh token expired or invalid; start a new sign-in."}"""))
+        val client = NativeDashboardAuthClient(server.url("/").toString(), store)
+
+        assertTrue(runCatching { client.refresh() }.exceptionOrNull() is NativeDashboardAuthHttpException)
+        assertEquals(null, store.load())
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun refresh_rejectionDoesNotClearReplacementSession() {
+        val original = NativeDashboardTokens("old-access", "old-refresh", 1005, "nous")
+        val replacement = NativeDashboardTokens("new-access", "new-refresh", 3000, "nous")
+        val shared = AtomicReference<NativeDashboardTokens?>(original)
+        val concurrentStore = SharedMemoryNativeTokenStore("replacement-${System.nanoTime()}", shared)
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                shared.set(replacement)
+                return MockResponse().setResponseCode(401).setHeader("Content-Type", "application/json")
+                    .setBody("""{"error":"session_expired"}""")
+            }
+        }
+
+        val client = NativeDashboardAuthClient(server.url("/").toString(), concurrentStore)
+        assertTrue(runCatching { client.refresh(original) }.isFailure)
+        assertEquals(replacement, shared.get())
+    }
+
+    @Test
+    fun refresh_networkFailurePreservesTokensAndExplicitSignOutStillClears() {
+        val original = NativeDashboardTokens("saved-access", "saved-refresh", 1005, "nous")
+        store.save(original)
+        val client = NativeDashboardAuthClient(
+            "https://native-auth.invalid", store,
+            client = OkHttpClient.Builder().dns { throw UnknownHostException("private-dns") }.build(),
+        )
+        assertTrue(runCatching { client.refresh() }.exceptionOrNull() is UnknownHostException)
+        assertEquals(original, store.load())
+        client.clearStoredSession()
+        assertEquals(null, store.load())
+    }
+
+    @Test
+    fun exchangeCallback_proxyFailurePreservesExistingSession() {
+        val original = NativeDashboardTokens("saved-access", "saved-refresh", 1005, "nous")
+        store.save(original)
+        val client = NativeDashboardAuthClient(server.url("/").toString(), store)
+        val authorization = client.beginAuthorization("http://127.0.0.1:43123/callback")
+        server.enqueue(MockResponse().setResponseCode(401).setHeader("Content-Type", "text/html")
+            .setHeader("WWW-Authenticate", "Basic realm=proxy").setBody("<html>private-proxy-error</html>"))
+
+        val failure = runCatching {
+            client.exchangeCallback(authorization, "/callback?code=code&state=${authorization.state}")
+        }.exceptionOrNull()
+
+        assertTrue(failure is NativeDashboardAuthHttpException)
+        assertEquals(original, store.load())
+        assertEquals(1, server.requestCount)
+        assertEquals("/auth/native/token", server.takeRequest().path)
+    }
+
+    @Test
+    fun bearerAuth_authenticatorProxyFailureDoesNotLoopAndLaterRequestRecovers() {
+        val original = NativeDashboardTokens("saved-access", "saved-refresh", 3000, "self-hosted")
+        store.save(original)
+        val client = dashboardClientWithBearer(store)
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setResponseCode(401).setHeader("Content-Type", "text/html")
+            .setHeader("WWW-Authenticate", "Basic realm=proxy"))
+
+        assertTrue(kotlinx.coroutines.runBlocking { client.requestWsTicket() }.isFailure)
+        assertEquals(original, store.load())
+        assertEquals(2, server.requestCount)
+        assertEquals("Bearer saved-access", server.takeRequest().getHeader("Authorization"))
+        assertEquals("/auth/native/refresh", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setResponseCode(401))
+        server.enqueue(MockResponse().setBody(
+            """{"access_token":"recovered","refresh_token":"rotated","expires_at":3000,"provider":"self-hosted"}""",
+        ))
+        server.enqueue(MockResponse().setBody("""{"ticket":"recovered-ticket","ttl_seconds":30}"""))
+        assertEquals("recovered-ticket", kotlinx.coroutines.runBlocking { client.requestWsTicket().getOrThrow() }.ticket)
+        assertEquals(5, server.requestCount)
+        server.takeRequest()
+        assertEquals("/auth/native/refresh", server.takeRequest().path)
+        assertEquals("Bearer recovered", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test
+    fun bearerAuth_refreshStorageFailureUsesSafeIoFailure() {
+        val original = NativeDashboardTokens("saved-access", "saved-refresh", 1005, "nous")
+        store.save(original)
+        val failingStore = object : NativeDashboardTokenStore by store {
+            override fun save(tokens: NativeDashboardTokens) {
+                throw IllegalStateException("private-store-detail")
+            }
+        }
+        server.enqueue(MockResponse().setBody(
+            """{"access_token":"recovered","refresh_token":"rotated","expires_at":3000,"provider":"nous"}""",
+        ))
+
+        val failure = kotlinx.coroutines.runBlocking {
+            dashboardClientWithBearer(failingStore).requestWsTicket()
+        }.exceptionOrNull()
+
+        assertTrue(failure is IOException)
+        assertEquals("Dashboard native session could not be refreshed. Try again.", failure?.message)
+        assertEquals(null, failure?.cause)
+        assertEquals(original, store.load())
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun cookieFallback_proxyRefreshFailurePreservesCookiesAndRecovers() {
+        val original = NativeDashboardTokens("saved-access", "saved-refresh", 1005, "nous")
+        store.save(original)
+        val cookie = StoredDashboardCookie(
+            name = "hermes_session_at", value = "saved-cookie", expiresAt = Long.MAX_VALUE,
+            domain = server.hostName, path = "/", secure = false,
+            httpOnly = true, hostOnly = true, persistent = true,
+        )
+        val cookieStore = InMemoryDashboardCookieStore().apply { save(listOf(cookie)) }
+        val client = DashboardApiClient(server.url("/").toString(), DashboardApiClient.defaultClient(
+            cookieStore = cookieStore,
+            bearerAuth = DashboardBearerAuth(server.url("/").toString(), store, clockSeconds = { 1000 }),
+        ))
+        fun providerUnavailable() = MockResponse().setResponseCode(503)
+            .setBody("""{"detail":"Auth provider 'nous' unreachable"}""")
+        server.enqueue(providerUnavailable())
+        server.enqueue(MockResponse().setResponseCode(401).setHeader("Content-Type", "text/html")
+            .setHeader("WWW-Authenticate", "Basic realm=proxy"))
+
+        val failure = kotlinx.coroutines.runBlocking { client.requestWsTicket() }.exceptionOrNull()
+        assertTrue(failure.toString(), failure?.message.orEmpty().contains("proxy", ignoreCase = true))
+        assertEquals(original, store.load())
+        assertEquals(listOf(cookie), cookieStore.load())
+        assertEquals(2, server.requestCount)
+        assertEquals("hermes_session_at=saved-cookie", server.takeRequest().getHeader("Cookie"))
+        val refresh = server.takeRequest()
+        assertEquals("/auth/native/refresh", refresh.path)
+        assertEquals(null, refresh.getHeader("Cookie"))
+
+        server.enqueue(providerUnavailable())
+        server.enqueue(MockResponse().setBody(
+            """{"access_token":"recovered","refresh_token":"rotated","expires_at":3000,"provider":"nous"}""",
+        ))
+        server.enqueue(MockResponse().setBody("""{"ticket":"recovered-ticket","ttl_seconds":30}"""))
+        assertEquals("recovered-ticket", kotlinx.coroutines.runBlocking { client.requestWsTicket().getOrThrow() }.ticket)
+        assertEquals(5, server.requestCount)
+        assertEquals(null, server.takeRequest().getHeader("Authorization"))
+        assertEquals("/auth/native/refresh", server.takeRequest().path)
+        assertEquals("Bearer recovered", server.takeRequest().getHeader("Authorization"))
+        assertEquals(listOf(cookie), cookieStore.load())
+    }
+
+    @Test
+    fun bearerAuth_proxyRefreshFailureSurfacesAndNextRequestRecovers() {
+        // Cover both a restored Nous session (bootstrap) and an established session.
+        listOf(false, true).forEach { established ->
+            val tokenStore = MemoryNativeTokenStore()
+            val original = NativeDashboardTokens("saved-access", "saved-refresh", 1005, "nous")
+            tokenStore.save(original)
+            if (established) {
+                server.enqueue(MockResponse().setBody(
+                    """{"access_token":"saved-access","refresh_token":"saved-refresh","expires_at":1005,"provider":"nous"}""",
+                ))
+                NativeDashboardAuthClient(server.url("/").toString(), tokenStore).refresh()
+                server.takeRequest()
+            }
+            val before = server.requestCount
+            server.enqueue(MockResponse().setResponseCode(401).setHeader("Content-Type", "text/html")
+                .setHeader("WWW-Authenticate", "Basic realm=proxy").setBody("<html>private-proxy-error</html>"))
+            val client = dashboardClientWithBearer(tokenStore)
+            val failure = kotlinx.coroutines.runBlocking { client.requestWsTicket() }.exceptionOrNull()
+            assertTrue(failure.toString(), failure is IOException)
+            assertTrue(failure.toString(), failure?.message.orEmpty().contains("proxy", ignoreCase = true))
+            assertFalse(failure.toString().contains("private-proxy-error"))
+            assertEquals(original, tokenStore.load())
+            assertEquals(before + 1, server.requestCount)
+            assertEquals("/auth/native/refresh", server.takeRequest().path)
+
+            server.enqueue(MockResponse().setBody(
+                """{"access_token":"recovered","refresh_token":"rotated","expires_at":3000,"provider":"nous"}""",
+            ))
+            server.enqueue(MockResponse().setBody("""{"ticket":"recovered-ticket","ttl_seconds":30}"""))
+            assertEquals("recovered-ticket", kotlinx.coroutines.runBlocking { client.requestWsTicket().getOrThrow() }.ticket)
+            assertEquals("/auth/native/refresh", server.takeRequest().path)
+            assertEquals("Bearer recovered", server.takeRequest().getHeader("Authorization"))
+            assertEquals(before + 3, server.requestCount)
+            assertEquals("rotated", tokenStore.load()?.refreshToken)
+        }
+    }
+
+    @Test
     fun bearerAuth_refreshesNearExpiryAndAuthenticatesTicketRequest() {
         store.save(
             NativeDashboardTokens(
@@ -394,7 +647,7 @@ class NativeDashboardAuthTest {
     }
 
     @Test
-    fun failedNousBootstrapQuarantinesBearerForTheProcess() {
+    fun failedNousBootstrapPreservesSessionAndAllowsLaterRecovery() {
         store.save(
             NativeDashboardTokens(
                 accessToken = "stale-signing-key-access",
@@ -404,7 +657,9 @@ class NativeDashboardAuthTest {
             ),
         )
         server.enqueue(MockResponse().setResponseCode(503))
-        server.enqueue(MockResponse().setBody("""{"auth_required":true}"""))
+        server.enqueue(MockResponse().setBody(
+            """{"access_token":"recovered-access","refresh_token":"rotated-refresh","expires_at":3000,"provider":"nous"}""",
+        ))
         server.enqueue(MockResponse().setBody("""{"auth_required":true}"""))
         val client = DashboardApiClient(
             server.url("/").toString(),
@@ -418,18 +673,21 @@ class NativeDashboardAuthTest {
         )
 
         kotlinx.coroutines.runBlocking {
-            client.getStatus().getOrThrow()
+            assertTrue(client.getStatus().isFailure)
+            assertEquals("unavailable-refresh", store.load()?.refreshToken)
+            assertEquals(1, server.requestCount)
             client.getStatus().getOrThrow()
         }
 
         val refresh = server.takeRequest()
-        val firstStatus = server.takeRequest()
-        val secondStatus = server.takeRequest()
+        val recoveredRefresh = server.takeRequest()
+        val status = server.takeRequest()
         assertEquals("/auth/native/refresh", refresh.path)
-        assertEquals("/api/status", firstStatus.path)
-        assertEquals("/api/status", secondStatus.path)
-        assertEquals(null, firstStatus.getHeader("Authorization"))
-        assertEquals(null, secondStatus.getHeader("Authorization"))
+        assertEquals("/auth/native/refresh", recoveredRefresh.path)
+        assertEquals(null, refresh.getHeader("Authorization"))
+        assertEquals(null, recoveredRefresh.getHeader("Authorization"))
+        assertEquals("/api/status", status.path)
+        assertEquals("Bearer recovered-access", status.getHeader("Authorization"))
         assertEquals(3, server.requestCount)
     }
 

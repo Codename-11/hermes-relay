@@ -1,11 +1,7 @@
 package com.hermesandroid.relay.assistant
 
 import android.Manifest
-import android.annotation.SuppressLint
 import android.content.pm.PackageManager
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -14,14 +10,12 @@ import android.service.voice.VoiceInteractionService
 import android.service.voice.VoiceInteractionSession
 import android.util.Log
 import androidx.core.content.ContextCompat
-import com.hermesandroid.relay.wake.MicrophoneLease
-import com.hermesandroid.relay.wake.MicrophoneOwner
+import com.hermesandroid.relay.wake.WakeWordRecognition
+import com.hermesandroid.relay.wake.WakeWordAudioRecord
 import com.hermesandroid.relay.wake.MicrophoneOwnershipCoordinator
-import com.hermesandroid.relay.wake.SherpaWakeWordDetector
 import com.hermesandroid.relay.wake.WakeWordModelInstaller
 import com.hermesandroid.relay.wake.WakeWordPreferences
 import com.hermesandroid.relay.wake.WakeWordPreferencesRepository
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -46,15 +40,13 @@ enum class AssistantWakeRuntimeState {
  * available in the background; all pre-activation audio is evaluated locally.
  */
 class HermesVoiceInteractionService : VoiceInteractionService() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val stopRequested = AtomicBoolean(false)
-    private val resourceLock = Any()
+    private val recognition = WakeWordRecognition(scope)
     private var preferencesJob: Job? = null
-    private var recognitionJob: Job? = null
-    private var recorder: AudioRecord? = null
-    private var detector: SherpaWakeWordDetector? = null
-    private var microphoneLease: MicrophoneLease? = null
+    private var retryJob: Job? = null
+    private val wakePaused: Boolean
+        get() = voiceSessionActive || MicrophoneOwnershipCoordinator.voiceSessionActive.value
     @Volatile private var latestPreferences = WakeWordPreferences()
     @Volatile private var voiceSessionActive = false
     @Volatile private var serviceReady = false
@@ -63,6 +55,22 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
     override fun onCreate() {
         super.onCreate()
         runningInstance = this
+        scope.launch {
+            MicrophoneOwnershipCoordinator.voiceSessionActive.collectLatest { active ->
+                if (!serviceReady || runningInstance !== this@HermesVoiceInteractionService) return@collectLatest
+                if (active) {
+                    stopRecognition()
+                    setRuntimeState(AssistantWakeRuntimeState.PausedForVoice)
+                } else if (preferencesLoaded && !voiceSessionActive) {
+                    if (latestPreferences.assistantEnabled) {
+                        restartRecognition(latestPreferences)
+                    } else {
+                        stopRecognition()
+                        setRuntimeState(AssistantWakeRuntimeState.Stopped)
+                    }
+                }
+            }
+        }
     }
 
     override fun onReady() {
@@ -80,12 +88,12 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
                 if (firstLoadedPreferences) {
                     mainHandler.post(::drainPendingSessionRequest)
                 }
-                if (prefs.assistantEnabled && !voiceSessionActive) {
+                if (prefs.assistantEnabled && !wakePaused) {
                     restartRecognition(prefs)
                 } else {
                     stopRecognition()
                     setRuntimeState(
-                        if (voiceSessionActive) {
+                        if (wakePaused) {
                             AssistantWakeRuntimeState.PausedForVoice
                         } else {
                             AssistantWakeRuntimeState.Stopped
@@ -139,18 +147,16 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
         super.onShowSessionFailed(args)
     }
 
-    private suspend fun restartRecognition(preferences: WakeWordPreferences) {
-        val previous = recognitionJob
+    private fun restartRecognition(preferences: WakeWordPreferences) {
         stopRecognition()
-        previous?.join()
-        if (!voiceSessionActive && preferences.assistantEnabled) {
-            startRecognition(preferences)
-        }
+        startRecognition(preferences)
     }
 
-    @SuppressLint("MissingPermission")
+    private fun canListen(): Boolean = runningInstance === this && serviceReady &&
+        preferencesLoaded && !wakePaused && latestPreferences.assistantEnabled
+
     private fun startRecognition(preferences: WakeWordPreferences) {
-        if (voiceSessionActive || recognitionJob?.isActive == true) return
+        if (!canListen()) return
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED
         ) {
@@ -162,82 +168,24 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
             setRuntimeState(AssistantWakeRuntimeState.Error)
             return
         }
-        val lease = MicrophoneOwnershipCoordinator.tryAcquire(MicrophoneOwner.WakeWord)
-        if (lease == null) {
-            setRuntimeState(AssistantWakeRuntimeState.PausedForVoice)
-            scheduleRetry()
-            return
-        }
-        microphoneLease = lease
-        stopRequested.set(false)
         setRuntimeState(AssistantWakeRuntimeState.Starting)
-        recognitionJob = scope.launch {
-            var detected = false
-            var unattachedDetector: SherpaWakeWordDetector? = null
-            try {
-                val createdDetector = SherpaWakeWordDetector(
-                    files,
-                    preferences.sensitivity,
-                    preferences.confirmationFrames,
-                )
-                unattachedDetector = createdDetector
-                val minBuffer = AudioRecord.getMinBufferSize(
-                    SAMPLE_RATE,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                ).coerceAtLeast(SAMPLE_RATE / 5 * 2)
-                val createdRecorder = AudioRecord.Builder()
-                    .setAudioSource(MediaRecorder.AudioSource.VOICE_RECOGNITION)
-                    .setAudioFormat(
-                        AudioFormat.Builder()
-                            .setSampleRate(SAMPLE_RATE)
-                            .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                            .setChannelMask(AudioFormat.CHANNEL_IN_MONO)
-                            .build()
-                    )
-                    .setBufferSizeInBytes(minBuffer * 2)
-                    .build()
-                if (createdRecorder.state != AudioRecord.STATE_INITIALIZED) {
-                    createdRecorder.release()
-                    error("Assistant wake microphone failed to initialize")
-                }
-                synchronized(resourceLock) {
-                    if (stopRequested.get()) {
-                        createdRecorder.release()
-                        return@launch
-                    }
-                    recorder = createdRecorder
-                    detector = createdDetector
-                    unattachedDetector = null
-                }
-                createdRecorder.startRecording()
-                setRuntimeState(AssistantWakeRuntimeState.Listening)
-                val samples = ShortArray(FRAME_SAMPLES)
-                while (!stopRequested.get()) {
-                    val count = createdRecorder.read(samples, 0, samples.size)
-                    if (count < 0) error("Assistant wake microphone read failed: $count")
-                    if (count > 0 && createdDetector.accept(samples, count)) {
-                        detected = true
-                        break
-                    }
-                }
-            } catch (t: Throwable) {
-                if (!stopRequested.get()) {
-                    Log.w(TAG, "Assistant wake listening failed", t)
-                    setRuntimeState(AssistantWakeRuntimeState.Error)
-                }
-            } finally {
-                runCatching { unattachedDetector?.close() }
-                releaseResources()
-                recognitionJob = null
-            }
-            if (detected && !stopRequested.get()) {
+        recognition.start(
+            canListen = ::canListen,
+            createAudio = { WakeWordAudioRecord(files, preferences) },
+            onListening = { setRuntimeState(AssistantWakeRuntimeState.Listening) },
+            onDetected = {
                 setRuntimeState(AssistantWakeRuntimeState.AwaitingSession)
-                mainHandler.post {
-                    showAssistantSession()
-                }
-            }
-        }
+                showAssistantSession()
+            },
+            onBusy = {
+                setRuntimeState(AssistantWakeRuntimeState.PausedForVoice)
+                scheduleRetry()
+            },
+            onError = {
+                Log.w(TAG, "Assistant wake listening failed", it)
+                setRuntimeState(AssistantWakeRuntimeState.Error)
+            },
+        )
     }
 
     private fun showAssistantSession(
@@ -305,7 +253,7 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
 
     private fun setVoiceSessionActiveInternal(active: Boolean) {
         voiceSessionActive = active
-        if (active) {
+        if (wakePaused) {
             stopRecognition()
             setRuntimeState(AssistantWakeRuntimeState.PausedForVoice)
         } else if (latestPreferences.assistantEnabled) {
@@ -316,38 +264,18 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
     }
 
     private fun scheduleRetry() {
-        if (recognitionJob?.isActive == true || voiceSessionActive) return
-        recognitionJob = scope.launch {
+        if (!canListen() || retryJob?.isActive == true) return
+        retryJob = scope.launch {
             delay(RETRY_DELAY_MS)
-            recognitionJob = null
-            if (!voiceSessionActive && latestPreferences.assistantEnabled) {
-                startRecognition(latestPreferences)
-            }
+            retryJob = null
+            if (canListen()) startRecognition(latestPreferences)
         }
     }
 
     private fun stopRecognition() {
-        stopRequested.set(true)
-        synchronized(resourceLock) {
-            runCatching { recorder?.stop() }
-            runCatching { recorder?.release() }
-            recorder = null
-            microphoneLease?.let(MicrophoneOwnershipCoordinator::release)
-            microphoneLease = null
-        }
-        recognitionJob?.cancel()
-    }
-
-    private fun releaseResources() {
-        synchronized(resourceLock) {
-            runCatching { recorder?.stop() }
-            runCatching { recorder?.release() }
-            recorder = null
-            runCatching { detector?.close() }
-            detector = null
-            microphoneLease?.let(MicrophoneOwnershipCoordinator::release)
-            microphoneLease = null
-        }
+        retryJob?.cancel()
+        retryJob = null
+        recognition.stop()
     }
 
     private fun setRuntimeState(state: AssistantWakeRuntimeState) {
@@ -356,8 +284,6 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
 
     companion object {
         private const val TAG = "HermesAssistant"
-        private const val SAMPLE_RATE = 16_000
-        private const val FRAME_SAMPLES = 1_600
         private const val RETRY_DELAY_MS = 500L
         private const val PENDING_SESSION_TIMEOUT_MS = 5_000L
         const val EXTRA_FROM_KEYGUARD = "from_keyguard"
@@ -434,7 +360,10 @@ class HermesVoiceInteractionService : VoiceInteractionService() {
         }
 
         fun setVoiceSessionActive(active: Boolean) {
-            runningInstance?.setVoiceSessionActiveInternal(active)
+            val instance = runningInstance
+            pendingHandler.post {
+                if (runningInstance === instance) instance?.setVoiceSessionActiveInternal(active)
+            }
             if (!active) AssistantLaunchActivity.finishActive()
         }
 

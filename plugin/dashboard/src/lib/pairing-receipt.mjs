@@ -148,6 +148,28 @@ export function pairingSurfaceProbes(receipt) {
   );
 }
 
+/** Routes the current CLI can dial without Dashboard WebSocket ticket auth. */
+export function desktopPairingRoutes(receipt) {
+  if (!receipt || receipt.blockingIssues.length) return [];
+  return receipt.routes.map((route) => ({
+    ...route,
+    surfaces: route.surfaces.filter((surface) =>
+      surface.surface === "relay" && !isDashboardRelayIngressUrl(surface.url),
+    ),
+  })).filter((route) => route.surfaces.length > 0);
+}
+
+export function pairingAddressProtocol(raw) {
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:", "ws:", "wss:"].includes(url.protocol)) return "";
+    const port = url.port || (["https:", "wss:"].includes(url.protocol) ? "443" : "80");
+    return `${url.protocol.slice(0, -1).toUpperCase()} · port ${port}`;
+  } catch (_err) {
+    return "";
+  }
+}
+
 export function pairingProbeKey(entry) {
   return [entry.role, entry.priority, entry.surface, entry.url].join("|");
 }
@@ -155,7 +177,7 @@ export function pairingProbeKey(entry) {
 /** Convert a surface probe into honest, product-facing reachability. */
 export function pairingProbeStatus(result) {
   if (!result) return { healthy: null, label: "Not checked" };
-  if (result.requires_paired_client) return { healthy: null, label: "Import QR to verify" };
+  if (result.requires_paired_client) return { healthy: null, label: "Verify after pairing" };
   if (
     result.surface === "relay" &&
     (result.status === 401 || result.status === 403) &&

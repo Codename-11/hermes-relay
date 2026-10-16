@@ -12,6 +12,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReliabilityReportTest {
+    @Test
+    fun memoryRecoveryDoesNotTreatOtherCrashesAsMemoryFailures() {
+        val base = report("memory", "2026-10-15T00:00:00Z")
+        assertTrue(CrashReporter.isMemoryFailure(base.copy(summary = "OutOfMemoryError: allocation failed")))
+        assertFalse(CrashReporter.isMemoryFailure(base))
+        assertFalse(CrashReporter.isMemoryFailure(null))
+    }
     private val environment = ReliabilityEnvironment(
         versionName = "1.6.1",
         versionCode = 38,

@@ -12,6 +12,7 @@ import logo from '../icons/icon-256.png'
 import type { AccessMode, Activity, AuthorizedClient, Capability, CapabilityMode, CuaHealthStatus, CuaManagementStatus, Host, PendingGrantRequest, Snapshot, UpdateReport } from './types'
 import { describeTransportSecurity } from '../../src/transportSecurity'
 import { displayLabel as displayRouteLabel, inferEndpointRole } from '../../src/endpoint'
+import { computerActivityDetail } from './computerActivity'
 
 type Page = 'overview' | 'access' | 'capabilities' | 'hosts' | 'pair-host' | 'host-detail' | 'settings' | 'help' | 'activity' | 'activity-detail'
 type PendingAction = { type: 'access'; mode: AccessMode } | { type: 'capability'; capability: Capability; mode: CapabilityMode } | { type: 'revoke'; client: AuthorizedClient; remote: string } | { type: 'repair' | 'forget'; host: Host } | { type: 'clear-activity' } | null
@@ -50,6 +51,7 @@ const demo: Snapshot = {
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   if (!('__TAURI_INTERNALS__' in window)) {
     if (command === 'get_snapshot') return demo as T
+    if (command === 'read_pairing_invite_clipboard') return ('hermes-relay://pair?payload=' + btoa(JSON.stringify({ hermes: 3, relay: { url: demo.hosts[0]?.url, code: 'ABC123' } }))) as T
     if (command === 'get_pending_grant_context') return { grant: demo.pending_grants[0] ?? null, active_url: demo.active_url } as T
     if (command === 'list_authorized_clients') return [
       { token_prefix: 'f83a21c4', device_name: 'WORKSTATION', last_seen: Math.floor(Date.now() / 1000), transport_hint: 'desktop', is_current: true, grants: { chat: null, tools: null } },
@@ -136,7 +138,7 @@ function activityName(tool: string): string {
 }
 
 function isComputerControl(entry: Activity): boolean {
-  return entry.backend === 'cua' || entry.backend === 'legacy_compat' || entry.tool.startsWith('desktop_computer_')
+  return entry.backend === 'cua' || entry.backend === 'cua_driver' || entry.backend === 'legacy_compat' || entry.backend === 'system_capture' || entry.tool.startsWith('desktop_computer_')
 }
 
 function controlActionLabel(entry: Activity): string {
@@ -160,7 +162,7 @@ type ActivityStep = { title: string; detail: string; state: 'done' | 'failed' | 
 function activitySteps(entry: Activity): ActivityStep[] {
   if (isComputerControl(entry)) return [
     { title: 'Authorized session', detail: entry.control_session_id ? 'Authenticated control session' : 'Authenticated by Hermes', state: 'done' },
-    { title: controlActionLabel(entry), detail: `${entry.backend === 'cua' ? 'CUA structured engine' : 'Windows input · Compatibility'} · ${entry.dispatch ?? 'background'}`, state: entry.ok ? 'done' : 'failed' },
+    { title: controlActionLabel(entry), detail: computerActivityDetail(entry, true), state: entry.ok ? 'done' : 'failed' },
     { title: 'Verification', detail: controlVerificationLabel(entry.verification), state: entry.verification === 'failed' ? 'failed' : entry.verification ? 'done' : 'pending' }
   ]
   const category = activityCategory(entry)
@@ -493,6 +495,12 @@ function ManagementApp() {
     return paired
   }
 
+  async function pairHostInvite(invite: string) {
+    const paired = await action('pair_host_invite', { invite })
+    if (paired) setPage('hosts')
+    return paired
+  }
+
   async function selectHost(url: string) {
     setSelectedUrl(url)
     setSelectorOpen(false)
@@ -659,7 +667,7 @@ function ManagementApp() {
       {page === 'capabilities' && <CapabilitiesPage host={host} availability={snapshot.hardware_availability} busy={busy !== null} onBack={() => setPage(policyBack)} onChoose={chooseCapability} />}
 
       {page === 'hosts' && <HostsPage hosts={snapshot.hosts} selected={host} onOpen={url => { setDetailUrl(url); setSelectedUrl(url); setPage('host-detail') }} onPair={() => openPair()} />}
-      {page === 'pair-host' && <PairHostPage initialUrl={pairInitialUrl} busy={busy === 'pair_host'} onBack={() => setPage('hosts')} onPair={pairHost} />}
+      {page === 'pair-host' && <PairHostPage initialUrl={pairInitialUrl} busy={busy === 'pair_host' || busy === 'pair_host_invite'} onBack={() => setPage('hosts')} onPair={pairHost} onImport={pairHostInvite} />}
       {page === 'host-detail' && <HostDetailPage host={snapshot.hosts.find(item => item.url === detailUrl) ?? null} clients={clients} busy={busy !== null} onBack={() => setPage('hosts')} onConnect={connectHost} onRename={(remote, name) => action('rename_host', { remote, name })} onAccess={() => { setPolicyBack('host-detail'); setPage('access') }} onCapabilities={() => { setPolicyBack('host-detail'); setPage('capabilities') }} onRevoke={(remote, client) => setPending({ type: 'revoke', client, remote })} onRepair={host => setPending({ type: 'repair', host })} onForget={host => setPending({ type: 'forget', host })} />}
       {page === 'settings' && <SettingsPage daemon={snapshot.daemon} computerControl={snapshot.computer_control_engine ?? null} startup={snapshot.startup_enabled} daemonAutostart={snapshot.daemon_autostart_enabled ?? false} activity={snapshot.activity} screenshotRetention={snapshot.activity_screenshot_retention} onAction={action} onStartup={value => action('set_startup', { enabled: value })} onDaemonAutostart={value => action('set_daemon_autostart', { enabled: value })} onHelp={() => setPage('help')} onViewActivity={() => { setActivityBack('settings'); setPage('activity') }} onOpenActivity={entry => { setSelectedActivity(entry); setActivityDetailBack('settings'); setPage('activity-detail') }} />}
       {page === 'help' && <HelpPage snapshot={snapshot} host={host} onBack={() => { setSelectedUrl(snapshot.active_url ?? null); setPage('settings') }} onAction={action} />}
@@ -843,7 +851,7 @@ function ActivityList({ entries, host, onOpen }: { entries: Activity[]; host: Ho
     const Icon = category === 'command' ? TerminalSquare : category === 'files' ? FileText : category === 'screen' ? Eye : category === 'input' ? MousePointer2 : category === 'devices' ? Usb : category === 'system' ? LogOut : ActivityIcon
     const computerControl = isComputerControl(entry)
     const target = entry.target_app ?? entry.target_title
-    const detail = entry.error ?? (computerControl ? `${entry.backend === 'cua' ? 'CUA' : 'Compatibility'} · ${entry.dispatch ?? 'background'}${target ? ` · ${target}` : ''}` : entry.summary) ?? (entry.aborted ? 'Request aborted' : 'Completed')
+    const detail = entry.error ?? (computerControl ? `${computerActivityDetail(entry)}${target ? ` · ${target}` : ''}` : entry.summary) ?? (entry.aborted ? 'Request aborted' : 'Completed')
     const eventHost = entry.host_url ? displayHost(entry.host_url) : host?.name ?? 'Local daemon'
     return <article className="activity-item" key={key}>
       <button className="activity-row" disabled={!onOpen} onClick={() => onOpen?.(entry)}>
@@ -957,26 +965,57 @@ function CapabilityRow({ capability, title, copy, icon, modes, host, busy, onCho
   return <section className="capability-row"><div className="capability-row-head"><span className="option-icon">{icon}</span><span><strong>{title}</strong><small>{copy}</small></span>{host.access_mode === 'full-access' && <em>Included</em>}</div><div className="capability-modes" role="radiogroup" aria-label={`${title} access`}>{modes.map(mode => <button key={mode} disabled={busy} role="radio" aria-checked={host.capabilities[capability] === mode} className={host.capabilities[capability] === mode ? 'active' : ''} onClick={() => onChoose(capability, mode)}>{capabilityLabel[mode]}</button>)}</div></section>
 }
 
-function PairHostPage({ initialUrl, busy, onBack, onPair }: { initialUrl: string; busy: boolean; onBack: () => void; onPair: (remote: string, code: string) => Promise<boolean> }) {
+function PairHostPage({ initialUrl, busy, onBack, onPair, onImport }: { initialUrl: string; busy: boolean; onBack: () => void; onPair: (remote: string, code: string) => Promise<boolean>; onImport: (invite: string) => Promise<boolean> }) {
+  const [method, setMethod] = useState<'invite' | 'manual'>(initialUrl ? 'manual' : 'invite')
+  const [invite, setInvite] = useState('')
+  const [pasting, setPasting] = useState(false)
+  const [pasteError, setPasteError] = useState<string | null>(null)
   const [remote, setRemote] = useState(initialUrl)
   const [code, setCode] = useState('')
   const normalizedCode = code.replace(/[^a-z0-9]/gi, '').toUpperCase().slice(0, 6)
   const validUrl = (() => { try { const url = new URL(remote.trim()); return ['ws:', 'wss:'].includes(url.protocol) && !url.username && !url.password } catch { return false } })()
   const security = describeTransportSecurity(remote)
   const canSubmit = validUrl && normalizedCode.length === 6 && !busy
+  async function pasteInvite() {
+    if (busy || pasting) return
+    setPasting(true)
+    setPasteError(null)
+    try {
+      const text = await call<string>('read_pairing_invite_clipboard')
+      if (typeof text !== 'string' || !text.trim()) throw new Error('Clipboard is empty. Copy an invite first.')
+      setInvite(text)
+    } catch (error) {
+      setPasteError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setPasting(false)
+    }
+  }
 
   return <section className="page-panel pair-host-page">
     <button className="back-button" onClick={onBack}><ArrowLeft /> Back to Hosts</button>
     <div className="page-title"><div><p>New connection</p><h1>{initialUrl ? 'Re-pair host' : 'Pair host'}</h1></div></div>
-    <p className="page-intro">Enter the relay address and the six-character code shown by Hermes.</p>
-    <div className="secure-link-setup"><ShieldCheck /><span><strong>Hermes Secure Link ready</strong><small>When the pairing invite advertises Secure Link, the CLI prefers its pinned, encrypted route automatically and keeps private-network routes as fallback.</small></span></div>
-    <form className="pair-form" onSubmit={async event => { event.preventDefault(); if (canSubmit) await onPair(remote.trim(), normalizedCode) }}>
+    <div className="capability-modes pair-methods" role="group" aria-label="Pairing method">
+      <button id="pair-invite-tab" aria-controls="pair-invite-panel" aria-pressed={method === 'invite'} className={method === 'invite' ? 'active' : ''} disabled={busy || pasting} onClick={() => setMethod('invite')}>Paste invite</button>
+      <button id="pair-manual-tab" aria-controls="pair-manual-panel" aria-pressed={method === 'manual'} className={method === 'manual' ? 'active' : ''} disabled={busy || pasting} onClick={() => setMethod('manual')}>URL + code</button>
+    </div>
+    {method === 'invite' ? <form id="pair-invite-panel" aria-labelledby="pair-invite-tab" className="pair-form" onSubmit={async event => { event.preventDefault(); if (invite.trim() && !busy && !pasting && await onImport(invite.trim())) setInvite('') }}>
+      <p className="page-intro">Dashboard → Pair new device → CLI+UI → Copy invite. Click Paste below, or use Ctrl+V.</p>
+      <div className="pair-invite-entry">
+        <div className="pair-invite-label"><label htmlFor="pair-invite-field">Pairing invite</label><button className="copy-host-url pair-invite-paste" type="button" aria-label="Paste invite from clipboard" disabled={busy || pasting} onClick={() => void pasteInvite()}>{pasting ? <LoaderCircle className="spin" /> : <Copy />}Paste</button></div>
+        <textarea id="pair-invite-field" aria-label="Pairing invite" placeholder="hermes-relay://pair?payload=…" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={16384} value={invite} disabled={busy || pasting} onChange={event => { setInvite(event.target.value); setPasteError(null) }} />
+      </div>
+      {pasteError && <p role="alert" className="page-intro">{pasteError}</p>}
+      <div className="secure-link-setup"><ShieldCheck /><span><strong>Routes and trust stay together</strong><small>The CLI validates the invite and preserves its route candidates and Secure Link certificate trust.</small></span></div>
+      <p className="pair-privacy"><LockKeyhole />The invite is passed to the local CLI. This form does not save it.</p>
+      <button className="primary-host-action" type="submit" disabled={!invite.trim() || busy || pasting}>{busy ? <LoaderCircle className="spin" /> : <Link2 />}{busy ? 'Pairing…' : 'Import and pair'}</button>
+    </form> : <form id="pair-manual-panel" aria-labelledby="pair-manual-tab" className="pair-form" onSubmit={async event => { event.preventDefault(); if (canSubmit) await onPair(remote.trim(), normalizedCode) }}>
+      <p className="page-intro">On the host, run <code>hermes pair --legacy-direct-relay</code>. Use its direct Relay WebSocket URL, with protocol and port, and code.</p>
       <label><span>Relay URL</span><div className="pair-input-action"><input aria-label="Relay URL" autoCapitalize="none" autoCorrect="off" spellCheck={false} placeholder="wss://relay.example.com" value={remote} onChange={event => setRemote(event.target.value)} /><button type="button" title={remote ? 'Copy relay URL' : 'Paste relay URL'} aria-label={remote ? 'Copy relay URL' : 'Paste relay URL'} onClick={async () => { if (remote) await navigator.clipboard.writeText(remote.trim()); else setRemote(await navigator.clipboard.readText()) }}><Copy /></button></div></label>
       {validUrl && <div className={`transport-notice ${security.encrypted ? 'secure' : 'insecure'}`}>{security.encrypted ? <ShieldCheck /> : <AlertTriangle />}<span><strong>{security.label}</strong><small>{security.detail}</small></span></div>}
       <label><span>Pairing code</span><input className="pair-code" aria-label="Pairing code" autoComplete="one-time-code" inputMode="text" maxLength={6} placeholder="ABC123" value={normalizedCode} onChange={event => setCode(event.target.value)} /></label>
       <p className="pair-privacy"><LockKeyhole />The code is passed directly to the local CLI and is not stored by the UI.</p>
       <button className="primary-host-action" type="submit" disabled={!canSubmit}>{busy ? <LoaderCircle className="spin" /> : <Link2 />}{busy ? 'Pairing…' : initialUrl ? 'Re-pair host' : 'Pair host'}</button>
-    </form>
+    </form>}
   </section>
 }
 

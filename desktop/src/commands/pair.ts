@@ -25,7 +25,8 @@ import {
   payloadToRelayCandidates,
   probeCandidatesByPriority,
   relayPairingCodeFromPayload,
-  secureFirstCandidates
+  secureFirstCandidates,
+  isDashboardRelayIngressCandidate
 } from '../pairingQr.js'
 import { DEFAULT_RELAY_PORT, normalizeRelayUrl, resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { saveSession } from '../remoteSessions.js'
@@ -123,6 +124,22 @@ async function resolvePairTarget(args: ParsedArgs): Promise<PairTarget | { error
     }
     const t = makeTheme({ noColor: !!args.flags['no-color'] })
     const preferSecure = args.flags['prefer-direct'] !== true
+    process.stderr.write(t.bold('Advertised Relay routes (verify from this computer):') + '\n')
+    for (const candidate of candidates) {
+      try {
+        const address = new URL(candidate.relay.url)
+        const protocol = address.protocol.slice(0, -1).toUpperCase()
+        const port = address.port || (address.protocol === 'wss:' ? '443' : '80')
+        address.username = ''
+        address.password = ''
+        address.search = ''
+        address.hash = ''
+        const compatibility = isDashboardRelayIngressCandidate(candidate) ? ' — Dashboard authentication unsupported by CLI+UI' : ''
+        process.stderr.write(`  ${candidateDisplayLabel(candidate)} ${address.toString()} (${protocol}, port ${port})${compatibility}\n`)
+      } catch {
+        process.stderr.write(`  ${candidateDisplayLabel(candidate)}: invalid Relay URL\n`)
+      }
+    }
     process.stderr.write(t.bold(`Probing ${candidates.length} endpoint(s)…`) + '\n')
     let winner
     try {

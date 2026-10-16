@@ -244,7 +244,6 @@ class NativeDashboardAuthClient(
         return postTokens(
             path = "/auth/native/token",
             payload = json.encodeToString(payload),
-            clearOnAuthFailure = false,
             expectedGeneration = authorization.generation,
             commitAllowed = commitAllowed,
             onCallStarted = onCallStarted,
@@ -283,11 +282,10 @@ class NativeDashboardAuthClient(
                 postTokens(
                     path = "/auth/native/refresh",
                     payload = json.encodeToString(payload),
-                    clearOnAuthFailure = false,
                     expectedGeneration = generation,
                 )
             } catch (error: NativeDashboardAuthHttpException) {
-                if (error.statusCode == 400 || error.statusCode == 401) {
+                if (error.sessionExpired) {
                     clearIfUnchanged(current)
                 }
                 throw error
@@ -298,7 +296,6 @@ class NativeDashboardAuthClient(
     private fun postTokens(
         path: String,
         payload: String,
-        clearOnAuthFailure: Boolean,
         expectedGeneration: Long,
         commitAllowed: () -> Boolean = { true },
         onCallStarted: (Call) -> Unit = {},
@@ -311,10 +308,10 @@ class NativeDashboardAuthClient(
             .build()
         val tokens = client.newCall(request).also(onCallStarted).execute().use { response ->
             if (!response.isSuccessful) {
-                if (clearOnAuthFailure && (response.code == 400 || response.code == 401)) {
-                    tokenStore.clear()
-                }
-                throw NativeDashboardAuthHttpException(response.code)
+                throw NativeDashboardAuthHttpException(
+                    response.code,
+                    sessionExpired = response.isNativeSessionExpired(json),
+                )
             }
             val body = response.body.string()
             runCatching { json.decodeFromString<NativeDashboardTokens>(body) }
@@ -550,8 +547,12 @@ class DashboardBearerAuth(
         if (shouldPreferCookie(chain.request().url)) {
             val cookieResponse = chain.proceed(chain.request())
             if (!cookieResponse.isAuthProviderUnavailable()) return cookieResponse
-            val tokens = usableTokens(forceRefresh = false, failedAccessToken = null)
-                ?: return cookieResponse
+            val tokens = try {
+                usableTokens(forceRefresh = false, failedAccessToken = null)
+            } catch (error: IOException) {
+                cookieResponse.close()
+                throw error
+            } ?: return cookieResponse
             val accessToken = normalizeCredentialForHeader(
                 tokens.accessToken,
                 "Dashboard credential",
@@ -587,10 +588,12 @@ class DashboardBearerAuth(
         val previous = request.header("Authorization") ?: return response
         val failedAccessToken = previous.removePrefix("Bearer ").takeIf { it != previous }
             ?: return response
-        val refreshed = usableTokens(
-            forceRefresh = true,
-            failedAccessToken = failedAccessToken,
-        ) ?: return response
+        val refreshed = try {
+            usableTokens(forceRefresh = true, failedAccessToken = failedAccessToken)
+        } catch (error: IOException) {
+            response.close()
+            throw error
+        } ?: return response
         val accessToken = normalizeCredentialForHeader(
             refreshed.accessToken,
             "Dashboard credential",
@@ -647,24 +650,21 @@ class DashboardBearerAuth(
                     tokenStore.coordinationKey,
                     current.accessToken,
                 )
-            if (needsNousBootstrap &&
-                NativeTokenRefreshCoordinator.isBootstrapRejected(
-                    tokenStore.coordinationKey,
-                    current.accessToken,
-                )
-            ) {
-                return@synchronized null
-            }
             val nearExpiry = current.expiresAt <= 0L || clockSeconds() >= current.expiresAt - 60L
             if (!forceRefresh && !nearExpiry && !needsNousBootstrap) return@synchronized current
-            val refreshed = runCatching { authClient.refresh(current) }.getOrNull()
-            if (refreshed == null && needsNousBootstrap) {
-                NativeTokenRefreshCoordinator.markBootstrapRejected(
-                    tokenStore.coordinationKey,
-                    current.accessToken,
-                )
+            // Keep transient access failures visible and retryable by a later
+            // request. Never send a restored Nous bearer before bootstrap succeeds.
+            try {
+                authClient.refresh(current)
+            } catch (error: NativeDashboardAuthHttpException) {
+                if (error.sessionExpired) null else throw error
+            } catch (error: IOException) {
+                throw error
+            } catch (_: Exception) {
+                // OkHttp's async failure callback requires IOException. Do not
+                // expose storage/credential-validation details on its worker thread.
+                throw IOException("Dashboard native session could not be refreshed. Try again.")
             }
-            refreshed
         }
 
     private fun Response.isAuthProviderUnavailable(): Boolean {
@@ -695,7 +695,32 @@ private fun NativeDashboardTokens.normalizedForStorage(): NativeDashboardTokens 
 
 internal class NativeDashboardAuthHttpException(
     val statusCode: Int,
-) : IOException("Dashboard native authentication failed (HTTP $statusCode)")
+    val sessionExpired: Boolean = false,
+) : IOException(
+    if (sessionExpired) "Dashboard native session expired. Sign in again." else
+        "Dashboard native authentication is unavailable (HTTP $statusCode). " +
+            "Check network or reverse-proxy access, then try again.",
+)
+
+/** Only the upstream refresh rejection contract can invalidate saved credentials. */
+private fun Response.isNativeSessionExpired(json: Json): Boolean {
+    val mediaType = body.contentType()
+    if (code != 401 || headers.values("WWW-Authenticate").isNotEmpty() ||
+        mediaType?.type != "application" || mediaType.subtype != "json"
+    ) {
+        return false
+    }
+    // Never retain the response body or arbitrary server error text in an exception.
+    return runCatching {
+        peekBody(4_097L).use { errorBody ->
+            errorBody.contentLength() <= 4_096L &&
+                json.decodeFromString<NativeTokenError>(errorBody.string()).error == "session_expired"
+        }
+    }.getOrDefault(false)
+}
+
+@Serializable
+private data class NativeTokenError(val error: String = "")
 
 internal class NativeDashboardTokenShapeException(
     message: String,
@@ -749,7 +774,6 @@ private object NativeTokenRefreshCoordinator {
     private val locks = ConcurrentHashMap<String, Any>()
     private val generations = ConcurrentHashMap<String, Long>()
     private val bootstrapApproved = ConcurrentHashMap<String, String>()
-    private val bootstrapRejected = ConcurrentHashMap<String, String>()
 
     fun lockFor(key: String): Any = locks.computeIfAbsent(key) { Any() }
 
@@ -772,17 +796,8 @@ private object NativeTokenRefreshCoordinator {
     fun isBootstrapApproved(key: String, accessToken: String): Boolean =
         bootstrapApproved[key] == accessToken
 
-    fun isBootstrapRejected(key: String, accessToken: String): Boolean =
-        bootstrapRejected[key] == accessToken
-
     fun markBootstrapApproved(key: String, accessToken: String) {
         bootstrapApproved[key] = accessToken
-        bootstrapRejected.remove(key)
-    }
-
-    fun markBootstrapRejected(key: String, accessToken: String) {
-        bootstrapRejected[key] = accessToken
-        bootstrapApproved.remove(key)
     }
 
     fun clear(store: NativeDashboardTokenStore) {
@@ -790,7 +805,6 @@ private object NativeTokenRefreshCoordinator {
             generations[store.coordinationKey] =
                 (generations[store.coordinationKey] ?: 0L) + 1L
             bootstrapApproved.remove(store.coordinationKey)
-            bootstrapRejected.remove(store.coordinationKey)
             store.clear()
         }
     }

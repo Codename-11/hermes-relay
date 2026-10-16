@@ -12,6 +12,22 @@ independent of the Hermes-Relay service. It renders a tokenless setup QR contain
 standard Dashboard/Gateway connection. Hermes-Relay pairing remains a separate,
 explicit **Pair new device** flow.
 
+Pairing receipts show the advertised Dashboard and Relay surfaces. The dialog
+distinguishes Android Dashboard ingress from routes the current CLI+UI can use.
+Direct URL-and-code pairing and signed Secure Link invite import have separate
+instructions. Choose **Hermes-Relay CLI+UI** in the pairing dialog, then paste
+the copied invite in the management UI's **Pair host → Paste invite** form or
+use `hermes-relay pair --pair-qr`. This explicit client choice requests existing
+direct Relay compatibility candidates; it does not publish a listener. Older
+mint responses cannot overwrite a newly selected client or connection mode.
+
+Upstream requires user plugins to be explicitly enabled. A newly installed
+backend needs a Dashboard process restart after activation; a discovery rescan
+alone does not mount its Python routes.
+The optional upstream `plugins.isolation: host` forwarder supports buffered
+HTTP, not plugin WebSockets; Dashboard Relay transport currently requires the
+default `in_process` mode.
+
 **Remote Access → Hermes Secure Link → Set up Secure Link** runs the host's
 read-only preflight, displays blockers and restart impact, and supplies settings
 for the existing Relay owner. **Check again** must confirm the active selected
@@ -114,13 +130,40 @@ All proxied by `plugin_api.py` under `/api/plugins/hermes-relay/`:
 - `POST /remote-access/tailscale/enable` — enable Tailscale serving
 - `POST /remote-access/tailscale/disable` — disable Tailscale serving
 
+## Pairing clients
+
+Choose **Hermes-Relay CLI+UI** when connecting another computer. The dialog
+shows its usable Relay routes, including protocols and ports, and a **Copy
+invite** action. Import the complete invite through **Pair host → Paste invite**
+in the local UI. The computer uses Relay pairing; it does not need a Hermes
+Dashboard sign-in. Dashboard ingress routes remain available to Android and
+are not presented as CLI connection candidates.
+
+When the host is connected to Tailscale, CLI+UI invites also include the direct
+Relay listener on its tailnet IP, using the configured Relay protocol and port.
+This route does not require Dashboard Serve or Dashboard authentication; traffic
+is encrypted by Tailscale. The default Android invite retains Dashboard ingress.
+
+A public Dashboard origin does not establish a public Relay listener. CLI+UI
+compatibility never derives a public `:8767` route from that origin. A public
+direct Relay candidate requires an explicitly configured Relay path or port;
+its TLS and reachability are checked independently.
+
+Android pairing renders a QR when the signed payload fits. Certificate-bearing
+invites with many routes can exceed QR capacity; the dialog explains that limit
+and retains the complete copyable invite rather than showing a blank canvas.
+Expired invites cannot be copied and provide a **New invite** action. Header and
+footer actions remain visible while long route lists scroll. Copying works on
+HTTP dashboards through the browser's copy fallback; when browser policy blocks
+both clipboard paths, the dialog exposes a selectable invite for manual copying.
+
 ## Demo screenshots
 
 A representative set when showcasing the plugin:
 
 - Overview with service status, route summary, and recent Bridge activity
 - Devices with standard Dashboard setup and paired Hermes-Relay clients
-- Pairing dialog with QR-first layout and endpoint controls
+- Pairing dialog with Android QR or CLI+UI invite import and endpoint controls
 - Activity with Bridge command stream and Media tokens diagnostic view
 - Remote Access endpoint setup and probe results
 - Settings with Home Channel, Agent Context, and maintenance categories

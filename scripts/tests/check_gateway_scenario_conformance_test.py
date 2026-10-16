@@ -218,6 +218,11 @@ class GatewayScenarioConformanceTest(unittest.TestCase):
         contract.write_text(contract.read_text().replace("'clarify'", "'clarify.future'"), encoding="utf-8")
         self.assertFalse(module.audit_sources(self.root, [module.SERVER_REQUESTS])[0].passed)
 
+    def test_native_contract_allows_additive_request_methods(self):
+        contract = self.root / "tui_gateway/contracts/server_requests.py"
+        contract.write_text(contract.read_text() + '\nserver_request("setup_choose", params=Params, result=Result)\n', encoding="utf-8")
+        self.assertTrue(module.audit_sources(self.root, [module.SERVER_REQUESTS])[0].passed)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -263,6 +268,29 @@ async def gateway_ws(ws):
 
         self.assertEqual(module.ALL_CONTRACTS, tuple(result.contract for result in results))
         self.assertTrue(all(result.passed for result in results), results)
+
+    def test_resume_follows_extracted_helpers_but_not_unreachable_history(self):
+        path = self.root / module.SESSION_METHODS
+        original = path.read_text(encoding="utf-8")
+        marker = '@method("session.resume")\ndef _(rid, params):'
+        extracted = original.replace(marker,
+            '@method("session.resume")\ndef _(rid, params):\n'
+            '    return _resume_impl(rid, params)\n\ndef _resume_impl(rid, params):')
+        path.write_text(extracted, encoding="utf-8")
+        self.assertTrue(module.audit_sources(self.root, (module.SESSION_RESUME,))[0].passed)
+        path.write_text(extracted.replace('return _resume_impl(rid, params)', 'return {}'), encoding="utf-8")
+        self.assertFalse(module.audit_sources(self.root, (module.SESSION_RESUME,))[0].passed)
+
+    def test_extracted_registry_keeps_identity_and_status_requirements(self):
+        path = self.root / "tui_gateway/session_registry.py"
+        path.write_text(SERVER_SOURCE, encoding="utf-8")
+        requirements = (module.SESSION_ACTIVATE, module.SESSION_ACTIVE_LIST)
+        self.assertTrue(all(result.passed for result in module.audit_sources(self.root, requirements)))
+        # Intact legacy helpers must not mask a broken extracted implementation.
+        path.write_text(SERVER_SOURCE.replace('"session_key"', '"other_key"'), encoding="utf-8")
+        self.assertTrue(all(not result.passed for result in module.audit_sources(self.root, requirements)))
+        path.write_text(SERVER_SOURCE.replace('"waiting"', '"other_state"'), encoding="utf-8")
+        self.assertFalse(module.audit_sources(self.root, (module.SESSION_ACTIVE_LIST,))[0].passed)
 
     def test_ticket_protocol_requires_public_selection_and_single_use_admission(self):
         for relative, before, after in (
@@ -351,6 +379,16 @@ def resume(rid, params):
 
         self.assertFalse(result.passed)
         self.assertIn("before settled", result.problem)
+
+    def test_decomposed_settlement_retains_ordering_check(self):
+        helper = self.root / "tui_gateway/session_workdir.py"
+        helper.write_text('def _emit_settled_session_info(sid, session, agent):\n    _emit("session.info", sid, _session_info(agent, session))\n', encoding="utf-8")
+        prompt = self.root / "tui_gateway/prompt_turn.py"
+        source = 'def _run_prompt_submit():\n    try:\n        pass\n    finally:\n        session["running"] = False\n        _emit_settled_session_info(sid, session, agent)\n'
+        prompt.write_text(source, encoding="utf-8")
+        self.assertTrue(module.audit_sources(self.root, (module.GATEWAY_SETTLED_INFO,))[0].passed)
+        prompt.write_text(source.replace('session["running"] = False', 'session["running"] = True'), encoding="utf-8")
+        self.assertFalse(module.audit_sources(self.root, (module.GATEWAY_SETTLED_INFO,))[0].passed)
 
     def test_manifest_selects_known_contract_subset(self):
         manifest = self.root / "scenario.json"

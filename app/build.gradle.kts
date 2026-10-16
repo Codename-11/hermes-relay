@@ -246,6 +246,9 @@ android {
         // worker JVM with the Robolectric suites; Gradle's 512m default OOMs
         // once both are in the same run.
         unitTests.all {
+            // Robolectric API 36 accesses FileDescriptor through SharedSecrets.
+            // Keep this export in test JVMs only so Android 16 renders run on JDK 21.
+            it.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
             it.systemProperty("roborazzi.test.record", "true")
             it.maxHeapSize = "2g"
         }
@@ -458,8 +461,8 @@ dependencies {
     // [POC] Roborazzi host-side screenshot rendering (src/test, Robolectric).
     // Renders real composables on the JVM at an exact canvas — no device, no
     // status bar, no clipping. See StoreScreenshotTest.
-    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.75.0")
-    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.75.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.76.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.76.0")
     testImplementation(libs.compose.ui.test.junit4)
     testImplementation(libs.compose.ui.test.manifest)
     testImplementation("androidx.test.ext:junit:1.3.0")

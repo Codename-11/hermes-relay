@@ -414,6 +414,14 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .copy-host-url svg { width: 15px; }
 .pair-host-page .page-title { margin-top: 14px; }
 .pair-form { display: grid; gap: 14px; }
+.pair-methods { grid-template-columns: repeat(2, 1fr); margin: 0 0 12px; }
+.pair-invite-entry { display: grid; gap: 6px; }
+.pair-invite-label { display: flex; align-items: center; justify-content: space-between; color: #c9cdd2; font-size: 11px; font-weight: 550; }
+.pair-invite-paste { width: auto; margin-left: 0; padding: 0 8px; gap: 4px; display: flex; font-size: 10px; }
+.pair-invite-paste:disabled { opacity: .5; cursor: wait; }
+.pair-form textarea { width: 100%; min-height: 90px; resize: vertical; border: 1px solid var(--line-hi); border-radius: 7px; background: #0b131a; color: var(--ink); padding: 9px 11px; font: 11px/1.4 "Cascadia Mono", Consolas, monospace; user-select: text; }
+.pair-form textarea:focus { outline: 0; border-color: var(--violet); box-shadow: 0 0 0 3px #a763ff1c; }
+.pair-form .page-intro { margin: 0; }
 .secure-link-setup { margin: -4px 0 13px; border: 1px solid #63469d; border-radius: 8px; background: linear-gradient(110deg, #3d236226, #17332728); padding: 9px; display: flex; gap: 8px; align-items: flex-start; }
 .secure-link-setup > svg { width: 18px; flex: 0 0 18px; color: #c8a6ff; }
 .secure-link-setup span { display: grid; gap: 2px; }
