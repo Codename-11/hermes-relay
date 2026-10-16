@@ -175,6 +175,10 @@
     <string name="cd_remove">移除</string>
     <string name="cd_cancel_editing">取消编辑</string>
     <string name="cd_select_model">选择模型</string>
+    <string name="chat_text_scale_description">聊天消息。用捏合手势调整对话文字大小。</string>
+    <string name="chat_text_scale_increase">增大对话文字</string>
+    <string name="chat_text_scale_decrease">减小对话文字</string>
+    <string name="chat_text_scale_reset">重置对话文字大小</string>
     <string name="chat_camera_perm_needed">需要相机权限才能拍照</string>
 
     <!-- ConnectionViewModel 状态 -->

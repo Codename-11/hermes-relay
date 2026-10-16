@@ -167,6 +167,10 @@
     <string name="cd_remove">Удалить</string>
     <string name="cd_cancel_editing">Отменить редактирование</string>
     <string name="cd_select_model">Выбрать модель</string>
+    <string name="chat_text_scale_description">Сообщения чата. Сведите или разведите пальцы, чтобы изменить размер текста беседы.</string>
+    <string name="chat_text_scale_increase">Увеличить размер текста беседы</string>
+    <string name="chat_text_scale_decrease">Уменьшить размер текста беседы</string>
+    <string name="chat_text_scale_reset">Сбросить размер текста беседы</string>
     <string name="chat_camera_perm_needed">Необходимо разрешение на камеру для фотографирования</string>
     <string name="conn_status_no_hermes">Нет соединения с Гермесом</string>
     <string name="conn_status_no_internet">Нет интернет-соединения</string>

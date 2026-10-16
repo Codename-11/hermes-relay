@@ -160,6 +160,10 @@
     <string name="cd_remove">Remover</string>
     <string name="cd_cancel_editing">Cancelar edição</string>
     <string name="cd_select_model">Selecionar modelo</string>
+    <string name="chat_text_scale_description">Mensagens do chat. Faça o gesto de pinça para redimensionar o texto da conversa.</string>
+    <string name="chat_text_scale_increase">Aumentar o tamanho do texto da conversa</string>
+    <string name="chat_text_scale_decrease">Diminuir o tamanho do texto da conversa</string>
+    <string name="chat_text_scale_reset">Redefinir o tamanho do texto da conversa</string>
     <string name="chat_camera_perm_needed">Permissão da câmera necessária para tirar uma foto</string>
     <!-- ConnectionViewModel status -->
     <string name="conn_status_no_hermes">Sem conexão com o Hermes</string>
