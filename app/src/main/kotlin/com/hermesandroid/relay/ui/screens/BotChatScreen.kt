@@ -44,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -68,11 +69,15 @@ import com.hermesandroid.relay.ui.components.ProvideChatTextScale
 import com.hermesandroid.relay.ui.components.chatTextScaleGesture
 import com.hermesandroid.relay.ui.components.chatTextScaleSemantics
 import com.hermesandroid.relay.ui.components.rememberChatTextScale
+import com.hermesandroid.relay.data.ChatTextScalePreferencesRepository
+import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import java.io.File
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 internal typealias BotChatHistoryLoader = suspend (
     profileName: String,
@@ -156,7 +161,17 @@ internal fun BotChatScreen(
     val iconPath by profileIconFlow(route.connectionId, route.profileName)
         .collectAsState(initial = null)
     val listState = rememberLazyListState()
-    val chatTextScale = rememberChatTextScale()
+    val chatTextScalePreferences = remember(context) {
+        ChatTextScalePreferencesRepository(context.relayDataStore)
+    }
+    val persistedChatTextScale by chatTextScalePreferences.scale.collectAsState(initial = 1.0f)
+    val chatTextScale = rememberChatTextScale(persistedChatTextScale)
+    LaunchedEffect(chatTextScalePreferences, chatTextScale) {
+        snapshotFlow { chatTextScale.scale }
+            .distinctUntilChanged()
+            .debounce(250)
+            .collect { chatTextScalePreferences.setScale(it) }
+    }
     var composer by remember(route.key, sessionId) { mutableStateOf("") }
     var editingQueuedMessage by remember(route.key, sessionId) { mutableStateOf(false) }
     var busyActionOverride by remember(route.key, sessionId, busyMessageAction) {

@@ -54,6 +54,13 @@ class ChatTextScaleTest {
     }
 
     @Test
+    fun `plain message scope scales user text but not system text`() {
+        assertEquals(1.5f, plainMessageTextScale(isUser = true, isSystem = false, scale = 1.5f), 0f)
+        assertEquals(1.0f, plainMessageTextScale(isUser = false, isSystem = true, scale = 1.5f), 0f)
+        assertEquals(1.0f, plainMessageTextScale(isUser = false, isSystem = false, scale = 1.5f), 0f)
+    }
+
+    @Test
     fun `state starts at one and clamps both bounds when scaling up and down`() {
         val state = ChatTextScaleState()
         assertEquals(1.0f, state.scale, 0f)

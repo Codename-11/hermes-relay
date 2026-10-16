@@ -18,9 +18,13 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import kotlin.math.sqrt
+import com.hermesandroid.relay.data.normalizeChatTextScale
+import com.hermesandroid.relay.data.CHAT_TEXT_SCALE_DEFAULT
+import com.hermesandroid.relay.data.CHAT_TEXT_SCALE_MAX
+import com.hermesandroid.relay.data.CHAT_TEXT_SCALE_MIN
 
 /**
- * Assistant chat text scaling: a reusable pinch-to-scale state/gesture primitive shared by the
+ * Conversation text scaling: a reusable pinch-to-scale state/gesture primitive shared by the
  * chat surfaces (ChatScreen, BotChatScreen).
  *
  * Typical wiring on a chat screen:
@@ -35,17 +39,10 @@ import kotlin.math.sqrt
  * ```
  */
 
-/** Smallest allowed assistant text scale (0.85x). */
-const val CHAT_TEXT_SCALE_MIN: Float = 0.85f
-
-/** Largest allowed assistant text scale (2.0x). */
-const val CHAT_TEXT_SCALE_MAX: Float = 2.0f
-
-/** Default assistant text scale before any pinch. */
-const val CHAT_TEXT_SCALE_DEFAULT: Float = 1.0f
+/** Smallest allowed conversation text scale (0.85x). */
 
 /**
- * Current assistant text scale for the enclosing chat surface.
+ * Current conversation text scale for the enclosing chat surface.
  *
  * Descendant composables (message bubbles, markdown, code blocks) read this and apply it to their
  * text size. Defaults to [CHAT_TEXT_SCALE_DEFAULT] so screens that do not wire a gesture keep
@@ -56,9 +53,12 @@ val LocalChatTextScale =
 
 /** Clamps [scale] into the allowed chat text scale range [CHAT_TEXT_SCALE_MIN, CHAT_TEXT_SCALE_MAX]. */
 fun clampChatTextScale(scale: Float): Float {
-    if (scale.isNaN()) return CHAT_TEXT_SCALE_DEFAULT
-    return scale.coerceIn(CHAT_TEXT_SCALE_MIN, CHAT_TEXT_SCALE_MAX)
+    return normalizeChatTextScale(scale)
 }
+
+/** Plain bubble text scales for user messages; system/status text remains fixed. */
+fun plainMessageTextScale(isUser: Boolean, isSystem: Boolean, scale: Float): Float =
+    if (isUser && !isSystem) clampChatTextScale(scale) else CHAT_TEXT_SCALE_DEFAULT
 
 /**
  * Remembers the current chat text scale. Starts at [CHAT_TEXT_SCALE_DEFAULT] and always stays
@@ -72,7 +72,7 @@ fun rememberChatTextScale(
 }
 
 /**
- * Holds the current assistant text scale and applies pinch deltas to it.
+ * Holds the current conversation text scale and applies pinch deltas to it.
  *
  * [scale] is backed by a snapshot float, so recomposition happens only when the value changes.
  */
