@@ -9,36 +9,20 @@
 //   - --json → one event per line on stdout, for scripting; everything else
 //     stays quiet.
 //
+// Decorations follow the Relay cockpit palette in src/lib/theme.ts: the
+// periwinkle arrow marks an in-flight tool, status green/red mark the
+// verdict, warnings are amber, and everything secondary steps down through
+// the muted/dim stairs. Color flows through the shared Theme so `--no-color`
+// / NO_COLOR / non-TTY all degrade to the same plain text (and the test
+// suite asserts on exactly that).
+//
 // We deliberately do NOT handle clarify / approval / sudo / secret requests
 // here — those belong at the REPL layer because they need synchronous
 // keyboard input. The renderer just surfaces a warning so the user knows
 // the turn is blocked on input it can't provide.
 
 import type { GatewayEvent } from './gatewayTypes.js'
-
-const ANSI = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  bold: '\x1b[1m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  cyan: '\x1b[36m',
-  gray: '\x1b[90m'
-} as const
-
-function colorEnabled(): boolean {
-  if (process.env.NO_COLOR) {
-    return false
-  }
-  if (process.env.FORCE_COLOR === '0') {
-    return false
-  }
-  if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') {
-    return true
-  }
-  return !!process.stdout.isTTY
-}
+import { theme, type Theme } from './lib/theme.js'
 
 export interface RendererOptions {
   /** Emit each event as a JSON line on stdout — useful for scripting. */
@@ -54,14 +38,10 @@ export interface RendererOptions {
 export class CliRenderer {
   private inAssistantMessage = false
   private lastDeltaEndedWithNewline = true
-  private readonly useColor: boolean
+  private readonly t: Theme
 
   constructor(private opts: RendererOptions = {}) {
-    this.useColor = opts.noColor ? false : colorEnabled()
-  }
-
-  private c(code: string, text: string): string {
-    return this.useColor ? `${code}${text}${ANSI.reset}` : text
+    this.t = theme({ noColor: opts.noColor })
   }
 
   /** Force a newline on stdout if the last assistant delta didn't end with one.
@@ -139,7 +119,7 @@ export class CliRenderer {
         if (this.opts.verbose) {
           const text = ev.payload?.text
           if (typeof text === 'string' && text.length > 0) {
-            process.stderr.write(this.c(ANSI.gray, text))
+            process.stderr.write(this.t.dim(text))
           }
         }
         return
@@ -151,8 +131,8 @@ export class CliRenderer {
         }
         this.breakLine()
         const name = ev.payload.name ?? ev.payload.tool_id
-        const context = ev.payload.context ? ` ${this.c(ANSI.dim, `(${ev.payload.context})`)}` : ''
-        process.stdout.write(`\n${this.c(ANSI.cyan, '→')} ${this.c(ANSI.bold, name)}${context}\n`)
+        const context = ev.payload.context ? ` ${this.t.dim(`(${ev.payload.context})`)}` : ''
+        process.stdout.write(`\n${this.t.relay('→')} ${this.t.bold(name)}${context}\n`)
         return
       }
 
@@ -171,12 +151,12 @@ export class CliRenderer {
         const name = ev.payload.name ?? ev.payload.tool_id
         if (ev.payload.error) {
           process.stdout.write(
-            `${this.c(ANSI.red, '✗')} ${this.c(ANSI.bold, name)} — ${ev.payload.error}\n`
+            `${this.t.err('✗')} ${this.t.bold(name)} ${this.t.dim('—')} ${this.t.err(ev.payload.error)}\n`
           )
         } else {
           const summary = ev.payload.summary
-          const suffix = summary ? ` ${this.c(ANSI.dim, '— ' + summary.replace(/\n+/g, ' '))}` : ''
-          process.stdout.write(`${this.c(ANSI.green, '✓')} ${this.c(ANSI.bold, name)}${suffix}\n`)
+          const suffix = summary ? ` ${this.t.dim('— ' + summary.replace(/\n+/g, ' '))}` : ''
+          process.stdout.write(`${this.t.ok('✓')} ${this.t.bold(name)}${suffix}\n`)
         }
         return
       }
@@ -187,7 +167,7 @@ export class CliRenderer {
         }
         const text = ev.payload?.text
         if (typeof text === 'string' && text.length > 0) {
-          process.stderr.write(this.c(ANSI.dim, `[${text}]`) + '\n')
+          process.stderr.write(this.t.muted(`[${text}]`) + '\n')
         }
         return
       }
@@ -199,8 +179,8 @@ export class CliRenderer {
         this.breakLine()
         const title = ev.payload.title ?? ev.payload.path ?? 'artifact'
         const target = ev.payload.url ?? ev.payload.path
-        const suffix = target ? ` ${this.c(ANSI.dim, `— ${target}`)}` : ''
-        process.stdout.write(`${this.c(ANSI.cyan, '↳')} ${this.c(ANSI.bold, title)}${suffix}\n`)
+        const suffix = target ? ` ${this.t.dim(`— ${target}`)}` : ''
+        process.stdout.write(`${this.t.cyan('↳')} ${this.t.bold(title)}${suffix}\n`)
         return
       }
 
@@ -211,25 +191,25 @@ export class CliRenderer {
         }
         const label = ev.type === 'memory.updated' ? 'memory updated' : 'skill loaded'
         const detail = ev.payload.detail ? `: ${ev.payload.detail}` : ''
-        process.stderr.write(this.c(ANSI.dim, `[${label}${detail}]`) + '\n')
+        process.stderr.write(this.t.muted(`[${label}${detail}]`) + '\n')
         return
       }
 
       case 'error': {
         this.breakLine()
         const msg = ev.payload?.message ?? 'unknown error'
-        process.stderr.write(this.c(ANSI.red, `error: ${msg}`) + '\n')
+        process.stderr.write(this.t.err(`error: ${msg}`) + '\n')
         return
       }
 
       case 'approval.request': {
         this.breakLine()
         process.stderr.write(
-          this.c(ANSI.yellow, `⚠ approval requested: ${ev.payload.command}`) + '\n'
+          this.t.warn(`⚠ approval requested: ${ev.payload.command}`) + '\n'
         )
-        process.stderr.write(this.c(ANSI.dim, `  ${ev.payload.description}`) + '\n')
+        process.stderr.write(this.t.dim(`  ${ev.payload.description}`) + '\n')
         process.stderr.write(
-          this.c(ANSI.dim, '  (interactive approval is not wired in v0.1 — ignore or cancel)') + '\n'
+          this.t.dim('  (interactive approval is not wired in v0.1 — ignore or cancel)') + '\n'
         )
         return
       }
@@ -237,10 +217,10 @@ export class CliRenderer {
       case 'clarify.request': {
         this.breakLine()
         process.stderr.write(
-          this.c(ANSI.yellow, `⚠ clarification requested: ${ev.payload.question}`) + '\n'
+          this.t.warn(`⚠ clarification requested: ${ev.payload.question}`) + '\n'
         )
         process.stderr.write(
-          this.c(ANSI.dim, '  (interactive clarify is not wired in v0.1 — ignore or cancel)') + '\n'
+          this.t.dim('  (interactive clarify is not wired in v0.1 — ignore or cancel)') + '\n'
         )
         return
       }
@@ -249,28 +229,28 @@ export class CliRenderer {
       case 'secret.request': {
         this.breakLine()
         process.stderr.write(
-          this.c(ANSI.yellow, `⚠ server requested ${ev.type} — not wired in v0.1`) + '\n'
+          this.t.warn(`⚠ server requested ${ev.type} — not wired in v0.1`) + '\n'
         )
         return
       }
 
       case 'gateway.stderr': {
         if (this.opts.verbose) {
-          process.stderr.write(this.c(ANSI.dim, ev.payload.line) + '\n')
+          process.stderr.write(this.t.dim(ev.payload.line) + '\n')
         }
         return
       }
 
       case 'gateway.start_timeout': {
         process.stderr.write(
-          this.c(ANSI.yellow, 'warning: gateway subprocess slow to start (>15s)') + '\n'
+          this.t.warn('warning: gateway subprocess slow to start (>15s)') + '\n'
         )
         return
       }
 
       case 'gateway.protocol_error': {
         process.stderr.write(
-          this.c(ANSI.red, `protocol error: ${ev.payload?.preview ?? '(no preview)'}`) + '\n'
+          this.t.err(`protocol error: ${ev.payload?.preview ?? '(no preview)'}`) + '\n'
         )
         return
       }
