@@ -87,24 +87,26 @@ fun rememberChatTextScale(
 class ChatTextScaleState(
     initialScale: Float = CHAT_TEXT_SCALE_DEFAULT,
 ) {
-    var scale: Float by mutableFloatStateOf(clampChatTextScale(initialScale))
-        private set
+    private var scaleState: Float by mutableFloatStateOf(clampChatTextScale(initialScale))
+
+    val scale: Float
+        get() = scaleState
 
     /** Multiplies the current scale by [factor] and clamps the result into the allowed range. */
     fun applyFactor(factor: Float) {
         if (factor.isFinite() && factor > 0f) {
-            scale = clampChatTextScale(scale * factor)
+            scaleState = clampChatTextScale(scale * factor)
         }
     }
 
     /** Sets the scale directly, clamped into the allowed range. */
     fun setScale(target: Float) {
-        scale = clampChatTextScale(target)
+        scaleState = clampChatTextScale(target)
     }
 
     /** Restores [CHAT_TEXT_SCALE_DEFAULT]. */
     fun reset() {
-        scale = CHAT_TEXT_SCALE_DEFAULT
+        scaleState = CHAT_TEXT_SCALE_DEFAULT
     }
 }
 
