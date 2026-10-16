@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Hermes-Relay</string>
+    <string name="a11y_service_label">Hermes-Bridge Dev</string>
+    <string name="notification_companion_label">Compagnon de notifications Hermes-Relay</string>
+    <string name="a11y_description_sideload">Hermes Bridge accorde à l’agent un accès complet en lecture/écriture au téléphone pour un contrôle mains libres par la voix et la vision. Toutes les actions sont consignées dans le Journal d’activité et les actions destructives exigent votre confirmation.</string>
+</resources>

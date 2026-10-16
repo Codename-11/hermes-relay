@@ -13,7 +13,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "bccd06f1a0b9afc5b09a7ddb287d9f5ac7d37861c45075bc63e80c03a76f6de1",
+        "main": "d2e8415ef18ef93a26395c8ee00e51e59717630aea94af70a6f70ce0ecabf2a2",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -48,7 +48,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "bccd06f1a0b9afc5b09a7ddb287d9f5ac7d37861c45075bc63e80c03a76f6de1",
+        "main": "d2e8415ef18ef93a26395c8ee00e51e59717630aea94af70a6f70ce0ecabf2a2",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -67,12 +67,24 @@
       },
       "website_source_sha256": "d46cda2f01180304190606db2f7817f84d47f49d33806898cda242b58b1e8f20"
     },
+    "fr": {
+      "native_name": "Français",
+      "verification": "ai-translated",
+      "review_refs": [],
+      "source_sha256": {
+        "main": "d2e8415ef18ef93a26395c8ee00e51e59717630aea94af70a6f70ce0ecabf2a2",
+        "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
+      },
+      "surfaces": {
+        "android": "complete"
+      }
+    },
     "ja": {
       "native_name": "日本語",
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "bccd06f1a0b9afc5b09a7ddb287d9f5ac7d37861c45075bc63e80c03a76f6de1",
+        "main": "d2e8415ef18ef93a26395c8ee00e51e59717630aea94af70a6f70ce0ecabf2a2",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -96,7 +108,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "bccd06f1a0b9afc5b09a7ddb287d9f5ac7d37861c45075bc63e80c03a76f6de1",
+        "main": "d2e8415ef18ef93a26395c8ee00e51e59717630aea94af70a6f70ce0ecabf2a2",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -120,7 +132,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "bccd06f1a0b9afc5b09a7ddb287d9f5ac7d37861c45075bc63e80c03a76f6de1",
+        "main": "d2e8415ef18ef93a26395c8ee00e51e59717630aea94af70a6f70ce0ecabf2a2",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {
@@ -135,7 +147,7 @@
       "verification": "ai-translated",
       "review_refs": [],
       "source_sha256": {
-        "main": "bccd06f1a0b9afc5b09a7ddb287d9f5ac7d37861c45075bc63e80c03a76f6de1",
+        "main": "d2e8415ef18ef93a26395c8ee00e51e59717630aea94af70a6f70ce0ecabf2a2",
         "sideload": "4abff4f1069091ec2de735c3037a7ec7d77699cb4321e8511a622437bceaf7c2"
       },
       "surfaces": {

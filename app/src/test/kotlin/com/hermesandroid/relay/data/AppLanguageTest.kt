@@ -18,6 +18,13 @@ class AppLanguageTest {
     }
 
     @Test
+    fun frenchTagsResolveToFrench() {
+        assertEquals(AppLanguage.FRENCH, AppLanguage.fromLanguageTags("fr-FR"))
+        assertEquals(AppLanguage.FRENCH, AppLanguage.fromLanguageTags("fr-CA"))
+        assertEquals(AppLanguage.FRENCH, AppLanguage.fromLanguageTags("fr"))
+    }
+
+    @Test
     fun simplifiedChineseTagsResolveToSimplifiedChinese() {
         assertEquals(AppLanguage.SIMPLIFIED_CHINESE, AppLanguage.fromLanguageTags("zh-Hans"))
         assertEquals(AppLanguage.SIMPLIFIED_CHINESE, AppLanguage.fromLanguageTags("zh-CN"))
@@ -43,6 +50,7 @@ class AppLanguageTest {
     fun languageOptionsProduceExpectedLocaleLists() {
         assertTrue(AppLanguage.SYSTEM_DEFAULT.toLocaleList().isEmpty)
         assertEquals("en", AppLanguage.ENGLISH.toLocaleList().toLanguageTags())
+        assertEquals("fr", AppLanguage.FRENCH.toLocaleList().toLanguageTags())
         assertEquals("de", AppLanguage.GERMAN.toLocaleList().toLanguageTags())
         assertEquals("pt-BR", AppLanguage.BRAZILIAN_PORTUGUESE.toLocaleList().toLanguageTags())
         assertEquals("ja", AppLanguage.JAPANESE.toLocaleList().toLanguageTags())

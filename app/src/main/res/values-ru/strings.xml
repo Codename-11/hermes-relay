@@ -1283,6 +1283,7 @@
     <string name="appearance_language_desc">Выберите язык, используемый Hermes-Relay. Системный по умолчанию следует настройкам вашего устройства.</string>
     <string name="appearance_language_system">Системный по умолчанию</string>
     <string name="appearance_language_english">Английский</string>
+    <string name="appearance_language_french">Français</string>
     <string name="appearance_language_german">Немецкий</string>
     <string name="appearance_language_brazilian_portuguese">Португальский (Бразилия)</string>
     <string name="appearance_language_japanese">Японский</string>

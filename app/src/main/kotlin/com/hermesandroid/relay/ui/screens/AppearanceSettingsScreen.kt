@@ -422,6 +422,7 @@ fun AppearanceSettingsScreen(
                     val languageLabels = mapOf(
                         AppLanguage.SYSTEM_DEFAULT to stringResource(R.string.appearance_language_system),
                         AppLanguage.ENGLISH to stringResource(R.string.appearance_language_english),
+                        AppLanguage.FRENCH to stringResource(R.string.appearance_language_french),
                         AppLanguage.GERMAN to stringResource(R.string.appearance_language_german),
                         AppLanguage.BRAZILIAN_PORTUGUESE to stringResource(R.string.appearance_language_brazilian_portuguese),
                         AppLanguage.JAPANESE to stringResource(R.string.appearance_language_japanese),
