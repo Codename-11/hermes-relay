@@ -646,7 +646,8 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
         url,
         serverVersion: relay.serverVersion,
         meta: relay.authMeta,
-        endpointRole: bannerRole
+        endpointRole: bannerRole,
+        noColor: !!args.flags['no-color']
       }) + '\n'
     )
     return runRelayChatMode(args, relay, renderer, tearDown)
@@ -672,7 +673,8 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
       url,
       serverVersion: relay.serverVersion,
       meta: relay.authMeta,
-      endpointRole: bannerRole
+      endpointRole: bannerRole,
+      noColor: !!args.flags['no-color']
     }) + '\n'
   )
 
