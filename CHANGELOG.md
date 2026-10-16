@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Added
 
+- Android chat transcript text can be pinch-resized from 0.85x through 2.0x in standard and bot conversations; user and assistant message text reflows while the composer and chat controls remain unchanged.
 - Android marks unread completed conversations in the session drawer and shows unread conversation counts on profiles and the chat header.
 - Reply notifications show the owning agent's official profile name and cached avatar, plus the conversation title.
 

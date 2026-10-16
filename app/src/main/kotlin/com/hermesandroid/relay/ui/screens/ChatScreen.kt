@@ -105,6 +105,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.debounce
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.layout.aspectRatio
@@ -236,6 +237,12 @@ import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
+import com.hermesandroid.relay.ui.components.ProvideChatTextScale
+import com.hermesandroid.relay.ui.components.chatTextScaleGesture
+import com.hermesandroid.relay.ui.components.chatTextScaleSemantics
+import com.hermesandroid.relay.ui.components.rememberChatTextScale
+import com.hermesandroid.relay.data.ChatTextScalePreferencesRepository
+import com.hermesandroid.relay.data.relayDataStore
 import com.hermesandroid.relay.ui.components.PendingAttachmentComposer
 import com.hermesandroid.relay.ui.components.AttachmentViewer
 import com.hermesandroid.relay.ui.components.ChatQuoteReferenceChip
@@ -1566,6 +1573,17 @@ fun ChatScreen(
         }
     }
     val listState = rememberLazyListState()
+    val chatTextScalePreferences = remember(context) {
+        ChatTextScalePreferencesRepository(context.relayDataStore)
+    }
+    val persistedChatTextScale by chatTextScalePreferences.scale.collectAsState(initial = com.hermesandroid.relay.data.CHAT_TEXT_SCALE_DEFAULT)
+    val chatTextScale = rememberChatTextScale(persistedChatTextScale)
+    LaunchedEffect(chatTextScalePreferences, chatTextScale) {
+        snapshotFlow { chatTextScale.scale }
+            .distinctUntilChanged()
+            .debounce(250)
+            .collect { chatTextScalePreferences.setScale(it) }
+    }
     val userScrolledAwayState = remember(currentSessionId) { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     // Pinned Sessions sidebar intent (persisted). Only takes effect when the
@@ -3702,9 +3720,18 @@ fun ChatScreen(
                                 .mapTo(mutableSetOf<Any>()) { it.key }
                         }
                     }
+                    ProvideChatTextScale(chatTextScale) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
+                            .chatTextScaleGesture(chatTextScale)
+                            .chatTextScaleSemantics(
+                                state = chatTextScale,
+                                description = stringResource(R.string.chat_text_scale_description),
+                                increaseLabel = stringResource(R.string.chat_text_scale_increase),
+                                decreaseLabel = stringResource(R.string.chat_text_scale_decrease),
+                                resetLabel = stringResource(R.string.chat_text_scale_reset),
+                            )
                             .align(Alignment.Center)
                             .fillMaxHeight()
                             .then(
@@ -4049,6 +4076,7 @@ fun ChatScreen(
                         // trailing gap free of placement animation as rows grow.
                         item { Spacer(modifier = Modifier.height(8.dp)) }
                     }
+                    } // ProvideChatTextScale
                     } // CompositionLocalProvider(LocalRelayServerImageResolver)
 
                     if (showTranscriptSearch) {

@@ -175,6 +175,10 @@
     <string name="cd_remove">削除</string>
     <string name="cd_cancel_editing">編集をキャンセルする</string>
     <string name="cd_select_model">モデルを選択してください</string>
+    <string name="chat_text_scale_description">チャットメッセージ。ピンチ操作で会話テキストのサイズを変更します。</string>
+    <string name="chat_text_scale_increase">会話テキストのサイズを大きくする</string>
+    <string name="chat_text_scale_decrease">会話テキストのサイズを小さくする</string>
+    <string name="chat_text_scale_reset">会話テキストのサイズをリセットする</string>
     <string name="chat_camera_perm_needed">写真を撮るにはカメラの許可が必要です</string>
 
     <!-- ConnectionViewModel status -->

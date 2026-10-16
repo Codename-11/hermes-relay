@@ -150,6 +150,10 @@
     <string name="cd_remove">Eliminar</string>
     <string name="cd_cancel_editing">Cancelar edición</string>
     <string name="cd_select_model">Seleccionar modelo</string>
+    <string name="chat_text_scale_description">Mensajes del chat. Pellizca para cambiar el tamaño del texto de la conversación.</string>
+    <string name="chat_text_scale_increase">Aumentar el tamaño del texto de la conversación</string>
+    <string name="chat_text_scale_decrease">Reducir el tamaño del texto de la conversación</string>
+    <string name="chat_text_scale_reset">Restablecer el tamaño del texto de la conversación</string>
     <string name="chat_camera_perm_needed">Se necesita permiso de la cámara para tomar una foto.</string>
     <string name="conn_status_no_hermes">Sin conexión Hermes</string>
     <string name="conn_status_no_internet">Sin conexión a internet</string>
