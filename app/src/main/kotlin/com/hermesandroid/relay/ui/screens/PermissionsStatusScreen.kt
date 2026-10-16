@@ -57,7 +57,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -68,6 +67,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.permissions.AppPermissionStatus
@@ -528,7 +528,7 @@ private fun NeedBadge(text: String) {
 @Composable
 private fun StatusBadge(label: String, granted: Boolean) {
     val tint = if (granted) {
-        Color(0xFF4CAF50)
+        LocalBrand.current.green
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
