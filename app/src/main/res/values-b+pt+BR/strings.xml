@@ -4496,4 +4496,9 @@
     <string name="voice_settings_gpt_live_model">Modelo</string>
     <string name="voice_settings_gpt_live_voice">Voz</string>
     <string name="voice_settings_gpt_live_unavailable">O GPT-Live está selecionado no host, mas não está disponível. O Hermes usa a voz padrão.</string>
+    <string name="bot_chat_message_placeholder">Mensagem para %1$s</string>
+    <string name="bot_mode_new_chat">Nova conversa</string>
+    <string name="bot_mode_to">Para:</string>
+    <string name="bot_mode_search_or_create">Pesquise ou crie agentes</string>
+    <string name="bot_mode_create_new_agent">Criar novo agente</string>
 </resources>

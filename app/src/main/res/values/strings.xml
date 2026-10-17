@@ -2663,6 +2663,11 @@
     <string name="voice_overlay_overlay">Overlay</string>
     <string name="voice_overlay_exit">Exit</string>
     <string name="voice_overlay_settings_cd">Voice settings</string>
+    <string name="bot_mode_new_chat">New chat</string>
+    <string name="bot_mode_to">To:</string>
+    <string name="bot_mode_search_or_create">Search or create agents</string>
+    <string name="bot_mode_create_new_agent">Create new agent</string>
+    <string name="bot_chat_message_placeholder">Message %1$s</string>
     <string name="voice_settings_gpt_live_title">GPT-Live</string>
     <string name="voice_settings_gpt_live_desc">Full-duplex voice from your Hermes host. Talk naturally and interrupt any time. Model and voice are set on the host.</string>
     <string name="voice_settings_gpt_live_model">Model</string>

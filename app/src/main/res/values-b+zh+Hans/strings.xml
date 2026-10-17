@@ -4577,4 +4577,9 @@
     <string name="voice_settings_gpt_live_model">模型</string>
     <string name="voice_settings_gpt_live_voice">音色</string>
     <string name="voice_settings_gpt_live_unavailable">主机已选择 GPT-Live，但当前不可用。Hermes 将使用标准语音。</string>
+    <string name="bot_chat_message_placeholder">给 %1$s 发消息</string>
+    <string name="bot_mode_new_chat">新聊天</string>
+    <string name="bot_mode_to">收件人：</string>
+    <string name="bot_mode_search_or_create">搜索或创建智能体</string>
+    <string name="bot_mode_create_new_agent">创建新智能体</string>
 </resources>

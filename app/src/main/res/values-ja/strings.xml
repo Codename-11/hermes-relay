@@ -4648,4 +4648,9 @@
     <string name="voice_settings_gpt_live_model">モデル</string>
     <string name="voice_settings_gpt_live_voice">音声</string>
     <string name="voice_settings_gpt_live_unavailable">GPT-Live はホストで選択されていますが利用できません。Hermes は標準音声を使用します。</string>
+    <string name="bot_chat_message_placeholder">%1$s にメッセージ</string>
+    <string name="bot_mode_new_chat">新しいチャット</string>
+    <string name="bot_mode_to">宛先:</string>
+    <string name="bot_mode_search_or_create">エージェントを検索または作成</string>
+    <string name="bot_mode_create_new_agent">新しいエージェントを作成</string>
 </resources>

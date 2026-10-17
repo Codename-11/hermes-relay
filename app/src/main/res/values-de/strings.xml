@@ -4653,4 +4653,9 @@
     <string name="voice_settings_gpt_live_model">Modell</string>
     <string name="voice_settings_gpt_live_voice">Stimme</string>
     <string name="voice_settings_gpt_live_unavailable">GPT-Live ist auf dem Host ausgewählt, aber nicht verfügbar. Hermes verwendet die Standardsprache.</string>
+    <string name="bot_chat_message_placeholder">Nachricht an %1$s</string>
+    <string name="bot_mode_new_chat">Neuer Chat</string>
+    <string name="bot_mode_to">An:</string>
+    <string name="bot_mode_search_or_create">Agenten suchen oder erstellen</string>
+    <string name="bot_mode_create_new_agent">Neuen Agenten erstellen</string>
 </resources>

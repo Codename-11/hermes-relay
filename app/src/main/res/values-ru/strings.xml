@@ -4392,4 +4392,9 @@
     <string name="voice_settings_gpt_live_model">Модель</string>
     <string name="voice_settings_gpt_live_voice">Голос</string>
     <string name="voice_settings_gpt_live_unavailable">GPT-Live выбран на хосте, но недоступен. Hermes использует стандартный голос.</string>
+    <string name="bot_chat_message_placeholder">Сообщение для %1$s</string>
+    <string name="bot_mode_new_chat">Новый чат</string>
+    <string name="bot_mode_to">Кому:</string>
+    <string name="bot_mode_search_or_create">Найдите или создайте агента</string>
+    <string name="bot_mode_create_new_agent">Создать нового агента</string>
 </resources>

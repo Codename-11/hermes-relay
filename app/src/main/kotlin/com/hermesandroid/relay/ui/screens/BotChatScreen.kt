@@ -4,6 +4,36 @@ import com.hermesandroid.relay.data.BusyMessageAction
 import com.hermesandroid.relay.data.canCorrectBusyMessage
 import com.hermesandroid.relay.ui.components.ChatComposerLayers
 import com.hermesandroid.relay.ui.components.ChatMessageQueue
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.InputChip
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,19 +53,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -109,6 +135,7 @@ fun BotChatScreen(
             },
             profileIconFlow = connectionViewModel::profileIconFlow,
             busyMessageAction = busyMessageAction,
+            maxAttachmentMbFlow = connectionViewModel.maxAttachmentMb,
         )
     }
 }
@@ -127,6 +154,7 @@ internal fun BotChatScreen(
     historyLoader: BotChatHistoryLoader,
     profileIconFlow: BotChatProfileIconFlow,
     busyMessageAction: BusyMessageAction = BusyMessageAction.CorrectNow,
+    maxAttachmentMbFlow: StateFlow<Int> = MutableStateFlow(DEFAULT_BOT_ATTACHMENT_MB),
 ) {
     val handler = remember(route.key) { handlerFactory() }
     val context = LocalContext.current
@@ -197,66 +225,69 @@ internal fun BotChatScreen(
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
     }
 
+    val scope = rememberCoroutineScope()
+    val maxAttachmentMb by maxAttachmentMbFlow.collectAsState()
+    var showAttachSheet by remember { mutableStateOf(false) }
+    val ingest: (List<Uri>) -> Unit = { uris ->
+        scope.launch {
+            uris.forEach { uri ->
+                ingestAttachmentFromUri(context, uri, maxAttachmentMb) { chatViewModel.addAttachment(it) }
+            }
+        }
+    }
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(), ingest)
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments(), ingest)
+    val canSend = composer.isNotBlank() || attachments.isNotEmpty()
+    val attachmentPlaceholder = stringResource(R.string.chat_attachment_placeholder)
+    val stopMode = isStreaming && !canSend
+
     Scaffold(
         containerColor = RelayRefresh.Background,
         topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.bot_mode_back_to_bots),
-                        )
-                    }
-                },
-                title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            modifier = Modifier.size(40.dp),
-                            shape = CircleShape,
-                            color = RelayRefresh.Navy3,
-                            border = BorderStroke(1.dp, RelayRefresh.LineStrong),
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BotChatCircleButton(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.bot_mode_back_to_bots),
+                    onClick = onBack,
+                )
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(start = 6.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            if (!iconPath.isNullOrBlank()) {
-                                AsyncImage(
-                                    model = File(iconPath.orEmpty()),
-                                    contentDescription = null,
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                            } else {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(
-                                        bot.displayName.firstOrNull()?.uppercase() ?: "H",
-                                        color = RelayRefresh.Relay,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                }
-                            }
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        Column {
+                            BotChatAvatar(iconPath, bot.displayName, 30.dp)
+                            Spacer(Modifier.width(10.dp))
                             Text(
                                 bot.displayName,
+                                style = MaterialTheme.typography.titleMedium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            Text(
-                                "${route.connectionLabel} · @${bot.handle}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (bot.stale) {
-                                    MaterialTheme.colorScheme.error
-                                } else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
+                            if (bot.stale) {
+                                Text(
+                                    " · " + stringResource(R.string.bot_mode_offline),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                    maxLines = 1,
+                                )
+                            }
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = RelayRefresh.Background,
-                ),
-            )
+                }
+                // Balances the back button so the pill stays centred.
+                Spacer(Modifier.size(48.dp))
+            }
         },
         bottomBar = {
             ChatComposerLayers(
@@ -267,69 +298,133 @@ internal fun BotChatScreen(
                 },
                 correctionAvailable = correctionAvailable,
                 onStop = if (composer.isNotBlank()) chatViewModel::cancelStream else null,
-                modifier = Modifier.imePadding(),
+                modifier = Modifier.imePadding().navigationBarsPadding(),
             ) {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainer,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
-            ) {
-                Column {
-                    ChatMessageQueue(
-                        messages = queue,
-                        paused = queuePaused,
-                        onResume = chatViewModel::resumeQueue,
-                        onClear = chatViewModel::clearQueue,
-                        onRemove = chatViewModel::removeQueuedAt,
-                        canEdit = composer.isBlank() && attachments.isEmpty(),
-                        onEdit = { index ->
-                            chatViewModel.takeQueuedForEdit(index)?.let {
-                                composer = it
-                                editingQueuedMessage = true
-                            }
-                        },
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    )
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.Bottom,
+            Column(Modifier.background(RelayRefresh.Background)) {
+                ChatMessageQueue(
+                    messages = queue,
+                    paused = queuePaused,
+                    onResume = chatViewModel::resumeQueue,
+                    onClear = chatViewModel::clearQueue,
+                    onRemove = chatViewModel::removeQueuedAt,
+                    canEdit = composer.isBlank() && attachments.isEmpty(),
+                    onEdit = { index ->
+                        chatViewModel.takeQueuedForEdit(index)?.let {
+                            composer = it
+                            editingQueuedMessage = true
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+                if (attachments.isNotEmpty()) {
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        OutlinedTextField(
-                            value = composer,
-                            onValueChange = { composer = it },
-                            placeholder = { Text(stringResource(R.string.chat_placeholder_message)) },
-                            modifier = Modifier.weight(1f),
-                            minLines = 1,
-                            maxLines = 6,
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        IconButton(
-                            onClick = {
-                                if (isStreaming && composer.isBlank()) {
-                                    chatViewModel.cancelStream()
-                                } else {
-                                    val text = composer.trim()
-                                    if (text.isNotEmpty()) {
-                                        composer = ""
-                                        chatViewModel.sendMessage(text, effectiveBusyAction)
-                                        editingQueuedMessage = false
-                                        busyActionOverride = null
+                        itemsIndexed(attachments) { index, attachment ->
+                            InputChip(
+                                selected = false,
+                                onClick = { chatViewModel.removeAttachment(index) },
+                                label = {
+                                    Text(
+                                        attachment.fileName ?: attachment.contentType,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.widthIn(max = 160.dp),
+                                    )
+                                },
+                                trailingIcon = {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = stringResource(R.string.cd_remove),
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.Bottom,
+                ) {
+                    BotChatCircleButton(
+                        icon = Icons.Filled.Add,
+                        contentDescription = stringResource(R.string.chat_input_add_attachment),
+                        onClick = { showAttachSheet = true },
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Surface(
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(24.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(start = 18.dp, top = 12.dp, bottom = 12.dp),
+                            ) {
+                                if (composer.isEmpty()) {
+                                    Text(
+                                        stringResource(R.string.bot_chat_message_placeholder, bot.displayName),
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                BasicTextField(
+                                    value = composer,
+                                    onValueChange = { composer = it },
+                                    textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    ),
+                                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                                    maxLines = 6,
+                                    modifier = Modifier.fillMaxWidth().testTag(BOT_CHAT_COMPOSER_TAG),
+                                )
+                            }
+                            if (canSend || isStreaming) {
+                                IconButton(
+                                    onClick = {
+                                        if (stopMode) {
+                                            chatViewModel.cancelStream()
+                                        } else {
+                                            // Matches Chat: an attachment-only send carries a placeholder body.
+                                            val text = composer.trim().ifBlank { attachmentPlaceholder }
+                                            composer = ""
+                                            chatViewModel.sendMessage(text, effectiveBusyAction)
+                                            editingQueuedMessage = false
+                                            busyActionOverride = null
+                                        }
+                                    },
+                                    modifier = Modifier.padding(end = 4.dp),
+                                ) {
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(36.dp),
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                if (stopMode) Icons.Filled.Stop else Icons.Filled.ArrowUpward,
+                                                contentDescription = stringResource(
+                                                    when {
+                                                        stopMode -> R.string.chat_input_stop_streaming
+                                                        isStreaming && effectiveBusyAction == BusyMessageAction.CorrectNow -> R.string.chat_correct_now
+                                                        isStreaming -> R.string.chat_queue_next
+                                                        else -> R.string.chat_input_send_message
+                                                    },
+                                                ),
+                                                tint = MaterialTheme.colorScheme.surface,
+                                                modifier = Modifier.size(20.dp),
+                                            )
+                                        }
                                     }
                                 }
-                            },
-                            enabled = isStreaming || composer.isNotBlank(),
-                        ) {
-                            Icon(
-                                if (isStreaming && composer.isBlank()) Icons.Filled.Stop else Icons.AutoMirrored.Filled.Send,
-                                contentDescription = stringResource(
-                                    when {
-                                        isStreaming && composer.isBlank() -> R.string.chat_input_stop_streaming
-                                        isStreaming && effectiveBusyAction == BusyMessageAction.CorrectNow -> R.string.chat_correct_now
-                                        isStreaming -> R.string.chat_queue_next
-                                        else -> R.string.chat_input_send_message
-                                    },
-                                ),
-                            )
+                            }
                         }
                     }
                 }
@@ -408,5 +503,76 @@ internal fun BotChatScreen(
                 }
             }
         }
+    }
+
+    if (showAttachSheet) {
+        ModalBottomSheet(onDismissRequest = { showAttachSheet = false }) {
+            BotChatSheetItem(Icons.Filled.PhotoLibrary, stringResource(R.string.chat_input_photos)) {
+                showAttachSheet = false
+                photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo))
+            }
+            BotChatSheetItem(Icons.Filled.InsertDriveFile, stringResource(R.string.chat_input_files)) {
+                showAttachSheet = false
+                filePicker.launch(arrayOf("*/*"))
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+internal const val BOT_CHAT_COMPOSER_TAG = "botChatComposer"
+private const val DEFAULT_BOT_ATTACHMENT_MB = 10
+
+@Composable
+private fun BotChatCircleButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.size(48.dp),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(22.dp))
+        }
+    }
+}
+
+@Composable
+private fun BotChatAvatar(iconPath: String?, name: String, size: Dp) {
+    if (!iconPath.isNullOrBlank()) {
+        AsyncImage(
+            model = File(iconPath),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(size).clip(CircleShape),
+        )
+    } else {
+        BotFallbackAvatar(name, size)
+    }
+}
+
+@Composable
+private fun BotChatSheetItem(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            modifier = Modifier.size(48.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) { Icon(icon, contentDescription = null) }
+        }
+        Spacer(Modifier.width(18.dp))
+        Text(label, style = MaterialTheme.typography.titleMedium)
     }
 }

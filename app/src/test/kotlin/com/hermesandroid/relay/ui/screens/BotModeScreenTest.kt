@@ -2,6 +2,10 @@ package com.hermesandroid.relay.ui.screens
 
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onLast
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import com.hermesandroid.relay.data.BotGroupMessage
@@ -32,17 +36,44 @@ class BotModeScreenTest {
     val compose = createComposeRule()
 
     @Test
-    fun `tabs filter bots and read only groups without changing workspace`() {
+    fun `home lists pinned bots, conversations and read only groups together`() {
         render()
 
-        compose.onNodeWithText("Lucy").assertExists()
-        compose.onNodeWithText("Launch Council").assertExists()
-
-        compose.onNodeWithText("Groups").performClick()
-
-        compose.onNodeWithText("Lucy").assertDoesNotExist()
+        // Pinned shortcut plus conversation row.
+        compose.onAllNodesWithText("Lucy").assertCountEquals(2)
         compose.onNodeWithText("Launch Council").assertExists()
         compose.onNodeWithText("Read only").assertExists()
+    }
+
+    @Test
+    fun `plus opens the To picker which searches and opens bots`() {
+        val opened = mutableListOf<String>()
+        var created = 0
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
+                BotModeContent(
+                    state = state(),
+                    connections = listOf(connection(), labConnection()),
+                    activeConnection = connection(),
+                    onBack = {},
+                    onRefresh = {},
+                    onSelectGateway = {},
+                    onOpenBot = { opened += it.route!!.connectionId },
+                    onOpenGroup = {},
+                    onNewBot = { created++ },
+                    nowMs = NOW + 200_000L,
+                )
+            }
+        }
+
+        compose.onNodeWithContentDescription("New chat").performClick()
+        compose.onNodeWithText("Create new agent").assertExists()
+        compose.onAllNodesWithText("Researcher").onLast().performClick()
+        assertEquals(listOf("lab"), opened)
+
+        compose.onNodeWithContentDescription("New chat").performClick()
+        compose.onNodeWithText("Create new agent").performClick()
+        assertEquals(1, created)
     }
 
     @Test
@@ -54,7 +85,7 @@ class BotModeScreenTest {
             onOpenGroup = { groupOwner = it.key },
         )
 
-        compose.onNodeWithText("Lucy").performClick()
+        compose.onAllNodesWithText("Lucy").onLast().performClick()
         compose.onNodeWithText("Launch Council").performClick()
 
         assertEquals("default", botOwner)
@@ -65,7 +96,7 @@ class BotModeScreenTest {
     fun `gateway scope filters union without switching active connection`() {
         render(selectedGatewayId = "lab")
 
-        compose.onNodeWithText("Researcher").assertExists()
+        compose.onAllNodesWithText("Researcher").onFirst().assertExists()
         compose.onNodeWithText("Lucy").assertDoesNotExist()
     }
 
@@ -74,8 +105,8 @@ class BotModeScreenTest {
         val opened = mutableListOf<String>()
         render(onOpenBot = { opened += it.route!!.connectionId })
 
-        compose.onNodeWithText("Lucy").performClick()
-        compose.onNodeWithText("Researcher").performClick()
+        compose.onAllNodesWithText("Lucy").onLast().performClick()
+        compose.onAllNodesWithText("Researcher").onLast().performClick()
 
         assertEquals(listOf("home", "lab"), opened)
     }

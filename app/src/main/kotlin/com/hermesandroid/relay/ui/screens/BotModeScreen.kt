@@ -1,5 +1,12 @@
 package com.hermesandroid.relay.ui.screens
 
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import android.text.format.DateUtils
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -82,8 +89,6 @@ import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-internal enum class BotModeFilter { All, Bots, Groups }
 
 /** Bundle-compatible key; length-prefix the connection so delimiters cannot alias owners. */
 internal val BotRosterEntry.lazyItemKey: String
@@ -225,271 +230,289 @@ internal fun BotModeContent(
         BotFallbackAvatar(bot.displayName, size)
     },
 ) {
-    var filter by remember { mutableStateOf(BotModeFilter.All) }
-    var searchOpen by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
     var gatewayMenuOpen by remember { mutableStateOf(false) }
+    var showNewChat by remember { mutableStateOf(false) }
+    val multiGateway = connections.size > 1
     val visibleBots = state.roster.bots
         .filterNot(BotRosterEntry::hidden)
         .filter { selectedGatewayId == null || it.route?.connectionId == selectedGatewayId }
     val visibleGroups = state.roster.groups.filter { group ->
         selectedGatewayId == null || selectedGatewayId in group.sourceConnectionIds
     }
-    val activeBots = visibleBots.filter { bot ->
-        !bot.stale && bot.presenceActivityAtMs >= nowMs - ACTIVE_WINDOW_MS
-    }.sortedByDescending(BotRosterEntry::presenceActivityAtMs).take(6)
-    val needle = query.trim()
-    val rows = buildList<BotModeRow> {
-        if (filter != BotModeFilter.Groups) {
-            addAll(visibleBots.filter { bot ->
-                needle.isBlank() || listOf(
-                    bot.displayName,
-                    bot.profile.name,
-                    bot.profile.description,
-                    bot.latestPreview,
-                ).any { it.contains(needle, ignoreCase = true) }
-            }.map(BotModeRow::Bot))
-        }
-        if (filter != BotModeFilter.Bots) {
-            addAll(visibleGroups.filter { room ->
-                needle.isBlank() || room.name.contains(needle, ignoreCase = true) ||
-                    room.latestMessage?.text.orEmpty().contains(needle, ignoreCase = true)
-            }.map(BotModeRow::Group))
-        }
-    }.sortedByDescending(BotModeRow::activityAtMs)
+    // Grok-style shortcuts: the most recently active bots, always visible.
+    val pinnedBots = visibleBots
+        .filterNot(BotRosterEntry::stale)
+        .sortedByDescending(BotRosterEntry::presenceActivityAtMs)
+        .take(PINNED_BOT_COUNT)
+    val rows = (visibleBots.map(BotModeRow::Bot) + visibleGroups.map(BotModeRow::Group))
+        .sortedByDescending(BotModeRow::activityAtMs)
 
     Scaffold(
         containerColor = RelayRefresh.Background,
         snackbarHost = snackbarHost,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        stringResource(R.string.bot_mode_title),
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.onboarding_back),
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { searchOpen = !searchOpen }) {
-                        Icon(
-                            Icons.Filled.Search,
-                            contentDescription = stringResource(R.string.bot_mode_search),
-                            tint = if (searchOpen || query.isNotBlank()) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = RelayRefresh.Background),
-            )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = onNewBot,
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.bot_mode_new_bot))
-            }
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            if (searchOpen || query.isNotBlank()) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    singleLine = true,
-                    placeholder = { Text(stringResource(R.string.bot_mode_search_hint)) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                BotModeCircleButton(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.onboarding_back),
+                    onClick = onBack,
                 )
-            }
-
-            Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
-                Surface(
-                    onClick = { gatewayMenuOpen = true },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainer,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)),
-                ) {
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    // The title doubles as the gateway scope picker when there is more than one.
                     Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable(enabled = multiGateway) { gatewayMenuOpen = true }
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            modifier = Modifier.size(32.dp),
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Text(
-                                    activeConnection?.label?.trim()?.firstOrNull()?.uppercase() ?: "H",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold,
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(10.dp))
                         Text(
                             selectedGatewayId
                                 ?.let { id -> connections.firstOrNull { it.id == id }?.label }
-                                ?: stringResource(R.string.bot_mode_all_gateways),
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleSmall,
+                                ?: stringResource(R.string.bot_mode_title),
+                            style = MaterialTheme.typography.titleLarge,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        Icon(Icons.Filled.ExpandMore, contentDescription = null)
+                        if (multiGateway) {
+                            Icon(
+                                Icons.Filled.ExpandMore,
+                                contentDescription = stringResource(R.string.bot_mode_all_gateways),
+                            )
+                        }
                     }
-                }
-                DropdownMenu(
-                    expanded = gatewayMenuOpen,
-                    onDismissRequest = { gatewayMenuOpen = false },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.bot_mode_all_gateways)) },
-                        leadingIcon = if (selectedGatewayId == null) {
-                            { Icon(Icons.Filled.Check, contentDescription = null) }
-                        } else null,
-                        onClick = {
-                            gatewayMenuOpen = false
-                            onSelectGateway(null)
-                        },
-                    )
-                    connections.forEach { connection ->
-                        val selected = connection.id == selectedGatewayId
-                        val gatewayStatus = state.gateways.firstOrNull { it.connectionId == connection.id }
+                    DropdownMenu(
+                        expanded = gatewayMenuOpen,
+                        onDismissRequest = { gatewayMenuOpen = false },
+                    ) {
                         DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(connection.label)
-                                    if (gatewayStatus?.stale == true || gatewayStatus?.error != null) {
-                                        Text(
-                                            stringResource(R.string.bot_mode_offline),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.error,
-                                        )
-                                    }
-                                }
-                            },
-                            leadingIcon = if (selected) {
+                            text = { Text(stringResource(R.string.bot_mode_all_gateways)) },
+                            leadingIcon = if (selectedGatewayId == null) {
                                 { Icon(Icons.Filled.Check, contentDescription = null) }
                             } else null,
                             onClick = {
                                 gatewayMenuOpen = false
-                                if (!selected) onSelectGateway(connection.id)
+                                onSelectGateway(null)
                             },
+                        )
+                        connections.forEach { connection ->
+                            val selected = connection.id == selectedGatewayId
+                            val gatewayStatus = state.gateways.firstOrNull { it.connectionId == connection.id }
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(connection.label)
+                                        if (gatewayStatus?.stale == true || gatewayStatus?.error != null) {
+                                            Text(
+                                                stringResource(R.string.bot_mode_offline),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
+                                    }
+                                },
+                                leadingIcon = if (selected) {
+                                    { Icon(Icons.Filled.Check, contentDescription = null) }
+                                } else null,
+                                onClick = {
+                                    gatewayMenuOpen = false
+                                    if (!selected) onSelectGateway(connection.id)
+                                },
+                            )
+                        }
+                    }
+                }
+                BotModeCircleButton(
+                    icon = Icons.Filled.Add,
+                    contentDescription = stringResource(R.string.bot_mode_new_chat),
+                    onClick = { showNewChat = true },
+                )
+            }
+        },
+    ) { padding ->
+        when {
+            state.loading && rows.isEmpty() -> Box(
+                Modifier.fillMaxSize().padding(padding),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
+            }
+            rows.isEmpty() -> Box(Modifier.padding(padding)) {
+                BotModeEmptyState(error = state.error, onRefresh = onRefresh)
+            }
+            else -> LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                contentPadding = PaddingValues(bottom = 32.dp, top = 8.dp),
+            ) {
+                if (pinnedBots.isNotEmpty()) {
+                    item(key = "pinned") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                        ) {
+                            pinnedBots.forEach { bot ->
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clickable(enabled = openingRoute == null) { onOpenBot(bot) },
+                                ) {
+                                    Box {
+                                        botAvatar(bot, 84.dp)
+                                        if (bot.presenceActivityAtMs >= nowMs - ACTIVE_WINDOW_MS) {
+                                            Surface(
+                                                modifier = Modifier
+                                                    .align(Alignment.BottomEnd)
+                                                    .size(18.dp),
+                                                shape = CircleShape,
+                                                color = ACTIVE_GREEN,
+                                                border = BorderStroke(3.dp, RelayRefresh.Background),
+                                            ) {}
+                                        }
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        bot.displayName,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                items(
+                    items = rows,
+                    key = { row -> when (row) {
+                        is BotModeRow.Bot -> row.value.lazyItemKey
+                        is BotModeRow.Group -> "group:${row.value.key}"
+                    } },
+                ) { row ->
+                    when (row) {
+                        is BotModeRow.Bot -> BotConversationRow(
+                            bot = row.value,
+                            // Same-named bots on different gateways need their source to tell them apart.
+                            connectionLabel = row.value.route?.connectionLabel?.takeIf { multiGateway },
+                            opening = openingRoute != null && openingRoute == row.value.route?.key,
+                            onClick = { onOpenBot(row.value) },
+                            avatar = { botAvatar(row.value, 56.dp) },
+                            nowMs = nowMs,
+                        )
+                        is BotModeRow.Group -> BotGroupRow(
+                            room = row.value,
+                            onClick = { onOpenGroup(row.value) },
+                            nowMs = nowMs,
                         )
                     }
                 }
             }
+        }
+    }
 
-            BotModeFilterBar(filter = filter, onFilter = { filter = it })
+    if (showNewChat) {
+        BotNewChatSheet(
+            bots = visibleBots,
+            onDismiss = { showNewChat = false },
+            onCreate = {
+                showNewChat = false
+                onNewBot()
+            },
+            onOpen = { bot ->
+                showNewChat = false
+                onOpenBot(bot)
+            },
+            botAvatar = botAvatar,
+        )
+    }
+}
 
-            if (activeBots.isNotEmpty() && filter != BotModeFilter.Groups && needle.isBlank()) {
-                Text(
-                    stringResource(R.string.bot_mode_active_now),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 16.dp, top = 14.dp, bottom = 8.dp),
+/** "To:" picker: search an existing bot to open, or create a new one. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BotNewChatSheet(
+    bots: List<BotRosterEntry>,
+    onDismiss: () -> Unit,
+    onCreate: () -> Unit,
+    onOpen: (BotRosterEntry) -> Unit,
+    botAvatar: @Composable (BotRosterEntry, Dp) -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val needle = query.trim()
+    val matches = bots.filter { bot ->
+        needle.isBlank() || listOf(bot.displayName, bot.profile.name, bot.profile.description)
+            .any { it.contains(needle, ignoreCase = true) }
+    }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.bot_mode_to),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.width(10.dp))
+            Box(Modifier.weight(1f)) {
+                if (query.isEmpty()) {
+                    Text(
+                        stringResource(R.string.bot_mode_search_or_create),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    )
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.titleMedium.copy(
+                        color = MaterialTheme.colorScheme.onSurface,
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(18.dp),
-                ) {
-                    items(activeBots, key = { it.lazyItemKey }) { bot ->
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .width(78.dp)
-                                .clickable(enabled = openingRoute == null) { onOpenBot(bot) },
-                        ) {
-                            Box {
-                                botAvatar(bot, 56.dp)
-                                Surface(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .size(14.dp),
-                                    shape = CircleShape,
-                                    color = ACTIVE_GREEN,
-                                    border = BorderStroke(2.dp, RelayRefresh.Background),
-                                ) {}
-                            }
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                bot.displayName,
-                                style = MaterialTheme.typography.labelLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                bot.route?.connectionLabel.orEmpty(),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
             }
-
-            when {
-                state.loading && rows.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.dp)
-                }
-                rows.isEmpty() -> BotModeEmptyState(error = state.error, onRefresh = onRefresh)
-                else -> LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(bottom = 96.dp, top = 4.dp),
-                ) {
-                    itemsIndexed(
-                        items = rows,
-                        key = { _, row -> when (row) {
-                            is BotModeRow.Bot -> row.value.lazyItemKey
-                            is BotModeRow.Group -> "group:${row.value.key}"
-                        } },
-                    ) { index, row ->
-                        when (row) {
-                            is BotModeRow.Bot -> BotConversationRow(
-                                bot = row.value,
-                                connectionLabel = row.value.route?.connectionLabel,
-                                opening = openingRoute != null && openingRoute == row.value.route?.key,
-                                onClick = { onOpenBot(row.value) },
-                                avatar = { botAvatar(row.value, 56.dp) },
-                                nowMs = nowMs,
-                            )
-                            is BotModeRow.Group -> BotGroupRow(
-                                room = row.value,
-                                onClick = { onOpenGroup(row.value) },
-                                nowMs = nowMs,
-                            )
-                        }
-                        if (index != rows.lastIndex) {
-                            HorizontalDivider(
-                                modifier = Modifier.padding(start = 88.dp, end = 16.dp),
-                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                            )
+        }
+        HorizontalDivider(modifier = Modifier.padding(top = 12.dp))
+        LazyColumn(contentPadding = PaddingValues(vertical = 8.dp)) {
+            item(key = "create") {
+                BotSheetRow(onClick = onCreate) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        modifier = Modifier.size(48.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Filled.Add, contentDescription = null)
                         }
                     }
+                    Spacer(Modifier.width(16.dp))
+                    Text(stringResource(R.string.bot_mode_create_new_agent), style = MaterialTheme.typography.titleMedium)
+                }
+            }
+            items(matches, key = { "to:" + it.lazyItemKey }) { bot ->
+                BotSheetRow(onClick = { onOpen(bot) }) {
+                    botAvatar(bot, 48.dp)
+                    Spacer(Modifier.width(16.dp))
+                    Text(
+                        bot.displayName,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
@@ -497,41 +520,27 @@ internal fun BotModeContent(
 }
 
 @Composable
-private fun BotModeFilterBar(filter: BotModeFilter, onFilter: (BotModeFilter) -> Unit) {
-    Surface(
+private fun BotSheetRow(onClick: () -> Unit, content: @Composable () -> Unit) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f)),
+            .clickable(onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) { content() }
+}
+
+@Composable
+private fun BotModeCircleButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.size(48.dp),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
     ) {
-        Row(modifier = Modifier.padding(4.dp)) {
-            BotModeFilter.entries.forEach { item ->
-                val selected = item == filter
-                Surface(
-                    onClick = { onFilter(item) },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(9.dp),
-                    color = if (selected) {
-                        RelayRefresh.ElectricMuted.copy(alpha = 0.56f)
-                    } else Color.Transparent,
-                ) {
-                    Text(
-                        text = when (item) {
-                            BotModeFilter.All -> stringResource(R.string.bot_mode_filter_all)
-                            BotModeFilter.Bots -> stringResource(R.string.bot_mode_filter_bots)
-                            BotModeFilter.Groups -> stringResource(R.string.bot_mode_filter_groups)
-                        },
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        color = if (selected) {
-                            RelayRefresh.Ink
-                        } else MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                }
-            }
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = contentDescription, modifier = Modifier.size(22.dp))
         }
     }
 }
@@ -569,9 +578,9 @@ private fun BotConversationRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (!connectionLabel.isNullOrBlank()) {
+            if (!connectionLabel.isNullOrBlank() || bot.stale) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
+                    if (!connectionLabel.isNullOrBlank()) Text(
                         "$connectionLabel · @${bot.handle}",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
@@ -579,7 +588,7 @@ private fun BotConversationRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                     if (bot.stale) {
-                        Spacer(Modifier.width(6.dp))
+                        if (!connectionLabel.isNullOrBlank()) Spacer(Modifier.width(6.dp))
                         Text(
                             stringResource(R.string.bot_mode_offline),
                             style = MaterialTheme.typography.labelSmall,
@@ -732,15 +741,14 @@ internal fun BotFallbackAvatar(label: String, size: Dp) {
     Surface(
         modifier = Modifier.size(size),
         shape = CircleShape,
-        color = RelayRefresh.Navy3,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        color = botAvatarColor(label),
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
                 label.trim().firstOrNull()?.uppercase() ?: "H",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = RelayRefresh.Relay,
+                color = Color(0xFF1B1B1F),
             )
         }
     }
@@ -942,5 +950,15 @@ private fun Long.toBotModeTime(nowMs: Long): String {
 }
 
 private const val ACTIVE_WINDOW_MS = 90_000L
+private const val PINNED_BOT_COUNT = 3
 private const val BOT_MODE_REFRESH_MS = 30_000L
 private val ACTIVE_GREEN = Color(0xFF4DD675)
+
+private val BOT_AVATAR_COLORS = listOf(
+    Color(0xFF5BC0A9), Color(0xFFEF7A3A), Color(0xFF9B6BF2),
+    Color(0xFFEC4F9C), Color(0xFFEF4A4A), Color(0xFF4A86F0),
+)
+
+/** Stable per-bot colour so a bot keeps its colour across lists and chats. */
+internal fun botAvatarColor(label: String): Color =
+    BOT_AVATAR_COLORS[Math.floorMod(label.trim().lowercase().hashCode(), BOT_AVATAR_COLORS.size)]

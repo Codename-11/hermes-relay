@@ -5,7 +5,11 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import com.github.takahirom.roborazzi.captureRoboImage
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.hermesandroid.relay.data.BotGatewayRoute
 import com.hermesandroid.relay.data.BotGatewayRouteKey
@@ -71,6 +75,16 @@ class BotChatScreenBindingTest {
 
         compose.runOnIdle { handler.onTextDelta("live-tail", LIVE_TAIL) }
         compose.onNodeWithText(LIVE_TAIL).assertIsDisplayed()
+
+        // Grok-style chrome: bot pill, named placeholder, + opens the attach sheet.
+        compose.onNodeWithText("Research").assertIsDisplayed()
+        compose.onNodeWithText("Message Research").assertIsDisplayed()
+        compose.onRoot().captureRoboImage("build/ui-regression/bot-chat.png")
+        compose.onNodeWithContentDescription("Add attachment").performClick()
+        compose.onNodeWithText("Photos").assertIsDisplayed()
+        compose.onNodeWithText("Files").assertIsDisplayed()
+        compose.onRoot().captureRoboImage("build/ui-regression/bot-chat-attach-sheet.png")
+        compose.onNodeWithText("Files").performClick()
 
         compose.runOnIdle { handler.onStreamError(HANDLER_ERROR) }
         compose.onNodeWithText(HANDLER_ERROR).assertIsDisplayed()
