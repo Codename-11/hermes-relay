@@ -47,10 +47,9 @@ class VoiceModeOverlayInteractionTest {
     val compose = createComposeRule()
 
     @Test
-    fun focusMode_childControlsReceiveRealPointerClicks() {
+    fun callControls_micAndEndReceiveRealPointerClicks() {
         var micTaps = 0
         var dismissals = 0
-        val modeChanges = mutableListOf<InteractionMode>()
         compose.mainClock.autoAdvance = false
 
         compose.setContent {
@@ -61,7 +60,6 @@ class VoiceModeOverlayInteractionTest {
                     onMicRelease = {},
                     onInterrupt = {},
                     onDismiss = { dismissals += 1 },
-                    onModeChange = { modeChanges += it },
                     onClearError = {},
                 )
             }
@@ -69,20 +67,45 @@ class VoiceModeOverlayInteractionTest {
 
         compose.onNodeWithContentDescription("start listening")
             .performTouchInput { click() }
-        compose.onNodeWithContentDescription("Expand voice controls")
-            .performTouchInput { click() }
-        compose.mainClock.advanceTimeBy(500)
-        compose.onNodeWithText("Hold")
-            .performTouchInput { click() }
-        compose.onNodeWithContentDescription("Collapse voice controls")
-            .performTouchInput { click() }
-        compose.onNodeWithContentDescription("Exit voice mode")
+        compose.onNodeWithTag(VOICE_MODE_END_TEST_TAG)
             .performTouchInput { click() }
 
         compose.runOnIdle {
             assertEquals(1, micTaps)
             assertEquals(1, dismissals)
-            assertEquals(listOf(InteractionMode.HoldToTalk), modeChanges)
+        }
+    }
+
+    @Test
+    fun gptLive_showsOnlyStartStopAndEnd() {
+        var micTaps = 0
+        var releases = 0
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            MaterialTheme {
+                VoiceModeOverlay(
+                    uiState = idleVoiceState().copy(
+                        state = VoiceState.Listening,
+                        interactionMode = InteractionMode.HoldToTalk,
+                    ),
+                    onMicTap = { micTaps += 1 },
+                    onMicRelease = { releases += 1 },
+                    onInterrupt = {},
+                    onDismiss = {},
+                    onClearError = {},
+                    voiceEngineMode = "gpt_live",
+                )
+            }
+        }
+
+        // Hold preference is ignored for the full-duplex session: a plain tap stops.
+        compose.onNodeWithTag(VOICE_MODE_MIC_TEST_TAG).performTouchInput { click() }
+        compose.onNodeWithText("Hold").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Voice settings").assertDoesNotExist()
+        compose.onNodeWithTag(VOICE_MODE_END_TEST_TAG).assertExists()
+        compose.runOnIdle {
+            assertEquals(0, micTaps)
+            assertEquals(1, releases)
         }
     }
 
@@ -100,7 +123,6 @@ class VoiceModeOverlayInteractionTest {
                     onMicRelease = {},
                     onInterrupt = {},
                     onDismiss = {},
-                    onModeChange = {},
                     onClearError = {},
                 )
             }
@@ -134,7 +156,6 @@ class VoiceModeOverlayInteractionTest {
                     onMicRelease = {},
                     onInterrupt = {},
                     onDismiss = {},
-                    onModeChange = {},
                     onClearError = {},
                 )
             }
@@ -144,31 +165,6 @@ class VoiceModeOverlayInteractionTest {
             .performTouchInput { click(Offset(1f, center.y)) }
 
         compose.runOnIdle { assertEquals(0, backgroundTaps) }
-    }
-
-    @Test
-    fun unavailableSystemOverlayActionIsNotOffered() {
-        compose.mainClock.autoAdvance = false
-        compose.setContent {
-            MaterialTheme {
-                VoiceModeOverlay(
-                    uiState = idleVoiceState(),
-                    onMicTap = {},
-                    onMicRelease = {},
-                    onInterrupt = {},
-                    onDismiss = {},
-                    onModeChange = {},
-                    onClearError = {},
-                    systemOverlayAvailable = false,
-                )
-            }
-        }
-
-        compose.onNodeWithContentDescription("Expand voice controls")
-            .performTouchInput { click() }
-        compose.mainClock.advanceTimeBy(500)
-
-        compose.onNodeWithText("Overlay").assertDoesNotExist()
     }
 
     @Test
@@ -198,7 +194,6 @@ class VoiceModeOverlayInteractionTest {
                     },
                     onInterrupt = {},
                     onDismiss = {},
-                    onModeChange = {},
                     onClearError = {},
                 )
             }
@@ -245,7 +240,6 @@ class VoiceModeOverlayInteractionTest {
                     onMicRelease = { stops += 1 },
                     onInterrupt = {},
                     onDismiss = {},
-                    onModeChange = {},
                     onClearError = {},
                 )
             }
@@ -298,7 +292,6 @@ class VoiceModeOverlayInteractionTest {
                     },
                     onInterrupt = {},
                     onDismiss = {},
-                    onModeChange = {},
                     onClearError = {},
                 )
             }

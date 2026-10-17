@@ -16,21 +16,6 @@ class ChatScrollSnapshotTest {
                 userDragging = false,
                 imeBottomPx = 0,
                 followImeResize = false,
-                voiceDockAnchorTransitionActive = false,
-            ),
-        )
-    }
-
-    @Test
-    fun `voice dock transition preserves its leading row anchor`() {
-        assertEquals(
-            false,
-            shouldFollowConversationViewportResize(
-                userScrolledAway = false,
-                userDragging = false,
-                imeBottomPx = 0,
-                followImeResize = false,
-                voiceDockAnchorTransitionActive = true,
             ),
         )
     }
@@ -44,7 +29,6 @@ class ChatScrollSnapshotTest {
                 userDragging = false,
                 imeBottomPx = 320,
                 followImeResize = false,
-                voiceDockAnchorTransitionActive = false,
             ),
         )
         assertEquals(
@@ -54,7 +38,6 @@ class ChatScrollSnapshotTest {
                 userDragging = false,
                 imeBottomPx = 320,
                 followImeResize = true,
-                voiceDockAnchorTransitionActive = false,
             ),
         )
     }
@@ -224,7 +207,6 @@ class ChatScrollSnapshotTest {
                 userDragging = false,
                 imeBottomPx = 0,
                 followImeResize = false,
-                voiceDockAnchorTransitionActive = false,
             ),
         )
     }

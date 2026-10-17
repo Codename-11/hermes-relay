@@ -67,7 +67,6 @@ import com.hermesandroid.relay.ui.components.ChatInputBar
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
 import com.hermesandroid.relay.ui.components.ContextMeterBar
-import com.hermesandroid.relay.ui.components.ConversationVoiceDock
 import com.hermesandroid.relay.ui.components.ConnectionStatusBadge
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.components.MorphingSphere
@@ -86,7 +85,6 @@ import com.hermesandroid.relay.ui.theme.AppThemes
 import com.hermesandroid.relay.ui.theme.AppearanceShape
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.R
-import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.ui.components.avatar.AgentAvatar
 import com.hermesandroid.relay.ui.components.avatar.AvatarRenderState
 import com.hermesandroid.relay.ui.components.avatar.AvatarSource
@@ -187,22 +185,6 @@ class StoreScreenshotTest {
         }
         compose.mainClock.advanceTimeByFrame()
         compose.onRoot().captureRoboImage("build/store-shots/03_voice.png")
-    }
-    @Test fun s11_voice_conversation() {
-        compose.mainClock.autoAdvance = false
-        // RelayRefresh is a process-wide compatibility façade. Seed it before
-        // the first composition so this animation-pinned scene cannot inherit
-        // the palette left by a light-theme gallery test that ran earlier.
-        RelayRefresh.activePalette = AppThemes.byId("hermes-relay").paletteFor(dark = true)
-        compose.setContent {
-            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
-                CompositionLocalProvider(LocalSphereSkin provides SphereRegistry.Adaptive) {
-                    VoiceConversationScene()
-                }
-            }
-        }
-        compose.mainClock.advanceTimeByFrame()
-        compose.onRoot().captureRoboImage("build/store-shots/11_voice_conversation.png")
     }
     // Real screen (1:1, auto-updates on layout changes). ConnectionViewModel
     // takes only an Application; Robolectric provides it. Renders every section
@@ -411,7 +393,6 @@ private fun BlendThread(thread: List<ChatMessage> = MockChat.blendThread) {
 private fun StoreCockpit(
     contextUsage: Float? = null,
     showInput: Boolean = true,
-    conversationVoiceState: VoiceUiState? = null,
     content: @Composable () -> Unit
 ) {
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -484,30 +465,6 @@ private fun StoreCockpit(
                 isDarkTheme = dark,
                 modelControl = ChatInputPickerControl(value = "gpt-5.6-sol", contentDescription = "Select model", options = emptyList()),
                 effortControl = ChatInputPickerControl(value = "High", contentDescription = "Select reasoning effort", options = emptyList()),
-                topContent = {
-                    conversationVoiceState?.let { state ->
-                        ConversationVoiceDock(
-                            uiState = state,
-                            engineMode = "hermes_voice_output",
-                            provider = "OpenAI",
-                            model = "gpt-4o-mini-tts",
-                            voice = "alloy",
-                            profileName = "Hermes",
-                            outputEnabled = true,
-                            onMicTap = {},
-                            onMicRelease = {},
-                            onInterrupt = {},
-                            onPauseAutoMode = {},
-                            onModeChange = {},
-                            onFocusRequest = {},
-                            onOverlayRequest = {},
-                            onOpenSettings = {},
-                            onExit = {},
-                        )
-                    }
-                },
-                topContentVisible = conversationVoiceState != null,
-                suppressVoiceTrailing = conversationVoiceState != null,
             )
         }
         RelayStatusStrip(leading = "⚡ Gateway  ·  LAN", trailing = "gpt-5.6-sol / profile: default")
@@ -557,30 +514,11 @@ private fun VoiceScene() = VoiceModeOverlay(
     onMicRelease = {},
     onInterrupt = {},
     onDismiss = {},
-    onModeChange = {},
     onClearError = {},
     transcriptMessages = MockChat.voiceThread,
     showThinking = true,
     voiceEngineMode = "hermes_voice_output",
-    voiceOutputProvider = "OpenAI",
-    voiceOutputModel = "gpt-4o-mini-tts",
-    voiceOutputVoice = "alloy",
-    voiceProfileName = "default",
-    voiceOutputEnabled = true,
-    voiceOutputFallbackEnabled = true,
-    presentationMode = VoicePresentationMode.Focus,
 )
-
-@Composable
-private fun VoiceConversationScene() = StoreCockpit(
-    contextUsage = 0.05f,
-    conversationVoiceState = marketingVoiceUiState,
-) {
-    // The voice dock occupies more vertical space than the standard composer.
-    // Use its shorter one-line lead-in so the frame starts near the context
-    // meter while the final user reply remains fully visible.
-    BlendThread(MockChat.voiceBlendThread)
-}
 
 /** The real sphere renderer pinned to one frame for pixel-identical marketing output. */
 private object FrozenMarketingSphere : AgentAvatar {
@@ -632,13 +570,6 @@ private fun ChatWithPetScene(pet: AgentAvatar) {
         )
     }
 }
-
-private val marketingVoiceUiState = VoiceUiState(
-    voiceMode = true,
-    state = VoiceState.Listening,
-    amplitude = 0.42f,
-    interactionMode = InteractionMode.Continuous,
-)
 
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)

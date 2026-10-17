@@ -5,7 +5,6 @@ import com.hermesandroid.relay.data.Connection
 import com.hermesandroid.relay.data.DashboardEndpoint
 import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.RelayEndpoint
-import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.ui.screens.shouldOwnVisibleGateway
 import com.hermesandroid.relay.viewmodel.ChatConnectState
@@ -58,13 +57,6 @@ class RelayAppStatusTest {
         assertFalse(floatingPetAllowedOnRoute(Screen.PetdexBrowse.route))
         assertTrue(floatingPetAllowedOnRoute(Screen.Chat.route))
         assertTrue(floatingPetAllowedOnRoute(Screen.AppearanceSettings.route))
-    }
-
-    @Test
-    fun `connection footer remains visible in conversation voice only`() {
-        assertTrue(shouldShowConnectionFooter(voiceMode = false, VoicePresentationMode.Focus))
-        assertTrue(shouldShowConnectionFooter(voiceMode = true, VoicePresentationMode.Conversation))
-        assertFalse(shouldShowConnectionFooter(voiceMode = true, VoicePresentationMode.Focus))
     }
 
     @Test

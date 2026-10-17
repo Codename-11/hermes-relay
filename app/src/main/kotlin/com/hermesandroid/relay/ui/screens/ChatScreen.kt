@@ -200,7 +200,6 @@ import com.hermesandroid.relay.data.SupervisedAttachmentCategory
 import com.hermesandroid.relay.data.SupervisedModePolicy
 import com.hermesandroid.relay.data.SupervisedSessionAction
 import com.hermesandroid.relay.data.allowsSessionAction
-import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.hermesProcessNotificationOrNull
 import com.hermesandroid.relay.ui.components.AgentInfoSheet
 import com.hermesandroid.relay.ui.components.BackgroundTaskCard
@@ -215,7 +214,6 @@ import com.hermesandroid.relay.ui.components.ChatFailurePanel
 import com.hermesandroid.relay.viewmodel.ChatFailureRoute
 import com.hermesandroid.relay.viewmodel.ChatFailureNotice
 import com.hermesandroid.relay.viewmodel.scopedChatFailure
-import com.hermesandroid.relay.ui.components.ConversationVoiceDock
 import com.hermesandroid.relay.ui.components.ChatInputPickerControl
 import com.hermesandroid.relay.ui.components.ChatInputPickerOption
 import com.hermesandroid.relay.ui.components.ChatInputTrailing
@@ -590,10 +588,8 @@ internal fun shouldFollowConversationViewportResize(
     userDragging: Boolean,
     imeBottomPx: Int,
     followImeResize: Boolean,
-    voiceDockAnchorTransitionActive: Boolean,
 ): Boolean = !userScrolledAway &&
     !userDragging &&
-    !voiceDockAnchorTransitionActive &&
     (followImeResize || imeBottomPx == 0)
 
 private fun LazyListState.isAtConversationBottom(slopPx: Int): Boolean {
@@ -762,8 +758,6 @@ fun ChatScreen(
     voiceViewModel: VoiceViewModel,
     voiceClient: RelayVoiceClient? = null,
     maxBubbleWidth: Dp = 300.dp,
-    voicePresentationMode: VoicePresentationMode = VoicePresentationMode.Focus,
-    onVoicePresentationModeChange: (VoicePresentationMode) -> Unit = {},
     // Deep-link nudge from Settings → Active Agent card: when `true`, the
     // AgentInfoSheet auto-opens on first composition and [onAgentSheetArgConsumed]
     // fires so the host can clear the nav arg (prevents re-open on tab
@@ -830,25 +824,11 @@ fun ChatScreen(
     val voiceUiState by voiceViewModel.uiState.collectAsState()
     val responseSpeechActive by voiceViewModel.responseSpeechActive.collectAsState()
     val isDemoMode by connectionViewModel.isDemoMode.collectAsState()
-    var voicePresentationOverride by remember { mutableStateOf<VoicePresentationMode?>(null) }
-    val effectiveVoicePresentationMode = voicePresentationOverride ?: voicePresentationMode
-    val conversationVoiceDockVisible =
-        voiceUiState.voiceMode &&
-            effectiveVoicePresentationMode == VoicePresentationMode.Conversation
-    val setVoicePresentationMode: (VoicePresentationMode) -> Unit = { mode ->
-        voicePresentationOverride = mode
-        onVoicePresentationModeChange(mode)
-    }
     val chatAlpha by animateFloatAsState(
-        targetValue = if (
-            voiceUiState.voiceMode && effectiveVoicePresentationMode == VoicePresentationMode.Focus
-        ) 0.4f else 1f,
+        targetValue = if (voiceUiState.voiceMode) 0.4f else 1f,
         animationSpec = tween(300),
         label = "chatAlpha",
     )
-    LaunchedEffect(voiceUiState.voiceMode) {
-        if (!voiceUiState.voiceMode) voicePresentationOverride = null
-    }
     // Route classified chat errors (media cache, streaming failures, …) to
     // the app-wide snackbar. Same pattern every VM-bound screen uses.
     val snackbarHost = LocalSnackbarHost.current
@@ -881,7 +861,6 @@ fun ChatScreen(
             micPermissionDenied = false
             if (pendingVoiceEnter && !isDemoMode) {
                 pendingVoiceEnter = false
-                setVoicePresentationMode(VoicePresentationMode.Conversation)
                 com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
                 voiceViewModel.enterVoiceMode()
             } else {
@@ -889,7 +868,6 @@ fun ChatScreen(
             }
         } else {
             pendingVoiceEnter = false
-            voicePresentationOverride = null
             micPermissionDenied = true
         }
     }
@@ -900,7 +878,6 @@ fun ChatScreen(
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         if (granted) {
             micPermissionDenied = false
-            setVoicePresentationMode(VoicePresentationMode.Conversation)
             com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
             voiceViewModel.enterVoiceMode()
         } else {
@@ -2001,35 +1978,6 @@ fun ChatScreen(
             }
         }
     }
-    var voiceDockAnchorGuardReady by remember { mutableStateOf(false) }
-    var voiceDockAnchorTransitionActive by remember { mutableStateOf(false) }
-    LaunchedEffect(conversationVoiceDockVisible) {
-        if (!voiceDockAnchorGuardReady) {
-            voiceDockAnchorGuardReady = true
-            return@LaunchedEffect
-        }
-        if (messages.isEmpty()) return@LaunchedEffect
-
-        // The dock expands inside the composer for 240 ms. Keep the transcript's
-        // leading visible row fixed while that changes the LazyColumn viewport;
-        // otherwise a conversation parked at the bottom is clamped forward on
-        // every animation frame and appears to scroll when voice mode opens.
-        val anchorIndex = listState.firstVisibleItemIndex
-        val anchorOffset = listState.firstVisibleItemScrollOffset
-        voiceDockAnchorTransitionActive = true
-        try {
-            var firstFrameNanos = 0L
-            var frameNanos: Long
-            do {
-                if (isUserDragging) return@LaunchedEffect
-                listState.requestScrollToItem(anchorIndex, anchorOffset)
-                frameNanos = withFrameNanos { it }
-                if (firstFrameNanos == 0L) firstFrameNanos = frameNanos
-            } while (frameNanos - firstFrameNanos < 300_000_000L)
-        } finally {
-            voiceDockAnchorTransitionActive = false
-        }
-    }
     // Reaching the bottom by any means (user, follow-pin, content shrank)
     // always re-arms auto-follow.
     LaunchedEffect(isAtBottom) {
@@ -2321,8 +2269,7 @@ fun ChatScreen(
                 tailSizePx = tailSize,
                 viewportHeightPx = listState.layoutInfo.viewportSize.height,
                 visibleBottomDistancePx = listState.visibleConversationBottomDistancePx(),
-                followTailGrowth = !voiceDockAnchorTransitionActive &&
-                    !isUserDragging &&
+                followTailGrowth = !isUserDragging &&
                     smoothAutoScroll &&
                     !userScrolledAway,
                 followViewportResize = shouldFollowConversationViewportResize(
@@ -2330,7 +2277,6 @@ fun ChatScreen(
                     userDragging = isUserDragging,
                     imeBottomPx = latestImeBottomPx,
                     followImeResize = followImeResize,
-                    voiceDockAnchorTransitionActive = voiceDockAnchorTransitionActive,
                 ),
             )
         }
@@ -4886,7 +4832,7 @@ fun ChatScreen(
                 charLimit = charLimit,
                 caption = turnStatus ?: inputCaption,
                 voiceReady = voiceReady,
-                showVoiceHint = !voiceHintSeen && !conversationVoiceDockVisible,
+                showVoiceHint = !voiceHintSeen,
                 onVoiceHintShown = { connectionViewModel.setVoiceHintSeen(true) },
                 isDarkTheme = isDarkTheme,
                 physicalEnterSends = physicalKeyboardEnterBehavior ==
@@ -4952,31 +4898,6 @@ fun ChatScreen(
                 },
                 effortControl = effortControl,
                 onEffortPickerClick = { showEffortSheet = true },
-                topContent = {
-                    ConversationVoiceDock(
-                        uiState = voiceUiState,
-                        engineMode = effectiveVoiceEngineMode,
-                        provider = activeVoiceProvider,
-                        model = activeVoiceModel,
-                        voice = activeVoiceName,
-                        profileName = AgentDisplay.profileDisplayName(effectiveProfile),
-                        outputEnabled = activeVoiceEnabled,
-                        onMicTap = { voiceViewModel.startListening() },
-                        onMicRelease = { voiceViewModel.stopListening() },
-                        onInterrupt = { voiceViewModel.interruptSpeaking() },
-                        onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
-                        onModeChange = { voiceViewModel.setInteractionMode(it) },
-                        onFocusRequest = {
-                            setVoicePresentationMode(VoicePresentationMode.Focus)
-                        },
-                        onOverlayRequest = showVoiceSystemOverlay,
-                        systemOverlayAvailable = voiceSystemOverlayAvailable,
-                        onOpenSettings = onNavigateToVoiceSettings,
-                        onExit = { voiceViewModel.exitVoiceMode() },
-                    )
-                },
-                topContentVisible = conversationVoiceDockVisible,
-                suppressVoiceTrailing = conversationVoiceDockVisible,
                 // Measure the visible composer Surface as a Desktop-style
                 // ledge. Registering the outer input column includes its 6dp
                 // visual margin and makes a correctly grounded pet look raised.
@@ -5133,7 +5054,6 @@ fun ChatScreen(
                 onInterrupt = { voiceViewModel.interruptSpeaking() },
                 onPauseAutoMode = { voiceViewModel.pauseContinuousMode() },
                 onDismiss = { voiceViewModel.exitVoiceMode() },
-                onModeChange = { voiceViewModel.setInteractionMode(it) },
                 onClearError = { voiceViewModel.clearError() },
                 onBackgroundRunCancel = { voiceViewModel.cancelBackgroundRun() },
                 onBackgroundRunTap = { voiceViewModel.respeakBackgroundResult() },
@@ -5148,20 +5068,6 @@ fun ChatScreen(
                 transcriptMessages = messages.takeLast(12),
                 showThinking = showThinking,
                 voiceEngineMode = effectiveVoiceEngineMode,
-                voiceOutputProvider = activeVoiceProvider,
-                voiceOutputModel = activeVoiceModel,
-                voiceOutputVoice = activeVoiceName,
-                voiceProfileName = AgentDisplay.profileDisplayName(effectiveProfile),
-                voiceOutputEnabled = activeVoiceEnabled,
-                voiceOutputFallbackEnabled = voiceOutputConfig?.fallback_enabled,
-                presentationMode = effectiveVoicePresentationMode,
-                onPresentationModeChange = setVoicePresentationMode,
-                onOverlayRequest = showVoiceSystemOverlay,
-                systemOverlayAvailable = voiceSystemOverlayAvailable,
-                // Gear button in the overlay's expanded controls. The overlay
-                // exits voice mode before invoking this, so navigation lands
-                // on Voice Settings with no overlay left on top.
-                onOpenSettings = onNavigateToVoiceSettings,
                 // === v0.4.1 JIT permission-denied chip ===
                 // Tap deep-links to Settings → Apps → Hermes-Relay →
                 // Permissions for the running package. Use BuildConfig
@@ -5733,7 +5639,7 @@ private fun compactQuoteExcerpt(content: String): String =
  * rather than throwing. [mimeOverride] lets clipboard paste supply the MIME
  * when the resolver can't (some providers don't resolve a type until read).
  */
-private suspend fun ingestAttachmentFromUri(
+internal suspend fun ingestAttachmentFromUri(
     context: android.content.Context,
     uri: Uri,
     maxAttachmentMb: Int,

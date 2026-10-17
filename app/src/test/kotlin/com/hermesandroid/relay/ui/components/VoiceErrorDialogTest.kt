@@ -18,7 +18,6 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeUp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
-import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceState
@@ -38,7 +37,7 @@ class VoiceErrorDialogTest {
     @get:Rule val compose = createComposeRule()
 
     @Test
-    fun conversationError_isModalAndDismissesWithoutStartingMicrophone() {
+    fun error_isModalAndDismissesWithoutStartingMicrophone() {
         val actions = mutableListOf<String>()
         renderError(onClear = { actions += "clear" }, onMicTap = { actions += "mic" })
 
@@ -46,7 +45,7 @@ class VoiceErrorDialogTest {
         compose.onNodeWithText("Voice error").assertIsDisplayed()
         compose.onNodeWithText("Dismiss").assertIsDisplayed()
         compose.onNodeWithText("Retry").assertIsDisplayed()
-        compose.onNode(isDialog()).captureRoboImage("build/ui-evidence/voice-error-conversation-dark.png")
+        compose.onNode(isDialog()).captureRoboImage("build/ui-evidence/voice-error-dark.png")
         compose.onNodeWithText("Dismiss").performClick()
         compose.mainClock.advanceTimeByFrame()
 
@@ -55,10 +54,9 @@ class VoiceErrorDialogTest {
     }
 
     @Test
-    fun focusError_retryClearsErrorBeforeStartingMicrophone() {
+    fun error_retryClearsErrorBeforeStartingMicrophone() {
         val actions = mutableListOf<String>()
         renderError(
-            mode = VoicePresentationMode.Focus,
             onClear = { actions += "clear" },
             onMicTap = { actions += "mic" },
         )
@@ -97,7 +95,6 @@ class VoiceErrorDialogTest {
 
     private fun renderError(
         error: String? = PROVIDER_ERROR,
-        mode: VoicePresentationMode = VoicePresentationMode.Conversation,
         theme: String = "dark",
         fontScale: Float = 1f,
         onClear: () -> Unit = {},
@@ -119,12 +116,10 @@ class VoiceErrorDialogTest {
                         Text("Chat remains behind the modal")
                         VoiceModeOverlay(
                             uiState = state,
-                            presentationMode = mode,
                             onMicTap = onMicTap,
                             onMicRelease = {},
                             onInterrupt = {},
                             onDismiss = {},
-                            onModeChange = {},
                             onClearError = {
                                 onClear()
                                 state = state.copy(error = null, state = VoiceState.Idle)

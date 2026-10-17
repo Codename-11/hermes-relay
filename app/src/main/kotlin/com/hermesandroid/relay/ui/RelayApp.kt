@@ -143,7 +143,6 @@ import com.hermesandroid.relay.data.EndpointCandidate
 import com.hermesandroid.relay.data.FeatureFlags
 import com.hermesandroid.relay.data.SupervisedModePolicy
 import com.hermesandroid.relay.data.SupervisedModeStore
-import com.hermesandroid.relay.data.VoicePresentationMode
 import com.hermesandroid.relay.data.capabilities
 import com.hermesandroid.relay.data.displayLabel
 import kotlinx.coroutines.Dispatchers
@@ -407,16 +406,6 @@ internal fun shouldShowStatusStrip(
     reconnecting: Boolean,
     demoMode: Boolean = false,
 ): Boolean = layoutStyle == LayoutStyle.CLASSIC || reconnecting || (offline && !demoMode)
-
-/**
- * Conversation voice remains part of chat, so its persistent connection
- * footer stays visible. Focus voice is the only presentation that suppresses
- * the surrounding chat chrome.
- */
-internal fun shouldShowConnectionFooter(
-    voiceMode: Boolean,
-    presentationMode: VoicePresentationMode,
-): Boolean = !voiceMode || presentationMode == VoicePresentationMode.Conversation
 
 /**
  * Full-screen setup owns the whole window. Keeping connection-dependent app
@@ -744,8 +733,6 @@ fun RelayApp() {
 
     val voiceClient: RelayVoiceClient = processRuntime.relayVoiceClient
     val voicePreferences = processRuntime.voicePreferences
-    val voiceSettings by processRuntime.voiceSettings.collectAsState()
-    val voicePresentationMode = VoicePresentationMode.fromStorage(voiceSettings.presentationMode)
 
     // Composition-scoped coroutine scope for firing connection-store suspend
     // writes off of UI click handlers (rename/revoke/remove) —
@@ -2155,7 +2142,7 @@ fun RelayApp() {
                     !showStartupSphere &&
                     (!supervisedPolicy.enabled ||
                         supervisedPolicy.visibility.resolved().showTechnicalRoute) &&
-                    shouldShowConnectionFooter(voiceUiState.voiceMode, voicePresentationMode)
+                    !voiceUiState.voiceMode
                 ) {
                     val footerRoute = resolveFooterRouteCandidate(
                         runtimeStatus = appChatRuntimeStatus,
@@ -2518,12 +2505,6 @@ fun RelayApp() {
                             voiceViewModel = voiceViewModel,
                             voiceClient = voiceClient,
                             maxBubbleWidth = maxBubbleWidth,
-                            voicePresentationMode = voicePresentationMode,
-                            onVoicePresentationModeChange = { mode ->
-                                connectionSwitchScope.launch {
-                                    voicePreferences.setPresentationMode(mode)
-                                }
-                            },
                             openAgentSheetOnEntry = openAgentSheetArg,
                             onAgentSheetArgConsumed = {
                                 backStackEntry.arguments?.putBoolean(
