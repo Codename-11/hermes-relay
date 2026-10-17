@@ -20,5 +20,12 @@ and Gateway contracts are reused; no bot voice endpoint is introduced.
 
 The call reuses the regular voice microphone controls, including hold and
 continuous modes. GPT-Live uses an explicit Start/Stop microphone toggle; Stop
-disables the WebRTC audio track while preserving its conversation. The spoken new-chat command uses canonical Bot Chat's `/new`
-compaction path and cannot create a separate session.
+disables the WebRTC audio track while preserving its conversation. End releases
+local audio resources immediately, without waiting for a server acknowledgement.
+The spoken new-chat command uses canonical Bot Chat's `/new` compaction path and
+cannot create a separate session.
+
+The process runtime registers the mounted bot voice owner. Wake listening stays
+paused while either main or bot voice is active. Android assistant activation
+ends the bot call before starting main Chat voice; disposing an outgoing bot
+cannot unregister a newer bot's voice owner.

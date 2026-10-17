@@ -1538,6 +1538,9 @@ fun RelayApp() {
         // bottom navigation bar so the voice overlay can own the entire screen
         // without the Chat/Terminal/Bridge/Settings tabs peeking through below.
         val voiceUiState by voiceViewModel.uiState.collectAsState()
+        val botVoiceSession by processRuntime.botVoiceSession.collectAsState()
+        val botVoiceUiState by (botVoiceSession?.uiState ?: voiceViewModel.uiState).collectAsState()
+        val voiceModeActive = voiceUiState.voiceMode || botVoiceUiState.voiceMode
         val wakeActivation by
             com.hermesandroid.relay.wake.WakeWordActivationCoordinator.pending.collectAsState()
         val appIsForeground by
@@ -1560,6 +1563,7 @@ fun RelayApp() {
             }
             if (!appIsForeground) return@LaunchedEffect
 
+            processRuntime.stopBotVoiceSession()
             com.hermesandroid.relay.wake.WakeWordForegroundService.prepareForVoice()
             if (activation.startNewSession) {
                 chatViewModel.createNewChat()
@@ -1575,9 +1579,9 @@ fun RelayApp() {
             com.hermesandroid.relay.wake.WakeWordActivationCoordinator.consume(activation.id)
         }
 
-        LaunchedEffect(voiceUiState.voiceMode) {
+        LaunchedEffect(voiceModeActive) {
             com.hermesandroid.relay.wake.WakeWordForegroundService.setVoiceSessionActive(
-                voiceUiState.voiceMode
+                voiceModeActive
             )
         }
         val postResumeQuiet by connectionViewModel.postResumeQuiet.collectAsState()
@@ -1824,7 +1828,7 @@ fun RelayApp() {
         val showStartupSphere =
             !suppressGlobalChrome &&
                 !startupGateReleased &&
-                !voiceUiState.voiceMode &&
+                !voiceModeActive &&
                 // Demo mode skips the startup connect-narration sphere entirely
                 // — there's no server to contact, so the canned chat shows
                 // immediately.
@@ -1946,17 +1950,17 @@ fun RelayApp() {
             timedScreenControlActive &&
             !suppressGlobalChrome &&
             !showStartupSphere &&
-            !voiceUiState.voiceMode
+            !voiceModeActive
         val showCandidateBanner = CandidateBuild.isCandidate &&
-            !voiceUiState.voiceMode &&
+            !voiceModeActive &&
             !showStartupSphere
         // Persistent Demo-mode strip — visible on every demo surface so the
         // user always knows the chat is sample data with no live server, and
         // can exit into the real Connect flow with one tap.
-        val showDemoBanner = isDemoMode && !voiceUiState.voiceMode
+        val showDemoBanner = isDemoMode && !voiceModeActive
         val hostResourcePressure by connectionViewModel.hostResourcePressure.collectAsState()
         val showHostResourcePressure = hostResourcePressure.needsAttention &&
-            !isDemoMode && !voiceUiState.voiceMode && !showStartupSphere
+            !isDemoMode && !voiceModeActive && !showStartupSphere
         val hostResourcePressureText = buildList {
             if (hostResourcePressure.lastBootSuspectedOom) {
                 add(stringResource(R.string.host_resource_recent_oom))
@@ -2001,7 +2005,7 @@ fun RelayApp() {
         // few seconds and then clear with no "Connected" toast).
         val connectionReconnecting =
             appChatRuntimeStatus is ChatRuntimeStatus.Connecting && !postResumeQuiet &&
-                !suppressGlobalChrome && !showStartupSphere && !voiceUiState.voiceMode
+                !suppressGlobalChrome && !showStartupSphere && !voiceModeActive
         // === END v0.4.1 polish ===
 
         // Multi-connection switcher has moved into the AgentInfoSheet's
@@ -2165,7 +2169,7 @@ fun RelayApp() {
                     !showStartupSphere &&
                     (!supervisedPolicy.enabled ||
                         supervisedPolicy.visibility.resolved().showTechnicalRoute) &&
-                    !voiceUiState.voiceMode
+                    !voiceModeActive
                 ) {
                     val footerRoute = resolveFooterRouteCandidate(
                         runtimeStatus = appChatRuntimeStatus,
@@ -2716,6 +2720,14 @@ fun RelayApp() {
                             dashboardClient = botDashboardClient,
                             chatViewModel = botChatViewModel,
                             connectionViewModel = connectionViewModel,
+                            onVoiceSessionChanged = { voice, mounted ->
+                                if (mounted) {
+                                    voiceViewModel.exitVoiceMode()
+                                    processRuntime.registerBotVoiceSession(voice)
+                                } else {
+                                    processRuntime.unregisterBotVoiceSession(voice)
+                                }
+                            },
                             onBack = { navController.popBackStack() },
                         )
                     }
@@ -3796,7 +3808,7 @@ fun RelayApp() {
             !petActivity.hidden &&
             !suppressGlobalChrome &&
             !showStartupSphere &&
-            !voiceUiState.voiceMode
+            !voiceModeActive
         if (showFloatingPet) {
             val roamingRoute = petSurfaceOwner
             FloatingPetCompanion(
@@ -3863,7 +3875,7 @@ fun RelayApp() {
             }
             AnimatedVisibility(
                 visible = availableUpdateStatus != null && !suppressGlobalChrome &&
-                    !showStartupSphere && !voiceUiState.voiceMode,
+                    !showStartupSphere && !voiceModeActive,
                 enter = slideInVertically(tween(220)) { -it } + fadeIn(tween(180)),
                 exit = slideOutVertically(tween(200)) { -it } + fadeOut(tween(160)),
             ) {

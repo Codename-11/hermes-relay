@@ -547,6 +547,7 @@ internal class HermesRuntimeBinder(
         currentCoroutineContext().ensureActive()
         check(isCurrent()) { "Assistant activation was superseded" }
         check(!voice.uiState.value.voiceMode) { "Hermes voice is already active" }
+        runtime.stopBotVoiceSession()
         // Re-apply scope before entry. The readiness collector already observed
         // the scope's resolved settings, so Realtime prewarm cannot use defaults.
         voice.setVoicePrefsConnection(connection.activeConnectionId.value)

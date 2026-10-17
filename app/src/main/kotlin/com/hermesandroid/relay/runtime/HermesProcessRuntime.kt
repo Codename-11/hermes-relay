@@ -90,6 +90,25 @@ class HermesProcessRuntime internal constructor(
         viewModelProvider[VoiceViewModel::class.java]
     }
 
+    private val _botVoiceSession = MutableStateFlow<VoiceViewModel?>(null)
+    val botVoiceSession: StateFlow<VoiceViewModel?> = _botVoiceSession.asStateFlow()
+
+    fun registerBotVoiceSession(voice: VoiceViewModel) {
+        if (_botVoiceSession.value === voice) return
+        _botVoiceSession.value?.exitVoiceMode()
+        _botVoiceSession.value = voice
+    }
+
+    fun unregisterBotVoiceSession(voice: VoiceViewModel) {
+        voice.exitVoiceMode()
+        // An outgoing destination may dispose after its replacement registers.
+        _botVoiceSession.compareAndSet(voice, null)
+    }
+
+    fun stopBotVoiceSession() {
+        _botVoiceSession.value?.exitVoiceMode()
+    }
+
     val initializationState: StateFlow<HermesRuntimeInitializationState> =
         _initializationState.asStateFlow()
 
