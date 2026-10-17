@@ -455,6 +455,10 @@ internal fun BotModeContent(
                                 nowMs = nowMs,
                             )
                         }
+                        HorizontalDivider(
+                            modifier = Modifier.padding(start = 88.dp, end = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                        )
                     }
                 }
             }
