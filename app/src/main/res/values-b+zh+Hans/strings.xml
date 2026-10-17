@@ -712,8 +712,8 @@
     <string name="settings_hermes_management_desc">仪表盘功能：技能、定时任务、MCP、配置文件、模型</string>
     <string name="settings_chat">聊天</string>
     <string name="settings_chat_desc">聊天行为、Gateway、Direct API、工具显示、消息长度</string>
-    <string name="settings_voice_mode">语音模式</string>
-    <string name="settings_voice_mode_desc">仪表盘语音、实时 Relay 选项、提供商</string>
+    <string name="settings_voice_mode">语音</string>
+    <string name="settings_voice_mode_desc">语音服务、朗读和聆听</string>
     <string name="settings_threads">话题</string>
     <string name="settings_threads_desc">由 Relay 发起的对话和主动推送（默认关闭）</string>
     <string name="settings_power_tools">Relay 工具</string>
@@ -4555,4 +4555,16 @@
     <string name="voice_streaming_stopped_basic_next">流式语音已停止。剩余内容将使用基础语音。请检查语音提供商设置。</string>
     <string name="stats_tts_queue_wait">音频队列等待时间</string>
     <string name="stats_tts_player_start">播放器启动延迟</string>
+    <string name="voice_tab_voice">语音</string>
+    <string name="voice_tab_listening">聆听</string>
+    <string name="voice_tab_advanced">高级</string>
+    <string name="voice_service_title">语音服务</string>
+    <string name="voice_service_description">选择与Hermes对话的方式。</string>
+    <string name="voice_service_chat">聊天语音</string>
+    <string name="voice_service_chat_desc">向Hermes说话并在聊天中听取回复。使用当前配置及其语音设置。</string>
+    <string name="voice_service_live">实时对话</string>
+    <string name="voice_service_live_desc">与实时语音服务提供商进行对话。Hermes负责工具和记忆。</string>
+    <string name="voice_service_relay_required">连接Relay后即可使用实时对话。聊天语音可通过标准Hermes控制台使用。</string>
+    <string name="voice_overlay_gpt_live_mode">Live · 自动检测发言结束</string>
+    <string name="voice_overlay_gpt_live_listening_action">GPT-Live会持续聆听；点按即可立即获取回复</string>
 </resources>

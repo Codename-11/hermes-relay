@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -48,6 +49,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenu
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -57,6 +59,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.PrimaryScrollableTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -95,6 +99,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.Role
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -103,6 +109,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.ui.theme.isCleanLayout
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BargeInPreferences
@@ -161,25 +168,10 @@ import kotlinx.coroutines.launch
 internal enum class VoiceSettingsSection { Output, Listening, Advanced }
 
 /**
- * Dedicated voice-mode settings screen. Reachable from Settings → Voice.
- *
- * Information architecture (WP-V3/WP-V4 overhaul):
- *   1. Profile summary          — active profile + resolved voice line
- *   2. Voice scope banner        — the SINGLE home for "Profile / Scope"; on a
- *                                  Standard (no-Relay) connection it honestly
- *                                  shows that upstream audio follows the active
- *                                  Hermes profile.
- *   3. Voice for this profile    — engine + STT/TTS route; these are persisted
- *                                  per-profile (WP-V2 scope-aware prefs).
- *   4. Text-to-Speech            — merged streaming output + basic-synthesize
- *                                  fallback + enhanced overrides (Advanced).
- *   5. Realtime Agent            — provider-native realtime config (Relay only).
- *   6. Global voice controls     — interaction mode + silence threshold.
- *   7. Barge-in                  — interrupt TTS by speaking.
- *   8. Speech-to-Text            — provider/model labels.
- *   9. Server voice config        — edit host tts/stt config (Standard path)
- *                                  plus the ElevenLabs voice picker.
- *  10. Test current engine       — voice-output / realtime sample playback.
+ * Voice settings follow the active connection and profile.
+ * Voice contains service choice, reply delivery, provider, model and preview.
+ * Listening contains interaction, assistant, wake word and interruption controls.
+ * Advanced contains transport routing, scope and server configuration.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -355,7 +347,7 @@ fun VoiceSettingsScreen(
     val snackbarHost = LocalSnackbarHost.current
     val scope = rememberCoroutineScope()
     var presetApplying by remember { mutableStateOf(false) }
-    var selectedSection by remember { mutableStateOf(VoiceSettingsSection.Output) }
+    var selectedSection by rememberSaveable { mutableStateOf(VoiceSettingsSection.Output) }
 
     val presetState = VoiceModePresetState(
         voiceSettings = voiceSettings,
@@ -517,162 +509,179 @@ fun VoiceSettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            VoiceProfileSummaryCard(
-                displayProfile = displayProfile,
-                currentEngine = currentEngine,
-                output = configState.voiceOutputConfig,
-                realtime = configState.realtimeConfig,
-                realtimeModel = voiceSettings.realtimeModel,
-                realtimeVoice = voiceSettings.realtimeVoice,
-                currentAudioRoute = currentAudioRoute,
-                relayVoiceReady = relayVoiceReady,
-                onClick = { selectedSection = VoiceSettingsSection.Advanced },
-            )
-
             VoiceSettingsTabs(
                 selected = selectedSection,
                 onSelect = { selectedSection = it },
             )
 
-            when (selectedSection) {
-                VoiceSettingsSection.Output -> {
-                    AnswerDeliveryCard(
-                        voiceSettings = voiceSettings,
-                        prefsRepo = prefsRepo,
+            androidx.compose.runtime.key(selectedSection) {
+                Column(
+                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    VoiceProfileSummaryCard(
+                        displayProfile = displayProfile,
+                        currentEngine = currentEngine,
+                        output = configState.voiceOutputConfig,
+                        realtime = configState.realtimeConfig,
+                        realtimeModel = voiceSettings.realtimeModel,
+                        realtimeVoice = voiceSettings.realtimeVoice,
+                        currentAudioRoute = currentAudioRoute,
+                        relayVoiceReady = relayVoiceReady,
+                        onClick = { selectedSection = VoiceSettingsSection.Output },
                     )
-                    if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
-                        val useRelayOutput = relayVoiceReady && currentAudioRoute != VoiceAudioRoute.Standard
-                        if (useRelayOutput) {
-                            if (configState.isLoading || !configState.hasLoaded) {
-                                VoiceOutputLoadingSkeleton()
-                            } else {
-                                StreamingVoiceOutputEditor(
-                                    voiceClient = voiceClient,
-                                    settingsViewModel = settingsViewModel,
-                                    configState = configState,
-                                    voiceViewModel = voiceViewModel,
-                                )
+
+                    when (selectedSection) {
+                        VoiceSettingsSection.Output -> {
+                            VoiceServicePicker(currentEngine, relayVoiceReady) { engine ->
+                                scope.launch {
+                                    prefsRepo.setEngineMode(engine)
+                                    if (engine == VoiceEngineMode.HermesVoiceOutput) {
+                                        val route = coerceAudioRoute(engine, currentAudioRoute, relayVoiceReady)
+                                        if (route != currentAudioRoute) prefsRepo.setAudioRoute(route)
+                                    }
+                                }
                             }
-                        } else {
-                            StandardVoiceOutputOverview(
-                                client = dashboardConfigClient,
-                                availability = standardVoiceAvailability,
-                                onOpenManage = onOpenManage,
-                                voiceViewModel = voiceViewModel,
+                            AnswerDeliveryCard(
+                                voiceSettings = voiceSettings,
+                                prefsRepo = prefsRepo,
                             )
+                            if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
+                                val useRelayOutput = relayVoiceReady && currentAudioRoute != VoiceAudioRoute.Standard
+                                if (useRelayOutput) {
+                                    if (configState.isLoading || !configState.hasLoaded) {
+                                        VoiceOutputLoadingSkeleton()
+                                    } else {
+                                        StreamingVoiceOutputEditor(
+                                            voiceClient = voiceClient,
+                                            settingsViewModel = settingsViewModel,
+                                            configState = configState,
+                                            voiceViewModel = voiceViewModel,
+                                        )
+                                    }
+                                } else {
+                                    StandardVoiceOutputOverview(
+                                        client = dashboardConfigClient,
+                                        availability = standardVoiceAvailability,
+                                        onOpenManage = onOpenManage,
+                                        voiceViewModel = voiceViewModel,
+                                    )
+                                }
+                            } else if (relayVoiceReady) {
+                                if (configState.isLoading || !configState.hasLoaded) {
+                                    VoiceOutputLoadingSkeleton()
+                                } else {
+                                    RealtimeAgentCard(
+                                        voiceClient = voiceClient,
+                                        settingsViewModel = settingsViewModel,
+                                        configState = configState,
+                                        voiceSettings = voiceSettings,
+                                        prefsRepo = prefsRepo,
+                                        voiceViewModel = voiceViewModel,
+                                    )
+                                }
+                            }
                         }
-                    } else if (relayVoiceReady) {
-                        if (configState.isLoading || !configState.hasLoaded) {
-                            VoiceOutputLoadingSkeleton()
-                        } else {
-                            RealtimeAgentCard(
-                                voiceClient = voiceClient,
-                                settingsViewModel = settingsViewModel,
-                                configState = configState,
+
+                        VoiceSettingsSection.Listening -> {
+                            com.hermesandroid.relay.voice.VoiceOverlaySettingsCard()
+                            GlobalVoiceControlsCard(
                                 voiceSettings = voiceSettings,
                                 prefsRepo = prefsRepo,
                                 voiceViewModel = voiceViewModel,
                             )
+                            val wakeWordTestState by
+                                settingsViewModel.wakeWordTestState.collectAsState()
+                            DigitalAssistantCard(
+                                preferences = wakeWordPrefs,
+                                roleStatus = assistantRoleStatus,
+                                runtimeState = assistantWakeRuntimeState,
+                                installing = wakeWordInstallState.installing,
+                                error = wakeWordPermissionError ?: wakeWordInstallState.error,
+                                onChooseAssistant = requestAssistantRole,
+                                onManageAssistant = {
+                                    AssistantRole.managementIntent(context)?.let(assistantRoleLauncher::launch)
+                                },
+                                onEnableWake = requestAssistantWakeEnable,
+                                onDisableWake = {
+                                    settingsViewModel.setAssistantWakeEnabled(false)
+                                },
+                            )
+                            WakeWordCard(
+                                preferences = wakeWordPrefs,
+                                runtimeState = wakeWordRuntimeState,
+                                testState = wakeWordTestState,
+                                installing = wakeWordInstallState.installing,
+                                error = wakeWordPermissionError ?: wakeWordInstallState.error,
+                                onEnable = requestWakeWordEnable,
+                                onDisable = { settingsViewModel.setWakeWordEnabled(false) },
+                                onSensitivityChange = settingsViewModel::setWakeWordSensitivity,
+                                onConfirmationFramesChange =
+                                    settingsViewModel::setWakeWordConfirmationFrames,
+                                onStartNewSessionChange =
+                                    settingsViewModel::setWakeWordStartNewSession,
+                                onTest = settingsViewModel::testWakeWord,
+                            )
+                            BargeInCard(
+                                bargeInPrefs = bargeInPrefs,
+                                aecAvailable = aecAvailable,
+                                settingsViewModel = settingsViewModel,
+                            )
+                            SpeechToTextCard(
+                                relayVoiceReady = relayVoiceReady,
+                                configState = configState,
+                            )
+                            if (currentEngine == VoiceEngineMode.RealtimeAgent && relayVoiceReady) {
+                                VoiceModePresetCard(
+                                    activePreset = activePreset,
+                                    enabled = presetsReady,
+                                    applying = presetApplying,
+                                    onSelect = ::applyPreset,
+                                )
+                            }
                         }
-                    }
-                }
 
-                VoiceSettingsSection.Listening -> {
-                    com.hermesandroid.relay.voice.VoiceOverlaySettingsCard()
-                    GlobalVoiceControlsCard(
-                        voiceSettings = voiceSettings,
-                        prefsRepo = prefsRepo,
-                        voiceViewModel = voiceViewModel,
-                    )
-                    val wakeWordTestState by
-                        settingsViewModel.wakeWordTestState.collectAsState()
-                    DigitalAssistantCard(
-                        preferences = wakeWordPrefs,
-                        roleStatus = assistantRoleStatus,
-                        runtimeState = assistantWakeRuntimeState,
-                        installing = wakeWordInstallState.installing,
-                        error = wakeWordPermissionError ?: wakeWordInstallState.error,
-                        onChooseAssistant = requestAssistantRole,
-                        onManageAssistant = {
-                            AssistantRole.managementIntent(context)?.let(assistantRoleLauncher::launch)
-                        },
-                        onEnableWake = requestAssistantWakeEnable,
-                        onDisableWake = {
-                            settingsViewModel.setAssistantWakeEnabled(false)
-                        },
-                    )
-                    WakeWordCard(
-                        preferences = wakeWordPrefs,
-                        runtimeState = wakeWordRuntimeState,
-                        testState = wakeWordTestState,
-                        installing = wakeWordInstallState.installing,
-                        error = wakeWordPermissionError ?: wakeWordInstallState.error,
-                        onEnable = requestWakeWordEnable,
-                        onDisable = { settingsViewModel.setWakeWordEnabled(false) },
-                        onSensitivityChange = settingsViewModel::setWakeWordSensitivity,
-                        onConfirmationFramesChange =
-                            settingsViewModel::setWakeWordConfirmationFrames,
-                        onStartNewSessionChange =
-                            settingsViewModel::setWakeWordStartNewSession,
-                        onTest = settingsViewModel::testWakeWord,
-                    )
-                    BargeInCard(
-                        bargeInPrefs = bargeInPrefs,
-                        aecAvailable = aecAvailable,
-                        settingsViewModel = settingsViewModel,
-                    )
-                    SpeechToTextCard(
-                        relayVoiceReady = relayVoiceReady,
-                        configState = configState,
-                    )
-                    if (currentEngine == VoiceEngineMode.RealtimeAgent && relayVoiceReady) {
-                        VoiceModePresetCard(
-                            activePreset = activePreset,
-                            enabled = presetsReady,
-                            applying = presetApplying,
-                            onSelect = ::applyPreset,
-                        )
-                    }
-                }
-
-                VoiceSettingsSection.Advanced -> {
-                    VoiceForThisProfileCard(
-                        currentEngine = currentEngine,
-                        currentAudioRoute = currentAudioRoute,
-                        relayVoiceReady = relayVoiceReady,
-                        prefsRepo = prefsRepo,
-                        standardVoiceAvailability = standardVoiceAvailability,
-                        standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
-                        onOpenManage = onOpenManage,
-                    )
-                    VoiceScopeBanner(
-                        relayVoiceReady = relayVoiceReady,
-                        currentEngine = currentEngine,
-                        configState = configState,
-                        displayProfile = displayProfile,
-                    )
-                    if (currentEngine == VoiceEngineMode.RealtimeAgent && relayVoiceReady) {
-                        RealtimeBehaviorSettingsCard(
-                            voiceClient = voiceClient,
-                            settingsViewModel = settingsViewModel,
-                            configState = configState,
-                            voiceSettings = voiceSettings,
-                            prefsRepo = prefsRepo,
-                        )
-                    }
-                    if (dashboardConfigClient != null) {
-                        StandardVoiceServerConfigCard(
-                            client = dashboardConfigClient,
-                            profileName = AgentDisplay.profileRequestName(selectedProfile?.name),
-                            onOpenManage = onOpenManage,
-                            onMessage = { message ->
-                                scope.launch { snackbarHost.showSnackbar(message) }
-                            },
-                        )
+                        VoiceSettingsSection.Advanced -> {
+                            if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
+                                VoiceRoutingCard(
+                                    currentEngine = currentEngine,
+                                    currentAudioRoute = currentAudioRoute,
+                                    relayVoiceReady = relayVoiceReady,
+                                    prefsRepo = prefsRepo,
+                                    standardVoiceAvailability = standardVoiceAvailability,
+                                    standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
+                                    onOpenManage = onOpenManage,
+                                )
+                            }
+                            VoiceScopeBanner(
+                                relayVoiceReady = relayVoiceReady,
+                                currentEngine = currentEngine,
+                                configState = configState,
+                                displayProfile = displayProfile,
+                            )
+                            if (currentEngine == VoiceEngineMode.RealtimeAgent && relayVoiceReady) {
+                                RealtimeBehaviorSettingsCard(
+                                    voiceClient = voiceClient,
+                                    settingsViewModel = settingsViewModel,
+                                    configState = configState,
+                                    voiceSettings = voiceSettings,
+                                    prefsRepo = prefsRepo,
+                                )
+                            }
+                            if (dashboardConfigClient != null) {
+                                StandardVoiceServerConfigCard(
+                                    client = dashboardConfigClient,
+                                    profileName = AgentDisplay.profileRequestName(selectedProfile?.name),
+                                    onOpenManage = onOpenManage,
+                                    onMessage = { message ->
+                                        scope.launch { snackbarHost.showSnackbar(message) }
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -685,40 +694,23 @@ internal fun VoiceSettingsTabs(
     selected: VoiceSettingsSection,
     onSelect: (VoiceSettingsSection) -> Unit,
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = appearanceRoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    PrimaryScrollableTabRow(
+        selectedTabIndex = selected.ordinal,
+        edgePadding = 0.dp,
+        containerColor = MaterialTheme.colorScheme.surface,
     ) {
-        Row(modifier = Modifier.padding(3.dp)) {
-            VoiceSettingsSection.entries.forEach { section ->
-                val active = selected == section
-                Surface(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(48.dp)
-                        .clickable { onSelect(section) },
-                    shape = appearanceRoundedCornerShape(13.dp),
-                    color = if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else androidx.compose.ui.graphics.Color.Transparent,
-                    contentColor = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        Text(
-                            when (section) {
-                                VoiceSettingsSection.Output -> "Output"
-                                VoiceSettingsSection.Listening -> "Listening"
-                                VoiceSettingsSection.Advanced -> "Advanced"
-                            },
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                        )
-                    }
-                }
-            }
+        VoiceSettingsSection.entries.forEach { section ->
+            Tab(
+                selected = selected == section,
+                onClick = { onSelect(section) },
+                text = {
+                    Text(stringResource(when (section) {
+                        VoiceSettingsSection.Output -> R.string.voice_tab_voice
+                        VoiceSettingsSection.Listening -> R.string.voice_tab_listening
+                        VoiceSettingsSection.Advanced -> R.string.voice_tab_advanced
+                    }))
+                },
+            )
         }
     }
 }
@@ -947,7 +939,118 @@ private fun VoiceModePresetCard(
 // ---------------------------------------------------------------------------
 
 @Composable
-private fun VoiceForThisProfileCard(
+internal fun VoiceServicePicker(
+    currentEngine: VoiceEngineMode,
+    relayVoiceReady: Boolean,
+    onSelect: (VoiceEngineMode) -> Unit,
+) {
+    SectionCard(title = stringResource(R.string.voice_service_title)) {
+        Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = stringResource(R.string.voice_service_description),
+                style = MaterialTheme.typography.labelLarge,
+            )
+            listOf(
+                VoiceEngineMode.HermesVoiceOutput to Triple(
+                    stringResource(R.string.voice_service_chat),
+                    stringResource(R.string.voice_service_chat_desc),
+                    false,
+                ),
+                VoiceEngineMode.RealtimeAgent to Triple(
+                    stringResource(R.string.voice_service_live),
+                    stringResource(R.string.voice_service_live_desc),
+                    true,
+                ),
+            ).forEach { (engine, copy) ->
+                val (label, detail, experimental) = copy
+                // RealtimeAgent requires a paired Relay; HermesVoiceOutput is always
+                // selectable. The existing warning row below explains the disabled
+                // RealtimeAgent radio.
+                val engineEnabled = engine == VoiceEngineMode.HermesVoiceOutput || relayVoiceReady
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .selectable(
+                            selected = currentEngine == engine,
+                            enabled = engineEnabled,
+                            role = Role.RadioButton,
+                            onClick = { onSelect(engine) },
+                        )
+                        .background(
+                            if (currentEngine == engine) MaterialTheme.colorScheme.secondaryContainer
+                            else MaterialTheme.colorScheme.surfaceContainerLow,
+                            appearanceRoundedCornerShape(12.dp),
+                        )
+                        .heightIn(min = 64.dp)
+                        .padding(horizontal = 8.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = currentEngine == engine,
+                        onClick = null,
+                        enabled = engineEnabled,
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                label,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = if (engineEnabled) {
+                                    MaterialTheme.colorScheme.onSurface
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                },
+                            )
+                        }
+                        Text(
+                            text = detail,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (experimental) {
+                            Text(stringResource(R.string.voice_settings_experimental), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+            if (currentEngine == VoiceEngineMode.RealtimeAgent && !relayVoiceReady) {
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.size(8.dp))
+                    Text(
+                        text = stringResource(R.string.voice_settings_realtime_no_relay),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
+        }
+        if (!relayVoiceReady) {
+            Text(
+                stringResource(R.string.voice_service_relay_required),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun VoiceRoutingCard(
     currentEngine: VoiceEngineMode,
     currentAudioRoute: VoiceAudioRoute,
     relayVoiceReady: Boolean,
@@ -958,113 +1061,8 @@ private fun VoiceForThisProfileCard(
 ) {
     val scope = rememberCoroutineScope()
 
-    SectionCard(title = stringResource(R.string.voice_settings_for_profile_title)) {
-        Text(
-            text = stringResource(R.string.voice_settings_engine_label),
-            style = MaterialTheme.typography.labelLarge,
-        )
-        listOf(
-            VoiceEngineMode.HermesVoiceOutput to Triple(
-                stringResource(R.string.voice_settings_engine_hermes),
-                stringResource(R.string.voice_settings_engine_hermes_desc),
-                false,
-            ),
-            VoiceEngineMode.RealtimeAgent to Triple(
-                stringResource(R.string.voice_settings_engine_realtime),
-                stringResource(R.string.voice_settings_engine_realtime_desc),
-                true,
-            ),
-        ).forEach { (engine, copy) ->
-            val (label, detail, experimental) = copy
-            // RealtimeAgent requires a paired Relay; HermesVoiceOutput is always
-            // selectable. The existing warning row below explains the disabled
-            // RealtimeAgent radio.
-            val engineEnabled = engine == VoiceEngineMode.HermesVoiceOutput || relayVoiceReady
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .selectable(
-                        selected = currentEngine == engine,
-                        enabled = engineEnabled,
-                        onClick = {
-                            scope.launch {
-                                prefsRepo.setEngineMode(engine)
-                                // Switching to HermesVoiceOutput may leave a now
-                                // invalid persisted route (e.g. Relay while
-                                // unpaired) — coerce it to a reachable one.
-                                if (engine == VoiceEngineMode.HermesVoiceOutput) {
-                                    val coerced = coerceAudioRoute(
-                                        engine = engine,
-                                        route = currentAudioRoute,
-                                        relayVoiceReady = relayVoiceReady,
-                                    )
-                                    if (coerced != currentAudioRoute) {
-                                        prefsRepo.setAudioRoute(coerced)
-                                    }
-                                }
-                            }
-                        },
-                    )
-                    .padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(
-                    selected = currentEngine == engine,
-                    onClick = null,
-                    enabled = engineEnabled,
-                )
-                Spacer(Modifier.size(8.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            label,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (engineEnabled) {
-                                MaterialTheme.colorScheme.onSurface
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                            },
-                        )
-                        if (experimental) ExperimentalBadge(stringResource(R.string.voice_settings_experimental))
-                    }
-                    Text(
-                        text = detail,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        if (currentEngine == VoiceEngineMode.RealtimeAgent && !relayVoiceReady) {
-            Spacer(Modifier.height(4.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Top,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Warning,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(Modifier.size(8.dp))
-                Text(
-                    text = stringResource(R.string.voice_settings_realtime_no_relay),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
-            }
-        }
-
+    SectionCard(title = stringResource(R.string.voice_settings_route_label)) {
         if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-            Text(
-                text = stringResource(R.string.voice_settings_route_label),
-                style = MaterialTheme.typography.labelLarge,
-            )
             val standardStatus = when (standardVoiceAvailability) {
                 StandardVoiceAvailability.Ready -> stringResource(R.string.voice_settings_status_ready)
                 StandardVoiceAvailability.SignInRequired -> stringResource(R.string.voice_settings_status_sign_in_required)
@@ -1833,7 +1831,7 @@ internal fun VoiceProviderGroupCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = appearanceRoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        border = if (isCleanLayout) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
@@ -1982,7 +1980,7 @@ internal fun ModelAndVoiceGroupCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = appearanceRoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        border = if (isCleanLayout) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
@@ -2067,7 +2065,7 @@ internal fun ModelAndVoiceGroupCard(
                                 if (choice.recommended) {
                                     Surface(
                                         shape = RoundedCornerShape(999.dp),
-                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                                        color = MaterialTheme.colorScheme.primaryContainer,
                                         contentColor = MaterialTheme.colorScheme.primary,
                                     ) {
                                         Text(stringResource(R.string.voice_settings_recommended), style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
@@ -2250,7 +2248,7 @@ internal fun LanguageQualityCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = appearanceRoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        border = if (isCleanLayout) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
@@ -2325,7 +2323,7 @@ private fun LanguageQualitySummaryCard(summary: String) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = appearanceRoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        border = if (isCleanLayout) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Row(
@@ -2351,7 +2349,7 @@ private fun StaticProviderCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = appearanceRoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        border = if (isCleanLayout) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -2402,7 +2400,7 @@ private fun StaticModelVoiceCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = appearanceRoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        border = if (isCleanLayout) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
     ) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -2488,7 +2486,7 @@ private fun VoiceOutputLoadingSkeleton() {
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = appearanceRoundedCornerShape(18.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            border = if (isCleanLayout) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
             Column(
@@ -2513,7 +2511,7 @@ private fun VoiceOutputLoadingSkeleton() {
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = appearanceRoundedCornerShape(18.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            border = if (isCleanLayout) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
         ) {
             Column(
@@ -5034,7 +5032,7 @@ private fun VoiceProfileSummaryCard(
             .fillMaxWidth()
             .clickable(onClick = onClick),
         shape = appearanceRoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        border = if (isCleanLayout) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),
@@ -5058,11 +5056,10 @@ private fun VoiceProfileSummaryCard(
             }
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
-                    text = if (currentEngine == VoiceEngineMode.RealtimeAgent) {
-                        "Real-time Voice Agent"
-                    } else {
-                        "Hermes Chat + Voice Output"
-                    },
+                    text = stringResource(
+                        if (currentEngine == VoiceEngineMode.RealtimeAgent) R.string.voice_service_live
+                        else R.string.voice_service_chat,
+                    ),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -5081,8 +5078,8 @@ private fun VoiceProfileSummaryCard(
             }
             Surface(
                 shape = RoundedCornerShape(999.dp),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                contentColor = MaterialTheme.colorScheme.primary,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
             ) {
                 Text(
                     text = if (profileScoped) stringResource(R.string.voice_settings_label_profile) else stringResource(R.string.voice_settings_label_host),
@@ -5364,7 +5361,7 @@ private fun SectionCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = appearanceRoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        border = if (isCleanLayout) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
         ),

@@ -970,6 +970,10 @@ Implementation-batch follow-ups (from the per-branch reviews):
   added to the focused `--tests` slice; the Robolectric/MockWebServer recovery
   tests and the compact-onboarding Roborazzi test stay local-only (same
   precedent as `StoreScreenshotTest`) until the broad-suite hang (#32) is fixed.
+  `s08_appearance` also needs to expand More appearance options before scrolling
+  to pet controls. Native pet captures remain uncertified: local API 37 JNI
+  buffer lookups abort the worker, and an API 35 retry encountered malformed
+  Gradle test-result metadata. Keep this separate from voice/composer acceptance.
 - **Skills docs still cite editable-only fixes.** `skills/devops/hermes-relay-pair/SKILL.md`
   and `skills/android/SKILL.md` document `python -m plugin.pair` + `pip install -e`
   as the ModuleNotFoundError fix — add the native-layout equivalent when the

@@ -114,6 +114,7 @@ import com.hermesandroid.relay.ui.components.RelaySkeletonLine
 import com.hermesandroid.relay.ui.components.pet.LocalPetCompanionCoordinator
 import com.hermesandroid.relay.ui.components.pet.petObstacleSurface
 import com.hermesandroid.relay.ui.components.pet.petPerchSurface
+import com.hermesandroid.relay.ui.theme.isCleanLayout
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
 import com.hermesandroid.relay.ui.theme.gradientBorder
@@ -499,6 +500,14 @@ fun SettingsScreen(
                 modifier = Modifier.settingsPetSurface("settings-card:active-agent"),
             )
 
+            SettingsCategoryRow(
+                icon = Icons.Filled.GraphicEq,
+                title = stringResource(R.string.settings_voice_mode),
+                subtitle = stringResource(R.string.settings_voice_mode_desc),
+                onClick = onNavigateToVoiceSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
             // ── Inspect Agent ──────────────────────────────────────────
             // Opens the full-screen ProfileInspectorScreen for the
             // currently-active profile. When no explicit override is
@@ -589,6 +598,8 @@ fun SettingsScreen(
 
             SettingsSectionHeader(stringResource(R.string.settings_hermes))
 
+
+
             SettingsCategoryRow(
                 icon = Icons.Filled.Link,
                 title = stringResource(R.string.settings_hermes_management),
@@ -634,14 +645,6 @@ fun SettingsScreen(
                 title = stringResource(R.string.settings_media),
                 subtitle = stringResource(R.string.settings_media_desc),
                 onClick = onNavigateToMediaSettings,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.GraphicEq,
-                title = stringResource(R.string.settings_voice_mode),
-                subtitle = stringResource(R.string.settings_voice_mode_desc),
-                onClick = onNavigateToVoiceSettings,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -1577,10 +1580,10 @@ internal fun SettingsCategoryRow(
             .fillMaxWidth()
             .gradientBorder(
                 shape = appearanceRoundedCornerShape(12.dp),
-                isDarkTheme = isDarkTheme
+                isDarkTheme = isDarkTheme && !isCleanLayout
             ),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
+            containerColor = if (isCleanLayout) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
         Row(
@@ -1604,14 +1607,14 @@ internal fun SettingsCategoryRow(
                 Text(
                     text = title,
                     style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
+                    maxLines = if (isCleanLayout) Int.MAX_VALUE else 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = if (isCleanLayout) Int.MAX_VALUE else 2,
                     overflow = TextOverflow.Ellipsis,
                 )
                 if (badge != null) {

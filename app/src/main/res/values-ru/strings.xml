@@ -691,8 +691,8 @@
     <string name="settings_hermes_management_desc">Функции панели управления: навыки, cron, MCP, профили, модели</string>
     <string name="settings_chat">Чат</string>
     <string name="settings_chat_desc">Поведение чата, Gateway, Direct API, отображение инструментов, длина сообщения</string>
-    <string name="settings_voice_mode">Режим голоса</string>
-    <string name="settings_voice_mode_desc">Голос панели управления, опции Relay в реальном времени, поставщики</string>
+    <string name="settings_voice_mode">Голос</string>
+    <string name="settings_voice_mode_desc">Голосовой сервис, речь и прослушивание</string>
     <string name="settings_threads">Потоки</string>
     <string name="settings_threads_desc">Разговоры, начатые Relay, и проактивная доставка (по умолчанию выключено)</string>
     <string name="settings_power_tools">Инструменты Relay</string>
@@ -4370,4 +4370,16 @@
     <string name="voice_streaming_stopped_basic_next">Потоковая озвучка остановилась. Оставшийся текст будет озвучен в базовом режиме. Проверьте настройки голосового провайдера.</string>
     <string name="stats_tts_queue_wait">Ожидание в очереди аудио</string>
     <string name="stats_tts_player_start">Задержка запуска плеера</string>
+    <string name="voice_tab_voice">Голос</string>
+    <string name="voice_tab_listening">Прослушивание</string>
+    <string name="voice_tab_advanced">Дополнительно</string>
+    <string name="voice_service_title">Голосовой сервис</string>
+    <string name="voice_service_description">Выберите способ общения с Hermes.</string>
+    <string name="voice_service_chat">Озвучивание чата</string>
+    <string name="voice_service_chat_desc">Говорите с Hermes и слушайте ответы в чате. Используется текущий профиль и его настройки голоса.</string>
+    <string name="voice_service_live">Живой разговор</string>
+    <string name="voice_service_live_desc">Общайтесь с голосовым провайдером в реальном времени. Hermes отвечает за инструменты и память.</string>
+    <string name="voice_service_relay_required">Для живого разговора подключите Relay. Озвучивание чата работает со стандартной панелью Hermes.</string>
+    <string name="voice_overlay_gpt_live_mode">Live · автоматическое определение очередности реплик</string>
+    <string name="voice_overlay_gpt_live_listening_action">GPT-Live слушает непрерывно; нажмите, чтобы получить ответ сейчас</string>
 </resources>

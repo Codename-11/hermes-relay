@@ -4,6 +4,7 @@ import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
 import android.os.Build
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
@@ -67,6 +68,7 @@ fun HermesRelayTheme(
         appTheme.paletteFor(useDarkTheme).withAccent(accentHex)
     }
     val colorScheme = palette.toColorScheme()
+    val motionScheme = if (layoutStyle == LayoutStyle.CLEAN) MotionScheme.expressive() else MotionScheme.standard()
     val shapeScale = remember(shapeId) { appearanceShapeScale(shapeId) }
     val shapes = remember(shapeScale) { shapeScale.asMaterialShapes() }
 
@@ -120,6 +122,7 @@ fun HermesRelayTheme(
                 colorScheme = colorScheme,
                 typography = typography,
                 shapes = shapes,
+                motionScheme = motionScheme,
                 content = content
             )
         } else {
@@ -133,6 +136,7 @@ fun HermesRelayTheme(
                     colorScheme = colorScheme,
                     typography = typography,
                     shapes = shapes,
+                    motionScheme = motionScheme,
                     content = content
                 )
             }

@@ -712,8 +712,8 @@
     <string name="settings_hermes_management_desc">ダッシュボードの機能: スキル、cron、MCP、プロファイル、モデル</string>
     <string name="settings_chat">チャット</string>
     <string name="settings_chat_desc">チャット動作、Gateway、Direct API、ツール表示、メッセージ長</string>
-    <string name="settings_voice_mode">ボイスモード</string>
-    <string name="settings_voice_mode_desc">ダッシュボード音声、リアルタイムRelayオプション、プロバイダー</string>
+    <string name="settings_voice_mode">音声</string>
+    <string name="settings_voice_mode_desc">音声サービス、発話、リスニング</string>
     <string name="settings_threads">Threads</string>
     <string name="settings_threads_desc">Relay が開始する会話とプロアクティブ配信（デフォルトではオフ）</string>
     <string name="settings_power_tools">Relay ツール</string>
@@ -4626,4 +4626,16 @@
     <string name="voice_streaming_stopped_basic_next">ストリーミング音声が停止しました。残りは基本音声を使用します。音声プロバイダーの設定を確認してください。</string>
     <string name="stats_tts_queue_wait">音声キューの待機時間</string>
     <string name="stats_tts_player_start">プレーヤーの開始遅延</string>
+    <string name="voice_tab_voice">音声</string>
+    <string name="voice_tab_listening">リスニング</string>
+    <string name="voice_tab_advanced">詳細設定</string>
+    <string name="voice_service_title">音声サービス</string>
+    <string name="voice_service_description">Hermesとの会話方法を選択します。</string>
+    <string name="voice_service_chat">チャット音声</string>
+    <string name="voice_service_chat_desc">Hermesに話しかけ、チャットで返答を聞けます。現在のプロファイルとその音声設定を使用します。</string>
+    <string name="voice_service_live">リアルタイム会話</string>
+    <string name="voice_service_live_desc">リアルタイム音声プロバイダーと会話します。ツールとメモリはHermesが処理します。</string>
+    <string name="voice_service_relay_required">リアルタイム会話にはRelayへの接続が必要です。チャット音声は標準のHermesダッシュボードで利用できます。</string>
+    <string name="voice_overlay_gpt_live_mode">Live · 発話の区切りを自動検出</string>
+    <string name="voice_overlay_gpt_live_listening_action">GPT-Liveは継続的に聞き取ります。タップすると今すぐ返答します</string>
 </resources>

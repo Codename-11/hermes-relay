@@ -674,8 +674,8 @@
     <string name="settings_hermes_management_desc">Recursos do painel: habilidades, cron, MCP, perfis e modelos</string>
     <string name="settings_chat">Chat</string>
     <string name="settings_chat_desc">Comportamento do chat, Gateway, API direta, exibição de ferramentas e tamanho das mensagens</string>
-    <string name="settings_voice_mode">Modo de voz</string>
-    <string name="settings_voice_mode_desc">Voz do painel, opções de relay em tempo real e provedores</string>
+    <string name="settings_voice_mode">Voz</string>
+    <string name="settings_voice_mode_desc">Serviço de voz, fala e escuta</string>
     <string name="settings_threads">Threads</string>
     <string name="settings_threads_desc">Conversas iniciadas pelo Relay e entrega proativa (desativado por padrão)</string>
     <string name="settings_power_tools">Ferramentas do Relay</string>
@@ -4474,4 +4474,16 @@
     <string name="voice_streaming_stopped_basic_next">A voz em streaming parou. O restante usará a voz básica. Confira as configurações do provedor de voz.</string>
     <string name="stats_tts_queue_wait">Espera na fila de áudio</string>
     <string name="stats_tts_player_start">Atraso ao iniciar o player</string>
+    <string name="voice_tab_voice">Voz</string>
+    <string name="voice_tab_listening">Escuta</string>
+    <string name="voice_tab_advanced">Avançado</string>
+    <string name="voice_service_title">Serviço de voz</string>
+    <string name="voice_service_description">Escolha como conversar com o Hermes.</string>
+    <string name="voice_service_chat">Voz do chat</string>
+    <string name="voice_service_chat_desc">Fale com o Hermes e ouça as respostas no chat. Usa o perfil atual e suas configurações de voz.</string>
+    <string name="voice_service_live">Conversa ao vivo</string>
+    <string name="voice_service_live_desc">Converse com um provedor de voz em tempo real. O Hermes cuida das ferramentas e da memória.</string>
+    <string name="voice_service_relay_required">Conecte o Relay para conversar ao vivo. A voz do chat funciona com o painel padrão do Hermes.</string>
+    <string name="voice_overlay_gpt_live_mode">Live · detecção automática de turnos</string>
+    <string name="voice_overlay_gpt_live_listening_action">O GPT-Live escuta continuamente; toque para receber uma resposta agora</string>
 </resources>

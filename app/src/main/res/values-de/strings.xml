@@ -715,8 +715,8 @@
     <string name="settings_hermes_management_desc">Dashboard-Funktionen: Skills, Cron, MCP, Profile, Modelle</string>
     <string name="settings_chat">Chat</string>
     <string name="settings_chat_desc">Chatverhalten, Gateway, Direct API, Werkzeuganzeige, Nachrichtenlänge</string>
-    <string name="settings_voice_mode">Sprachmodus</string>
-    <string name="settings_voice_mode_desc">Dashboard-Sprache, Echtzeit-Relay-Optionen, Anbieter</string>
+    <string name="settings_voice_mode">Sprache</string>
+    <string name="settings_voice_mode_desc">Sprachdienst, Sprachausgabe und Zuhören</string>
     <string name="settings_threads">Threads</string>
     <string name="settings_threads_desc">Vom Relay gestartete Unterhaltungen und proaktive Zustellung (standardmäßig aus)</string>
     <string name="settings_power_tools">Relay-Werkzeuge</string>
@@ -4631,4 +4631,16 @@
     <string name="voice_streaming_stopped_basic_next">Die Streaming-Sprachausgabe wurde unterbrochen. Der restliche Text nutzt die einfache Sprachausgabe. Prüfe die Einstellungen des Sprachanbieters.</string>
     <string name="stats_tts_queue_wait">Wartezeit auf Audio</string>
     <string name="stats_tts_player_start">Startverzögerung des Players</string>
+    <string name="voice_tab_voice">Sprache</string>
+    <string name="voice_tab_listening">Zuhören</string>
+    <string name="voice_tab_advanced">Erweitert</string>
+    <string name="voice_service_title">Sprachdienst</string>
+    <string name="voice_service_description">Wähle, wie du mit Hermes sprichst.</string>
+    <string name="voice_service_chat">Chat mit Sprachausgabe</string>
+    <string name="voice_service_chat_desc">Sprich mit Hermes und höre Antworten im Chat. Verwendet dein aktuelles Profil und dessen Spracheinstellungen.</string>
+    <string name="voice_service_live">Live-Gespräch</string>
+    <string name="voice_service_live_desc">Sprich abwechselnd mit einem Echtzeit-Sprachanbieter. Hermes übernimmt Tools und Gedächtnis.</string>
+    <string name="voice_service_relay_required">Verbinde Relay für Live-Gespräche. Chat mit Sprachausgabe funktioniert mit dem standardmäßigen Hermes-Dashboard.</string>
+    <string name="voice_overlay_gpt_live_mode">Live · automatische Erkennung von Sprechpausen</string>
+    <string name="voice_overlay_gpt_live_listening_action">GPT-Live hört kontinuierlich zu; tippe, um jetzt eine Antwort zu erhalten</string>
 </resources>

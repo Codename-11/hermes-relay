@@ -247,6 +247,8 @@ android {
         // once both are in the same run.
         unitTests.all {
             it.systemProperty("roborazzi.test.record", "true")
+            // Robolectric's Android 37 shared-memory interceptor uses SharedSecrets.
+            it.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED")
             it.maxHeapSize = "2g"
         }
 
@@ -419,7 +421,7 @@ dependencies {
     implementation(libs.haze.materials)
 
     // Window size class for responsive layout
-    implementation("androidx.compose.material3:material3-window-size-class")
+    implementation("androidx.compose.material3:material3-window-size-class:${libs.versions.material3.get()}")
 
     // Serialization
     implementation(libs.kotlinx.serialization.json)
