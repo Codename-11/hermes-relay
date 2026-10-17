@@ -2397,6 +2397,8 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
     fun refreshBotMode() = botModeController.refresh()
 
+    fun refreshBotModeInBackground() = botModeController.refresh(showLoading = false)
+
     suspend fun ensureCanonicalBotChat(route: com.hermesandroid.relay.data.BotGatewayRoute): Result<BotChatTarget> =
         botModeController.ensureCanonicalBotChat(route)
 

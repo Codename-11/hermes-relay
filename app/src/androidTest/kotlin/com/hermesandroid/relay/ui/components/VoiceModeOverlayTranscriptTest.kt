@@ -72,7 +72,6 @@ class VoiceModeOverlayTranscriptTest {
                     onMicRelease = {},
                     onInterrupt = {},
                     onDismiss = {},
-                    onModeChange = {},
                     onClearError = {},
                     transcriptMessages = messages,
                 )

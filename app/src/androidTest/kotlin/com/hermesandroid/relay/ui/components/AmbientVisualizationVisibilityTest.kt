@@ -73,7 +73,6 @@ class AmbientVisualizationVisibilityTest {
             onMicRelease = {},
             onInterrupt = {},
             onDismiss = {},
-            onModeChange = {},
             onClearError = {},
         )
     }

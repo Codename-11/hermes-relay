@@ -169,6 +169,7 @@ import com.hermesandroid.relay.ui.screens.BridgeScreen
 // === PHASE3-safety-rails: bridge safety route ===
 import com.hermesandroid.relay.ui.screens.BridgeSafetySettingsScreen
 import com.hermesandroid.relay.ui.screens.BotGroupDetailScreen
+import com.hermesandroid.relay.ui.screens.lazyItemKey
 import com.hermesandroid.relay.ui.screens.BotChatScreen
 import com.hermesandroid.relay.ui.screens.BotModeScreen
 // === END PHASE3-safety-rails ===
@@ -2725,15 +2726,26 @@ fun RelayApp() {
                             )
                         }
                     } else {
+                        val workspaceOwner = remember(entry) {
+                            runCatching { navController.getBackStackEntry(Screen.BotMode.route) }.getOrDefault(entry)
+                        }
+                        val conversationKey = listOf(bot.lazyItemKey, currentRouteUrl, route.installId.orEmpty(), sessionId)
+                            .joinToString("") { "${it.length}:$it" }
                         val botChatViewModel: ChatViewModel = viewModel(
-                            key = "bot-chat:${route.connectionId}:${route.profileName}:$sessionId",
+                            viewModelStoreOwner = workspaceOwner,
+                            key = "bot-chat:$conversationKey",
                             factory = viewModelFactory {
                                 initializer { ChatViewModel().apply {
                                     installComposerDraftStore(chatViewModel.composerDraftStore)
                                 } }
                             },
                         )
+                        val botScrollState: com.hermesandroid.relay.ui.screens.BotChatScrollState = viewModel(
+                            viewModelStoreOwner = workspaceOwner,
+                            key = "bot-scroll:$conversationKey",
+                        )
                         BotChatScreen(
+                            scrollState = botScrollState,
                             route = route,
                             bot = bot,
                             sessionId = sessionId,

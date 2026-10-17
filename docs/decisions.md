@@ -3984,6 +3984,13 @@ there. Back from a Bot or group returns to Bots. Recent shortcuts represent
 conversation recency, not live availability; timestamps cannot authorize an
 online badge. Bot rows and picker choices disclose their immutable source and
 profile, and roster refresh runs only while the Bots destination is resumed.
+Within the Bots workspace, each exact connection, Dashboard origin, installation,
+profile, and canonical session retains its chat ViewModel and reading position.
+Reopening shows the retained transcript immediately; Gateway reattachment still
+owns live reconciliation. Background roster refresh keeps cached rows visible
+without a refresh indicator and skips overlapping automatic requests. Manual
+refresh remains explicit. Bot Chat follows output only while the reader is at
+the bottom, after sending, or after choosing Scroll to bottom.
 Bot composers reuse the app-private draft store, keyed by connection, profile,
 and canonical session. New and Back save text and attachments before leaving;
 a failed write keeps the conversation open.

@@ -58,11 +58,12 @@ class BotModeController(
     private val _state = MutableStateFlow(BotModeState())
     val state: StateFlow<BotModeState> = _state.asStateFlow()
 
-    fun refresh() {
-        scope.launch { refreshNow() }
+    fun refresh(showLoading: Boolean = true) {
+        scope.launch { refreshNow(showLoading) }
     }
 
-    suspend fun refreshNow() {
+    suspend fun refreshNow(showLoading: Boolean = true) {
+        if (!showLoading && refreshMutex.isLocked) return
         refreshMutex.withLock {
             val generation = refreshGeneration.incrementAndGet()
             val fleet = connections.value.toList()
@@ -71,7 +72,7 @@ class BotModeController(
             _state.value = aggregateForTest(
                 fleet = fleet,
                 snapshots = snapshots,
-                loading = fleet.isNotEmpty(),
+                loading = fleet.isNotEmpty() && (showLoading || snapshots.isEmpty()),
             )
             if (fleet.isEmpty()) {
                 _state.value = BotModeState(error = "Connect to Hermes to use Bot Mode")
@@ -162,6 +163,13 @@ class BotModeController(
         val dashboardUrl = dashboardUrlProvider(connection).trim()
         if (dashboardUrl.isBlank()) {
             return Result.failure(IllegalStateException("The Bot's gateway is not configured"))
+        }
+        val snapshot = snapshots[connection.id]
+        if (snapshot != null && !snapshot.stale && snapshot.dashboardUrl == dashboardUrl) {
+            snapshot.roster.bots.firstOrNull { it.profile.name == route.profileName }
+                ?.canonicalSession?.let { canonical ->
+                    return Result.success(BotChatTarget(canonical.id, canonical.resolvedId))
+                }
         }
         return gatewayLeaseFactory(connection.id, dashboardUrl, route.profileName, false).use { lease ->
             lease.client.ensureCanonicalBotChat(route.profileName)

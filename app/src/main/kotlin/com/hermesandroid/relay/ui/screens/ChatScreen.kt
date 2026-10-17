@@ -607,7 +607,7 @@ private fun LazyListState.visibleConversationBottomDistancePx(): Int? {
     return ((footer.offset + footer.size) - layout.viewportEndOffset).coerceAtLeast(0)
 }
 
-private suspend fun LazyListState.scrollToConversationBottom(
+internal suspend fun LazyListState.scrollToConversationBottom(
     animated: Boolean,
     slopPx: Int,
 ) {

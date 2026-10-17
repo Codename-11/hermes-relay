@@ -11,6 +11,10 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
+import org.junit.Assert.assertFalse
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performClick
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -55,6 +59,79 @@ class BotChatScreenBindingTest {
     @After
     fun tearDown() {
         resources.forEach(ScreenResources::close)
+    }
+
+    @Test
+    fun reopeningKeepsTranscriptAndReadingPositionWithoutLoadingHistoryAgain() {
+        val screen = resources("retained")
+        val visible = mutableStateOf(true)
+        val scrollState = BotChatScrollState()
+        var loads = 0
+        compose.setContent {
+            if (visible.value) MaterialTheme {
+                screen.content(
+                    handler = screen.viewModel.boundHandler ?: ChatHandler(),
+                    historyLoader = { _, _, _ ->
+                        loads++
+                        Result.success((0..40).map { index ->
+                            history(screen.sessionId, "Stored message $index").single().copy(id = "row-$index")
+                        })
+                    },
+                    scrollState = scrollState,
+                )
+            }
+        }
+        compose.waitUntil(5_000) { scrollState.positioned }
+        compose.runOnIdle { scrollState.followingLatest = false }
+        compose.onNodeWithTag("bot-chat-messages").performScrollToIndex(5)
+        compose.waitForIdle()
+        val index = scrollState.listState.firstVisibleItemIndex
+        val offset = scrollState.listState.firstVisibleItemScrollOffset
+        compose.runOnIdle { visible.value = false }
+        compose.runOnIdle { visible.value = true }
+        compose.waitForIdle()
+        assertEquals(1, loads)
+        assertEquals(index, scrollState.listState.firstVisibleItemIndex)
+        assertEquals(offset, scrollState.listState.firstVisibleItemScrollOffset)
+    }
+
+    @Test
+    fun newMessagesDoNotPullReaderAwayFromHistory() {
+        val screen = resources("reader")
+        val handler = ChatHandler()
+        val scrollState = BotChatScrollState()
+        compose.setContent {
+            MaterialTheme {
+                screen.content(handler, { _, _, _ ->
+                    Result.success((0..40).map { index ->
+                        history(screen.sessionId, "Stored message $index").single().copy(id = "row-$index")
+                    })
+                }, scrollState = scrollState)
+            }
+        }
+        compose.waitUntil(5_000) { scrollState.positioned }
+        compose.onNodeWithTag("bot-chat-messages").performScrollToIndex(5)
+        compose.waitForIdle()
+        compose.onNodeWithTag("bot-chat-messages").performTouchInput { swipeDown() }
+        compose.waitForIdle()
+        assertFalse(scrollState.followingLatest)
+        val index = scrollState.listState.firstVisibleItemIndex
+        val offset = scrollState.listState.firstVisibleItemScrollOffset
+        compose.runOnIdle { handler.onTextDelta("new-answer", "New message while reading history") }
+        compose.waitForIdle()
+        assertEquals(index, scrollState.listState.firstVisibleItemIndex)
+        assertEquals(offset, scrollState.listState.firstVisibleItemScrollOffset)
+        compose.onNodeWithContentDescription("Scroll to bottom").performClick()
+        compose.onNodeWithText("New message while reading history").assertIsDisplayed()
+        compose.runOnIdle { handler.onTextDelta("new-answer", " continuing") }
+        compose.onNodeWithText("New message while reading history continuing").assertIsDisplayed()
+        compose.runOnIdle { handler.onTextDelta("new-answer", "\n" + "A long streaming answer.\n".repeat(80)) }
+        compose.waitUntil(5_000) {
+            scrollState.listState.layoutInfo.visibleItemsInfo.any { it.key == "new-answer" && it.size > 1_000 }
+        }
+        compose.waitUntil(5_000) { !scrollState.listState.canScrollForward }
+        compose.waitForIdle()
+        assertFalse(scrollState.listState.canScrollForward)
     }
 
     @Test
@@ -275,7 +352,7 @@ class BotChatScreenBindingTest {
         )
 
         @androidx.compose.runtime.Composable
-        fun content(handler: ChatHandler, historyLoader: BotChatHistoryLoader, onVoice: (() -> Unit)? = null, onNewChat: (() -> Unit)? = null) {
+        fun content(handler: ChatHandler, historyLoader: BotChatHistoryLoader, onVoice: (() -> Unit)? = null, onNewChat: (() -> Unit)? = null, scrollState: BotChatScrollState = androidx.compose.runtime.remember { BotChatScrollState() }) {
             BotChatScreen(
                 route = route,
                 bot = bot,
@@ -284,6 +361,7 @@ class BotChatScreenBindingTest {
                 dashboardClient = dashboardClient,
                 chatViewModel = viewModel,
                 onBack = {},
+                scrollState = scrollState,
                 onVoice = onVoice,
                 handlerFactory = { handler },
                 historyLoader = historyLoader,

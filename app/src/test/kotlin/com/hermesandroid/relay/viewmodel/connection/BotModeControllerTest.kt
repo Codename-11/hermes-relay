@@ -14,6 +14,9 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -52,6 +55,17 @@ class BotModeControllerTest {
             assertEquals(setOf("default", "researcher"), controller.state.value.roster.bots.map { it.profile.name }.toSet())
             assertEquals("a", active.value)
 
+            val observedLoading = mutableListOf<Boolean>()
+            val observer = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                controller.state.collect { observedLoading += it.loading }
+            }
+            controller.refreshNow(showLoading = false)
+            observer.cancel()
+            assertFalse(observedLoading.any { it })
+            val bot = controller.state.value.roster.bots.first { it.profile.name == "researcher" }
+            val target = controller.ensureCanonicalBotChat(checkNotNull(bot.route)).getOrThrow()
+            assertEquals("canonical-researcher", target.resolvedSessionId)
+
             bHarness.rpcErrors["profiles.list"] = 5006 to "offline"
             controller.refreshNow()
             assertTrue(
@@ -87,6 +101,10 @@ class BotModeControllerTest {
         put("profiles", JsonArray(listOf(buildJsonObject {
             put("name", profile)
             put("model", "gpt")
+            put("canonical_session", buildJsonObject {
+                put("id", "canonical-$profile")
+                put("resolved_id", "canonical-$profile")
+            })
             put("is_default", profile == "default")
         })))
         put("bot_mode_protocol", true)

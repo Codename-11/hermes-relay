@@ -5,6 +5,8 @@ import android.os.Looper
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
+import java.util.concurrent.atomic.AtomicInteger
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -72,7 +74,7 @@ class BotChatScreenBindingInstrumentedTest {
     }
 
     @Test
-    fun fastInitialHistoryRendersBeforeNavigationAndSurvivesLifecycleResume() {
+    fun fastInitialHistorySurvivesLifecycleAndReopeningWithoutAnotherRead() {
         val route = BotGatewayRoute(
             key = BotGatewayRouteKey("fixture-gateway", PROFILE_NAME),
             connectionLabel = "Fixture gateway",
@@ -89,9 +91,12 @@ class BotChatScreenBindingInstrumentedTest {
         val scenario = ActivityScenario.launch(BotChatBindingTestActivity::class.java)
             .also { activityScenario = it }
 
+        val showChat = mutableStateOf(true)
+        val historyLoads = AtomicInteger()
+        val scrollState = BotChatScrollState()
         scenario.onActivity { activity ->
             activity.setContent {
-                MaterialTheme {
+                if (showChat.value) MaterialTheme {
                     BotChatScreen(
                         route = route,
                         bot = bot,
@@ -100,8 +105,10 @@ class BotChatScreenBindingInstrumentedTest {
                         dashboardClient = dashboardClient,
                         chatViewModel = viewModel,
                         onBack = {},
+                        scrollState = scrollState,
                         handlerFactory = { handler },
                         historyLoader = { _, _, _ ->
+                            historyLoads.incrementAndGet()
                             Result.success(
                                 listOf(
                                     MessageItem(
@@ -127,6 +134,11 @@ class BotChatScreenBindingInstrumentedTest {
         scenario.moveToState(Lifecycle.State.STARTED)
         scenario.moveToState(Lifecycle.State.RESUMED)
         waitUntil { renderedTextExists(HISTORY_TEXT) }
+        scenario.onActivity { showChat.value = false }
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        scenario.onActivity { showChat.value = true }
+        waitUntil { renderedTextExists(HISTORY_TEXT) }
+        assertEquals(1, historyLoads.get())
         assertEquals(0, fixture.rpcCount("prompt.submit"))
     }
 

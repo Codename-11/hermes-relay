@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.InsertDriveFile
@@ -48,7 +50,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.lifecycle.ViewModel
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -109,6 +114,13 @@ internal typealias BotChatHistoryLoader = suspend (
 ) -> Result<List<MessageItem>>
 internal typealias BotChatProfileIconFlow = (connectionId: String, profileName: String) -> Flow<String?>
 
+/** Reading position belongs to the conversation, including while Bots is visible. */
+class BotChatScrollState : ViewModel() {
+    val listState = LazyListState()
+    var followingLatest by mutableStateOf(true)
+    var positioned by mutableStateOf(false)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BotChatScreen(
@@ -118,6 +130,7 @@ fun BotChatScreen(
     gatewayClient: GatewayChatClient,
     dashboardClient: DashboardApiClient,
     chatViewModel: ChatViewModel,
+    scrollState: BotChatScrollState,
     connectionViewModel: ConnectionViewModel,
     onNewChat: (() -> Unit)? = null,
     onVoiceSessionChanged: (VoiceViewModel, Boolean) -> Unit = { _, _ -> },
@@ -134,7 +147,8 @@ fun BotChatScreen(
                 dashboardClient = dashboardClient,
                 chatViewModel = chatViewModel,
                 onBack = onBack,
-                handlerFactory = ::ChatHandler,
+                handlerFactory = { chatViewModel.boundHandler ?: ChatHandler() },
+                scrollState = scrollState,
                 historyLoader = { profileName, storedSessionId, mode ->
                     dashboardClient.getSessionMessages(
                         sessionId = storedSessionId,
@@ -162,6 +176,7 @@ internal fun BotChatScreen(
     dashboardClient: DashboardApiClient,
     chatViewModel: ChatViewModel,
     onBack: () -> Unit,
+    scrollState: BotChatScrollState = remember { BotChatScrollState() },
     handlerFactory: () -> ChatHandler,
     historyLoader: BotChatHistoryLoader,
     profileIconFlow: BotChatProfileIconFlow,
@@ -172,11 +187,8 @@ internal fun BotChatScreen(
 ) {
     val handler = remember(route.key) { handlerFactory() }
     val context = LocalContext.current
-    // This route owns the handler but binds it to the ViewModel only after the
-    // first composition. Collecting delegated ViewModel getters here can pin
-    // Compose to their empty pre-bind fallback when history settles before the
-    // next frame. Observe the route-owned source directly so StateFlow replay
-    // covers fast history, live streaming, completion, and errors.
+    // Observe the handler directly: initial history can arrive before Compose
+    // sees the ViewModel's binding, while reentry reuses its existing handler.
     val messages by handler.messages.collectAsState()
     val isStreaming by handler.isStreaming.collectAsState()
     val isLoading by chatViewModel.isLoadingHistory.collectAsState()
@@ -184,7 +196,7 @@ internal fun BotChatScreen(
     val boundSessionId by handler.currentSessionId.collectAsState()
     val iconPath by profileIconFlow(route.connectionId, route.profileName)
         .collectAsState(initial = null)
-    val listState = rememberLazyListState()
+    val listState = scrollState.listState
     var composerInput by remember(route.key, sessionId) { mutableStateOf(TextFieldValue()) }
     val composer = composerInput.text
     var editingQueuedMessage by remember(route.key, sessionId) { mutableStateOf(false) }
@@ -204,7 +216,9 @@ internal fun BotChatScreen(
         else BusyMessageAction.QueueNext
 
     DisposableEffect(chatViewModel, gatewayClient, dashboardClient, route.key) {
-        chatViewModel.initialize(apiClient = null, chatHandler = handler)
+        if (chatViewModel.boundHandler !== handler) {
+            chatViewModel.initialize(apiClient = null, chatHandler = handler)
+        }
         chatViewModel.initializeGatewayOnly(context)
         chatViewModel.streamingEndpoint = "gateway"
         chatViewModel.sseFallbackEndpoint = "sessions"
@@ -237,8 +251,43 @@ internal fun BotChatScreen(
         }
     }
 
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    var userScrolling by remember(listState) { mutableStateOf(false) }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) {
+                userScrolling = true
+                scrollState.followingLatest = false
+            } else if (interaction is DragInteraction.Stop || interaction is DragInteraction.Cancel) {
+                if (!listState.isScrollInProgress) {
+                    scrollState.followingLatest = !listState.canScrollForward
+                    userScrolling = false
+                }
+            }
+        }
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
+            if (!scrolling && userScrolling) {
+                scrollState.followingLatest = !listState.canScrollForward
+                userScrolling = false
+            }
+        }
+    }
+    // Rows grow after measurement (markdown, images); keep following without waiting for a new message.
+    LaunchedEffect(listState, scrollState.followingLatest) {
+        if (!scrollState.followingLatest) return@LaunchedEffect
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.sumOf { it.size } to listState.canScrollForward }
+            .collect { (_, canScrollForward) ->
+                if (canScrollForward && scrollState.positioned && !listState.isScrollInProgress) {
+                    listState.scrollToConversationBottom(animated = false, slopPx = 0)
+                }
+            }
+    }
+    LaunchedEffect(messages, scrollState.followingLatest) {
+        if (messages.isNotEmpty() && scrollState.followingLatest) {
+            listState.scrollToConversationBottom(animated = scrollState.positioned, slopPx = 0)
+            scrollState.positioned = true
+        }
     }
 
     val scope = rememberCoroutineScope()
@@ -462,6 +511,7 @@ internal fun BotChatScreen(
                                             // Matches Chat: an attachment-only send carries a placeholder body.
                                             val text = composer.trim().ifBlank { attachmentPlaceholder }
                                             composerInput = TextFieldValue()
+                                            scrollState.followingLatest = true
                                             chatViewModel.sendMessage(text, effectiveBusyAction)
                                             editingQueuedMessage = false
                                             busyActionOverride = null
@@ -530,7 +580,7 @@ internal fun BotChatScreen(
                 }
                 else -> LazyColumn(
                     state = listState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().testTag("bot-chat-messages"),
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
                         horizontal = 14.dp,
                         vertical = 10.dp,
@@ -551,6 +601,15 @@ internal fun BotChatScreen(
                             onCardInput = chatViewModel::answerAsk,
                         )
                     }
+                    item(key = "bot-chat-bottom") { Spacer(Modifier.height(1.dp)) }
+                }
+            }
+            if (!scrollState.followingLatest && messages.isNotEmpty()) {
+                SmallFloatingActionButton(
+                    onClick = { scrollState.followingLatest = true },
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp),
+                ) {
+                    Icon(Icons.Filled.ArrowDownward, stringResource(R.string.cd_scroll_to_bottom))
                 }
             }
             error?.takeIf(String::isNotBlank)?.let { message ->

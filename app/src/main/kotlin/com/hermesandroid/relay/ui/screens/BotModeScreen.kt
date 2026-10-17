@@ -146,7 +146,7 @@ fun BotModeScreen(
     LaunchedEffect(activeConnection?.id, lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
-                connectionViewModel.refreshBotMode()
+                connectionViewModel.refreshBotModeInBackground()
                 delay(BOT_MODE_REFRESH_MS)
             }
         }
