@@ -584,6 +584,7 @@ export const computerActionHandler: ToolHandler = async (args, ctx) => {
 }
 
 export const computerGrantRequestHandler: ToolHandler = async (args, ctx) => {
+  ctx.abortSignal.throwIfAborted()
   const mode = parseGrantMode(args.mode)
   if (!mode) {
     return failure('invalid_request', 'mode must be one of observe, assist, or control.')
@@ -614,8 +615,10 @@ export const computerGrantRequestHandler: ToolHandler = async (args, ctx) => {
       durationSeconds: normalizeComputerGrantDurationSeconds(args.duration_seconds),
       reason: normalizeComputerGrantReason(args.reason),
       scope: normalizeComputerGrantScope(args.scope) as Record<string, unknown>,
-      interactive: ctx.interactive
+      interactive: ctx.interactive,
+      abortSignal: ctx.abortSignal
     })
+    ctx.abortSignal.throwIfAborted()
     if (!approval.approved) {
       return failure(
         approval.reason.startsWith('non-interactive mode') ? 'not_interactive' : 'rejected',
@@ -624,6 +627,7 @@ export const computerGrantRequestHandler: ToolHandler = async (args, ctx) => {
       )
     }
   }
+  ctx.abortSignal.throwIfAborted()
   return {
     ...requestComputerGrant({
       mode,

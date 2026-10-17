@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import test from 'node:test'
 
 import { desktopDeviceId } from '../src/deviceIdentity.js'
@@ -14,7 +15,7 @@ type ChannelListener = (type: string, payload: Record<string, unknown>) => void
 function harness(handler: (ctx: ToolContext) => void) {
   let listener: ChannelListener | null = null
   const sent: Array<{ channel: string; type: string; payload: Record<string, unknown> }> = []
-  const relay = {
+  const relay = Object.assign(new EventEmitter(), {
     onChannel(channel: string, next: ChannelListener | null) {
       assert.equal(channel, 'desktop')
       listener = next
@@ -22,7 +23,7 @@ function harness(handler: (ctx: ToolContext) => void) {
     sendChannel(channel: string, type: string, payload: Record<string, unknown>) {
       sent.push({ channel, type, payload })
     }
-  } as unknown as RelayTransport
+  }) as unknown as RelayTransport
   const router = new DesktopToolRouter({
     consentGranted: true,
     interactive: false,

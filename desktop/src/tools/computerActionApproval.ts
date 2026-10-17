@@ -1,12 +1,14 @@
 import { createInterface } from 'node:readline/promises'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 
 export interface ComputerActionApprovalRequest {
   action: string
   summary: string
   intent?: string
   interactive: boolean
+  abortSignal?: AbortSignal
 }
 
 export interface ComputerActionApprovalDecision {
@@ -20,6 +22,7 @@ export interface ComputerGrantApprovalRequest {
   reason: string
   scope: Record<string, unknown>
   interactive: boolean
+  abortSignal?: AbortSignal
 }
 
 export type ComputerActionPromptCoordinator = <T>(runPrompt: () => Promise<T>) => Promise<T>
@@ -43,18 +46,45 @@ function cleanAnswer(raw: string): string {
     .trim()
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
+const canceledDecision = (): ComputerActionApprovalDecision => ({ approved: false, reason: 'native approval canceled' })
+
+/** A canceled queued prompt must not open later or hold up its caller. The
+ * coordinator still owns serialization; its eventual callback checks the same
+ * signal before touching the TTY. Active questions observe that signal too. */
+function coordinatedPrompt(
+  signal: AbortSignal | undefined,
+  prompt: () => Promise<ComputerActionApprovalDecision>
+): Promise<ComputerActionApprovalDecision> {
+  if (signal?.aborted) return Promise.resolve(canceledDecision())
+  return new Promise((resolve, reject) => {
+    const onAbort = () => { cleanup(); resolve(canceledDecision()) }
+    const cleanup = () => signal?.removeEventListener('abort', onAbort)
+    signal?.addEventListener('abort', onAbort, { once: true })
+    Promise.resolve().then(() => promptCoordinator(() => {
+      if (signal?.aborted) return Promise.resolve(canceledDecision())
+      return prompt()
+    })).then(value => { cleanup(); resolve(signal?.aborted ? canceledDecision() : value) }, error => {
+      cleanup()
+      if (signal?.aborted) resolve(canceledDecision())
+      else reject(error)
+    })
+  })
 }
 
 function safeBridgeId(): string {
   return `grant-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+async function writeJsonAtomic(path: string, value: unknown, signal?: AbortSignal): Promise<void> {
   const tmp = `${path}.tmp-${process.pid}-${Date.now()}`
-  await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
-  await rename(tmp, path)
+  try {
+    signal?.throwIfAborted()
+    await writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', signal })
+    signal?.throwIfAborted()
+    await rename(tmp, path)
+  } finally {
+    await rm(tmp, { force: true }).catch(() => undefined)
+  }
 }
 
 async function approveComputerGrantViaBridge(
@@ -62,12 +92,14 @@ async function approveComputerGrantViaBridge(
   bridgeDir: string
 ): Promise<ComputerActionApprovalDecision> {
   const id = safeBridgeId()
+  request.abortSignal?.throwIfAborted()
   await mkdir(bridgeDir, { recursive: true })
   const requestPath = join(bridgeDir, `request-${id}.json`)
   const responsePath = join(bridgeDir, `response-${id}.json`)
   const timeoutMs = Math.min(Math.max(request.durationSeconds * 1000, 30_000), 175_000)
 
   try {
+    request.abortSignal?.throwIfAborted()
     await writeJsonAtomic(requestPath, {
       id,
       kind: 'computer_grant_request',
@@ -76,20 +108,24 @@ async function approveComputerGrantViaBridge(
       reason: request.reason,
       scope: request.scope,
       created_at: new Date().toISOString()
-    })
+    }, request.abortSignal)
 
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
+      request.abortSignal?.throwIfAborted()
       try {
         const parsed = JSON.parse(await readFile(responsePath, 'utf8')) as {
           approved?: unknown
           reason?: unknown
         }
+        request.abortSignal?.throwIfAborted()
+        if (Date.now() >= deadline) return { approved: false, reason: 'native grant approval timed out' }
         return {
           approved: parsed.approved === true,
           reason: typeof parsed.reason === 'string' ? parsed.reason : ''
         }
       } catch (err) {
+        if (request.abortSignal?.aborted) throw err
         const code = (err as NodeJS.ErrnoException).code
         if (code && code !== 'ENOENT') {
           return {
@@ -98,7 +134,7 @@ async function approveComputerGrantViaBridge(
           }
         }
       }
-      await sleep(500)
+      await delay(500, undefined, { signal: request.abortSignal })
     }
     return {
       approved: false,
@@ -116,6 +152,7 @@ async function approveComputerGrantViaBridge(
 export async function approveComputerAction(
   request: ComputerActionApprovalRequest
 ): Promise<ComputerActionApprovalDecision> {
+  if (request.abortSignal?.aborted) return canceledDecision()
   if (!request.interactive) {
     return {
       approved: false,
@@ -123,16 +160,22 @@ export async function approveComputerAction(
     }
   }
 
-  return promptCoordinator(() => promptForComputerAction(request))
+  return coordinatedPrompt(request.abortSignal, () => promptForComputerAction(request))
 }
 
 export async function approveComputerGrant(
   request: ComputerGrantApprovalRequest
 ): Promise<ComputerActionApprovalDecision> {
+  if (request.abortSignal?.aborted) return canceledDecision()
   if (!request.interactive) {
     const bridgeDir = process.env.HERMES_RELAY_GRANT_BRIDGE_DIR
     if (bridgeDir) {
-      return approveComputerGrantViaBridge(request, bridgeDir)
+      try {
+        return await approveComputerGrantViaBridge(request, bridgeDir)
+      } catch (error) {
+        if (request.abortSignal?.aborted) return canceledDecision()
+        throw error
+      }
     }
     return {
       approved: false,
@@ -140,12 +183,13 @@ export async function approveComputerGrant(
     }
   }
 
-  return promptCoordinator(() => promptForComputerGrant(request))
+  return coordinatedPrompt(request.abortSignal, () => promptForComputerGrant(request))
 }
 
 async function promptForComputerAction(
   request: ComputerActionApprovalRequest
 ): Promise<ComputerActionApprovalDecision> {
+  request.abortSignal?.throwIfAborted()
   process.stderr.write(
     '\nHermes computer-use action requested:\n' +
       `  Action: ${request.action}\n` +
@@ -163,7 +207,9 @@ async function promptForComputerAction(
 
   try {
     while (true) {
-      const answer = cleanAnswer(await rl.question('  Run action? [yes/n/r] > '))
+      request.abortSignal?.throwIfAborted()
+      const answer = cleanAnswer(await rl.question('  Run action? [yes/n/r] > ', { signal: request.abortSignal }))
+      request.abortSignal?.throwIfAborted()
       const normalized = answer.toLowerCase()
       if (normalized === 'yes' || normalized === 'y' || answer === 'ALLOW') {
         return { approved: true, reason: '' }
@@ -172,7 +218,7 @@ async function promptForComputerAction(
         return { approved: false, reason: 'user rejected computer action' }
       }
       if (normalized === 'r') {
-        const reason = cleanAnswer(await rl.question('  Reason: '))
+        const reason = cleanAnswer(await rl.question('  Reason: ', { signal: request.abortSignal }))
         return {
           approved: false,
           reason: reason || 'user rejected computer action'
@@ -193,6 +239,7 @@ async function promptForComputerAction(
 async function promptForComputerGrant(
   request: ComputerGrantApprovalRequest
 ): Promise<ComputerActionApprovalDecision> {
+  request.abortSignal?.throwIfAborted()
   const scope = Object.keys(request.scope).length > 0
     ? JSON.stringify(request.scope)
     : 'all visible desktop context'
@@ -214,7 +261,9 @@ async function promptForComputerGrant(
 
   try {
     while (true) {
-      const answer = cleanAnswer(await rl.question('  Approve grant? [yes/n/r] > '))
+      request.abortSignal?.throwIfAborted()
+      const answer = cleanAnswer(await rl.question('  Approve grant? [yes/n/r] > ', { signal: request.abortSignal }))
+      request.abortSignal?.throwIfAborted()
       const normalized = answer.toLowerCase()
       if (normalized === 'yes' || normalized === 'y') {
         return { approved: true, reason: '' }
@@ -223,7 +272,7 @@ async function promptForComputerGrant(
         return { approved: false, reason: 'user rejected computer control grant' }
       }
       if (normalized === 'r') {
-        const reason = cleanAnswer(await rl.question('  Reason: '))
+        const reason = cleanAnswer(await rl.question('  Reason: ', { signal: request.abortSignal }))
         return {
           approved: false,
           reason: reason || 'user rejected computer control grant'

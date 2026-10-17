@@ -82,6 +82,7 @@ export const readFileHandler: ToolHandler = async (args, ctx) => {
  *   args: { path: string, content: string, create_dirs?: boolean }
  *   returns: { ok: true, bytes_written: number, path: string } */
 export const writeFileHandler: ToolHandler = async (args, ctx) => {
+  ctx.abortSignal.throwIfAborted()
   const abs = resolvePath(ctx, args.path)
   const content = argString(args.content, 'content')
   const createDirs = argBool(args.create_dirs, false)
@@ -90,6 +91,7 @@ export const writeFileHandler: ToolHandler = async (args, ctx) => {
     await fs.mkdir(path.dirname(abs), { recursive: true })
   }
 
+  ctx.abortSignal.throwIfAborted()
   await fs.writeFile(abs, content, 'utf8')
   const bytes = Buffer.byteLength(content, 'utf8')
 
@@ -235,6 +237,7 @@ function applyHunk(srcLines: string[], hunk: Hunk): string[] {
  *   - The router's ctx.interactive flag controls this — see
  *     DesktopToolRouter.attach() / cli.ts for how it's set. */
 export const patchHandler: ToolHandler = async (args, ctx) => {
+  ctx.abortSignal.throwIfAborted()
   const abs = resolvePath(ctx, args.path)
   const patchText = argString(args.patch, 'patch')
 
@@ -254,8 +257,10 @@ export const patchHandler: ToolHandler = async (args, ctx) => {
     ? { accepted: true }
     : await approveOrReject(patchText, {
         targetFile: abs,
-        interactive: ctx.interactive
+        interactive: ctx.interactive,
+        abortSignal: ctx.abortSignal
       })
+  ctx.abortSignal.throwIfAborted()
   if (!decision.accepted) {
     const reason = decision.reason ?? 'user rejected patch'
     throw new Error(`patch rejected: ${reason}`)
@@ -297,6 +302,7 @@ export const patchHandler: ToolHandler = async (args, ctx) => {
   }
 
   const joined = working.join('\n') + (hadTrailingNewline ? '\n' : '')
+  ctx.abortSignal.throwIfAborted()
   await fs.writeFile(abs, joined, 'utf8')
 
   return { ok: true, hunks_applied: hunks.length, path: abs, approved: approvalTag }

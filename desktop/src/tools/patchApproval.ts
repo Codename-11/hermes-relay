@@ -31,6 +31,7 @@ export interface PatchApprovalContext {
    * prompting. Callers in `shell.ts`/`chat.ts` compute this; `daemon.ts`
    * always passes false. */
   interactive: boolean
+  abortSignal?: AbortSignal
 }
 
 export interface PatchApprovalDecision {
@@ -93,12 +94,14 @@ function colorEnabled(): boolean {
 /** Launch $EDITOR on a tempfile pre-populated with `patch`, wait for
  * editor exit, re-read, clean up. Used by the 'e' branch. Falls back
  * to the original patch if the user blanked the file. */
-async function editInEditor(patch: string): Promise<string> {
+async function editInEditor(patch: string, signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted()
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'hermes-patch-'))
   const tmpFile = path.join(tmpDir, 'patch.diff')
   await fs.writeFile(tmpFile, patch, 'utf8')
   try {
     const launcher = await detectEditor()
+    signal?.throwIfAborted()
     // For the edit flow we ALWAYS want to block — the whole point is the
     // user's follow-up edit. GUI editors that spawn detached would return
     // instantly and we'd re-read the unmodified file.
@@ -118,11 +121,13 @@ async function editInEditor(patch: string): Promise<string> {
       throw new Error('editor detection returned an empty command')
     }
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(cmd, rest, { stdio: 'inherit' })
+      const child = spawn(cmd, rest, { stdio: 'inherit', signal })
       child.once('error', e => reject(new Error(`editor spawn failed: ${e.message}`)))
       child.once('close', () => resolve())
     })
+    signal?.throwIfAborted()
     const edited = await fs.readFile(tmpFile, 'utf8')
+    signal?.throwIfAborted()
     // Defensive: if the user saved an empty file, treat it as a reject
     // rather than applying nothing. The caller interprets an empty
     // patch as "no hunks" which would error anyway.
@@ -143,6 +148,7 @@ export async function approveOrReject(
   patchText: string,
   context: PatchApprovalContext
 ): Promise<PatchApprovalDecision> {
+  if (context.abortSignal?.aborted) return { accepted: false, reason: 'patch approval canceled' }
   if (!context.interactive) {
     return {
       accepted: false,
@@ -175,9 +181,12 @@ export async function approveOrReject(
     // Prompt loop — we re-ask on bad input instead of defaulting, because
     // a slip-of-the-key on a patch prompt could silently apply changes.
     while (true) {
+      context.abortSignal?.throwIfAborted()
       const raw = await rl.question(
-        '  Apply patch? [y]es / [n]o / [e]dit / [r]eject with reason  > '
+        '  Apply patch? [y]es / [n]o / [e]dit / [r]eject with reason  > ',
+        { signal: context.abortSignal }
       )
+      context.abortSignal?.throwIfAborted()
       const answer = raw.trim().toLowerCase()
 
       if (answer === 'y' || answer === 'yes') {
@@ -187,7 +196,7 @@ export async function approveOrReject(
         return { accepted: false, reason: '' }
       }
       if (answer === 'r') {
-        const reason = (await rl.question('  Reason: ')).trim()
+        const reason = (await rl.question('  Reason: ', { signal: context.abortSignal })).trim()
         return { accepted: false, reason }
       }
       if (answer === 'e' || answer === 'edit') {
@@ -196,7 +205,7 @@ export async function approveOrReject(
         rl.close()
         let edited: string
         try {
-          edited = await editInEditor(patchText)
+          edited = await editInEditor(patchText, context.abortSignal)
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e)
           process.stderr.write(`  ${c.red(`edit failed: ${msg}`)}\n`)
@@ -208,6 +217,7 @@ export async function approveOrReject(
         // catches and turns into the original, so they should just
         // close without saving if they want to cancel; documented in
         // the prompt? — consider adding in UX polish pass).
+        context.abortSignal?.throwIfAborted()
         return { accepted: true, editedPatch: edited }
       }
 
@@ -215,6 +225,9 @@ export async function approveOrReject(
         `  ${c.dim('unrecognized; answer with y / n / e / r')}\n`
       )
     }
+  } catch (error) {
+    if (context.abortSignal?.aborted) return { accepted: false, reason: 'patch approval canceled' }
+    throw error
   } finally {
     try {
       rl.close()
