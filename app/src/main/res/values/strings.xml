@@ -1179,6 +1179,7 @@
     <string name="bot_mode_create_help">The new Bot starts from the default profile and shares its sign-in. You can refine its skills and model in Manage.</string>
     <string name="bot_mode_create">Create Bot</string>
     <string name="bot_mode_back_to_bots">Back to Bots</string>
+    <string name="bot_mode_main_chat">Main chat</string>
     <string name="bot_mode_chat_open_failed">Bot Chat could not open</string>
     <string name="bot_mode_created">%1$s created</string>
     <string name="bot_mode_create_failed">Bot could not be created</string>
@@ -3886,6 +3887,7 @@
     <string name="voice_overlay_exit_a11y">Exit voice mode</string>
     <string name="voice_overlay_a11y">Voice overlay %1$s. Tap to %2$s, double tap to expand.</string>
     <string name="voice_overlay_mic_a11y">Voice overlay mic</string>
+    <string name="chat_conversation_actions">Conversation actions</string>
     <string name="chat_more_actions_a11y">More actions</string>
     <string name="attachment_open_externally_a11y">Open externally</string>
     <string name="attachment_share_a11y">Share</string>

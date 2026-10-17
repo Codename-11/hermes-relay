@@ -73,6 +73,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -444,6 +445,22 @@ internal fun petSurfaceOwnerForRoute(route: String?): String? = when (route) {
 /** Petdex already supplies interactive pet previews; keep its install cards unobstructed. */
 internal fun floatingPetAllowedOnRoute(route: String?): Boolean =
     route != Screen.PetdexBrowse.route
+
+internal fun relayStartDestination(onboardingCompleted: Boolean, supervisedEnabled: Boolean): String =
+    when {
+        !onboardingCompleted -> Screen.Onboarding.route
+        supervisedEnabled -> Screen.Chat.route
+        else -> Screen.BotMode.route
+    }
+
+internal fun NavHostController.returnToBots() {
+    if (!popBackStack(Screen.BotMode.route, inclusive = false)) {
+        navigate(Screen.BotMode.route) {
+            popUpTo(Screen.Chat.route) { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+}
 
 sealed class Screen(
     val route: String,
@@ -1350,7 +1367,13 @@ fun RelayApp() {
 
         // startDestination uses the route TEMPLATE so it matches the
         // composable registered below; optional args default to null/false.
-        val startDestination = if (onboardingCompleted) Screen.Chat.route else Screen.Onboarding.route
+        // Pick the root once after policy hydration; later connection switches
+        // use the supervised redirect without replacing the navigation graph.
+        val supervisedStart = remember { mutableStateOf<Boolean?>(null) }
+        if (supervisedStart.value == null && relayNavigationHydrated) {
+            supervisedStart.value = supervisedPolicy.enabled
+        }
+        val startDestination = relayStartDestination(onboardingCompleted, supervisedStart.value == true)
 
         // Offline Demo / Explore mode. Treated like "onboarding complete" for
         // CHROME purposes (so the demo Chat shows the normal scaffold + status
@@ -2251,7 +2274,7 @@ fun RelayApp() {
                     // The wizard inside OnboardingScreen now owns credential
                     // application via ConnectionViewModel.applyPairingPayload,
                     // so the callback collapses to "mark complete + navigate
-                    // to chat". The legacy 4-arg signature was discarding the
+                    // to home". The legacy 4-arg signature was discarding the
                     // relay block entirely.
                     //
                     // CRITICAL: pass the Activity-scoped connectionViewModel
@@ -2286,11 +2309,9 @@ fun RelayApp() {
                                     return@launch
                                 }
                                 connectionViewModel.completeOnboarding()
-                                // Concrete bare-"chat" URI — the Screen.Chat.route
-                                // field is the route TEMPLATE (contains
-                                // `{openAgentSheet}`) and must not be navigated
-                                // to directly; build the URI via Screen.Chat.route(...).
-                                navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                navController.navigate(
+                                    if (supervisedPolicy.enabled) Screen.Chat.route() else Screen.BotMode.route,
+                                ) {
                                     popUpTo(Screen.Onboarding.route) { inclusive = true }
                                 }
                             }
@@ -2582,8 +2603,10 @@ fun RelayApp() {
                             },
                             supervisedPolicy = chatSupervisedPolicy,
                             onNavigateToBotMode = {
-                                navController.navigate(Screen.BotMode.route) { launchSingleTop = true }
+                                navController.returnToBots()
                             },
+                            onBackToBots = { navController.returnToBots() }
+                                .takeIf { !supervisedPolicy.enabled && onboardingCompleted },
                             gitWorkspaceAvailable = gitWorkspaceAvailable,
                             gitWorkspaceSummary = gitWorkspaceSummary,
                             onNavigateToGitWorkspace = {
@@ -2595,8 +2618,16 @@ fun RelayApp() {
                 composable(Screen.BotMode.route) {
                     BotModeScreen(
                         connectionViewModel = connectionViewModel,
-                        onBack = { navController.popBackStack() },
+                        onOpenSettings = {
+                            navController.navigate(Screen.Settings.route) { launchSingleTop = true }
+                        },
+                        onOpenChat = {
+                            navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                                launchSingleTop = true
+                            }
+                        },
                         onOpenBotChat = { route, sessionId ->
+                            voiceViewModel.exitVoiceMode()
                             navController.navigate(
                                 Screen.BotChat.route(
                                     connectionId = route.connectionId,
@@ -2769,7 +2800,9 @@ fun RelayApp() {
                             when (source) {
                                 Screen.DashboardSignIn.SOURCE_ONBOARDING -> {
                                     connectionViewModel.completeOnboarding()
-                                    navController.navigate(Screen.Chat.route()) {
+                                    navController.navigate(
+                                        if (supervisedPolicy.enabled) Screen.Chat.route() else Screen.BotMode.route,
+                                    ) {
                                         popUpTo(Screen.Onboarding.route) { inclusive = true }
                                         launchSingleTop = true
                                     }

@@ -279,6 +279,7 @@ fun SessionDrawerContent(
     onOpenBotMode: (() -> Unit)? = null,
     /** ChatGPT-style footer entry; null hides it. */
     onOpenSettings: (() -> Unit)? = null,
+    conversationActions: (@Composable (onDismiss: () -> Unit) -> Unit)? = null,
     onNewChat: () -> Unit,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
@@ -1182,14 +1183,27 @@ fun SessionDrawerContent(
     // (wide layouts with the pin active). Filters, search, rows, and dialogs
     // are defined once above so both presentations stay behaviorally identical.
     val settingsFooter: @Composable () -> Unit = {
-        onOpenSettings?.let { open ->
-            NavigationDrawerItem(
-                label = { Text(stringResource(R.string.settings_title)) },
-                icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
-                selected = false,
-                onClick = open,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            onOpenSettings?.let { open ->
+                NavigationDrawerItem(
+                    label = { Text(stringResource(R.string.settings_title)) },
+                    icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                    selected = false,
+                    onClick = open,
+                    modifier = Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+            }
+            conversationActions?.let { actions ->
+                var actionsOpen by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { actionsOpen = true }) {
+                        Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.chat_conversation_actions))
+                    }
+                    DropdownMenu(expanded = actionsOpen, onDismissRequest = { actionsOpen = false }) {
+                        actions { actionsOpen = false }
+                    }
+                }
+            }
         }
     }
 

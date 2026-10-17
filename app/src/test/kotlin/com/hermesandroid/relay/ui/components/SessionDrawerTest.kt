@@ -1,5 +1,7 @@
 package com.hermesandroid.relay.ui.components
 
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -42,6 +44,33 @@ class SessionDrawerTest {
 
     @get:Rule
     val compose = createComposeRule()
+
+    @Test
+    @Config(qualifiers = "w640dp-h360dp-xhdpi")
+    fun `conversation actions preserve session space in a short drawer`() {
+        var opened = 0
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "clean", themePreference = "light", layoutStyleId = "clean") {
+                SessionDrawerContent(
+                    sessions = List(40) { ChatSession("s-$it", "Session $it", null, lastActivityAt = 1_000L - it) },
+                    currentSessionId = null,
+                    conversationActions = { dismiss ->
+                        DropdownMenuItem(text = { Text("Search conversation") }, onClick = { opened++; dismiss() })
+                    },
+                    onOpenSettings = {},
+                    onNewChat = {},
+                    onSelectSession = {},
+                    onDeleteSession = {},
+                    onRenameSession = { _, _ -> },
+                )
+            }
+        }
+        compose.onNodeWithText("Session 0").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Conversation actions").performClick()
+        compose.onNodeWithText("Search conversation").assertIsDisplayed().performClick()
+        compose.onNodeWithText("Settings").assertIsDisplayed()
+        compose.runOnIdle { assertEquals(1, opened) }
+    }
 
     @Test
     fun `settings footer stays visible below a long list and opens settings`() {

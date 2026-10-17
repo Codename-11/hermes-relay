@@ -22,6 +22,15 @@ import org.junit.Test
 class RelayAppStatusTest {
 
     @Test
+    fun `startup preserves onboarding and supervised chat with Bots as ordinary home`() {
+        assertEquals(Screen.Onboarding.route, relayStartDestination(false, false))
+        assertEquals(Screen.Onboarding.route, relayStartDestination(false, true))
+        assertEquals(Screen.Chat.route, relayStartDestination(true, true))
+        assertEquals(Screen.BotMode.route, relayStartDestination(true, false))
+    }
+
+
+    @Test
     fun `footer model omits provider and context window suffix`() {
         assertEquals("gpt-5.6-sol", compactFooterModelLabel("openai/gpt-5.6-sol-900k"))
         assertEquals("claude-opus", compactFooterModelLabel("claude-opus-1M"))

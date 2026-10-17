@@ -3977,9 +3977,15 @@ repeat the category error avoided for platform Threads. Desktop also owns live
 group orchestration locally while publishing a bounded recent-history projection
 through Gateway `ui_meta` for other clients.
 
-**Decision.** The existing drawer gains one `Bot Mode` entry and otherwise keeps
-its session behavior. Bot Mode is a full-screen messenger list with gateway,
-All/Bots/Groups, search, activity, individual Bot, and group-room affordances.
+**Decision.** Bots is the ordinary startup home after onboarding. Its settings
+avatar and Main chat shortcut remain available with one gateway or none.
+Supervised devices retain locked Chat startup. Setup and deep links keep their
+existing destinations. Main chat uses Back to return to Bots and a Sessions
+button for history; Copy session ID, Search, Share and Terminal remain reachable
+in the sessions drawer, with allowed supervised actions retained when history is
+hidden. The drawer also keeps its Bots entry and session behavior. Bot Mode is
+a full-screen messenger list with gateway scope, search, activity, individual
+Bot, and group-room affordances.
 It aggregates every saved gateway with bounded concurrency and keeps the
 foreground connection unchanged. Last-good rows remain visible as offline.
 Upstream `install_id` collapses two saved routes to the same installation before

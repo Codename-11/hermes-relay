@@ -36,6 +36,36 @@ class BotModeScreenTest {
     val compose = createComposeRule()
 
     @Test
+    fun `settings avatar and main chat stay reachable with no gateways`() {
+        var settingsOpened = 0
+        var chatOpened = 0
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = "dark") {
+                BotModeContent(
+                    state = BotModeState(),
+                    connections = emptyList(),
+                    activeConnection = null,
+                    onOpenSettings = { settingsOpened++ },
+                    onOpenChat = { chatOpened++ },
+                    onRefresh = {},
+                    onSelectGateway = {},
+                    onOpenBot = {},
+                    onOpenGroup = {},
+                    onNewBot = {},
+                )
+            }
+        }
+        compose.onNodeWithContentDescription("Settings").performClick()
+        compose.onNodeWithContentDescription("Main chat").performClick()
+        compose.onNodeWithContentDescription("Back").assertDoesNotExist()
+        compose.onNodeWithContentDescription("All gateways").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(1, settingsOpened)
+            assertEquals(1, chatOpened)
+        }
+    }
+
+    @Test
     fun `home lists pinned bots, conversations and read only groups together`() {
         render()
 
@@ -55,7 +85,8 @@ class BotModeScreenTest {
                     state = state(),
                     connections = listOf(connection(), labConnection()),
                     activeConnection = connection(),
-                    onBack = {},
+                    onOpenSettings = {},
+                    onOpenChat = {},
                     onRefresh = {},
                     onSelectGateway = {},
                     onOpenBot = { opened += it.route!!.connectionId },
@@ -167,7 +198,8 @@ class BotModeScreenTest {
                     activeConnection = connection(),
                     selectedGatewayId = selectedGatewayId,
                     openingRoute = openingRoute,
-                    onBack = {},
+                    onOpenSettings = {},
+                    onOpenChat = {},
                     onRefresh = {},
                     onSelectGateway = {},
                     onOpenBot = onOpenBot,

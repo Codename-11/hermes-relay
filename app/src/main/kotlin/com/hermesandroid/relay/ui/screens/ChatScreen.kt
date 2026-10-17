@@ -60,9 +60,9 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.outlined.EditNote
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
@@ -76,7 +76,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -785,6 +784,7 @@ fun ChatScreen(
     onNavigateToProfileInspector: (String) -> Unit = {},
     supervisedPolicy: SupervisedModePolicy = SupervisedModePolicy(),
     onNavigateToBotMode: () -> Unit = {},
+    onBackToBots: (() -> Unit)? = null,
     gitWorkspaceSummary: ChatGitWorkspaceSummary? = null,
     gitWorkspaceAvailable: Boolean = gitWorkspaceSummary != null,
     onNavigateToGitWorkspace: () -> Unit = {},
@@ -2461,6 +2461,90 @@ fun ChatScreen(
         }
     }
 
+    val conversationActions: @Composable (() -> Unit) -> Unit = { dismiss ->
+        currentSessionId?.takeIf { !supervised && it.isNotBlank() }?.let { sessionId ->
+            DropdownMenuItem(
+                text = { Text(copySessionIdLabel) },
+                leadingIcon = {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = null)
+                },
+                onClick = {
+                    dismiss()
+                    scope.launch { drawerState.close() }
+                    scope.launch {
+                        clipboard.setClipEntry(
+                            ClipEntry(
+                                ClipData.newPlainText(
+                                    copySessionIdLabel,
+                                    sessionId,
+                                )
+                            )
+                        )
+                        snackbarHostState.showSnackbar(
+                            message = copiedToClipboardMsg,
+                            duration = SnackbarDuration.Short,
+                        )
+                    }
+                },
+            )
+        }
+        if (!supervised && messages.isNotEmpty()) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chat_search_conversation)) },
+                leadingIcon = {
+                    Icon(Icons.Filled.Search, contentDescription = null)
+                },
+                onClick = {
+                    dismiss()
+                    scope.launch { drawerState.close() }
+                    showTranscriptSearch = true
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chat_share_conversation)) },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.Share,
+                        contentDescription = null,
+                    )
+                },
+                onClick = {
+                    dismiss()
+                    scope.launch { drawerState.close() }
+                    shareConversation(context, messages)
+                },
+            )
+        } else if (
+            messages.isNotEmpty() &&
+            supervisedPolicy.allowsSessionAction(
+                SupervisedSessionAction.ShareTranscript,
+            )
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.chat_share_conversation)) },
+                leadingIcon = {
+                    Icon(Icons.Filled.Share, contentDescription = null)
+                },
+                onClick = {
+                    dismiss()
+                    scope.launch { drawerState.close() }
+                    shareConversation(context, messages)
+                },
+            )
+        }
+        if (!supervised && isCleanLayout) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.cd_terminal)) },
+                leadingIcon = { Icon(Icons.Filled.Code, contentDescription = null) },
+                onClick = {
+                    dismiss()
+                    scope.launch { drawerState.close() }
+                    onNavigateToTerminal()
+                },
+            )
+        }
+    }
+
     BoxWithConstraints {
         // Available chat width in dp drives the wide-layout threshold; the
         // pure resolver decides Sidebar vs Modal from it + the pin intent.
@@ -2565,6 +2649,7 @@ fun ChatScreen(
                     scope.launch { drawerState.close() }
                     onNavigateToBotMode()
                 },
+                conversationActions = conversationActions,
                 onOpenSettings = {
                     scope.launch { drawerState.close() }
                     onNavigateToSettings()
@@ -2808,13 +2893,9 @@ fun ChatScreen(
             TopAppBar(
                 modifier = Modifier.onSizeChanged { chatHeaderHeightPx = it.height },
                 navigationIcon = {
-                    // While the pinned sidebar is the sessions surface the
-                    // hamburger would only stack a second modal sessions
-                    // drawer over it — the pin/unpin affordance lives in the
-                    // sidebar header instead, so the control is omitted.
-                    if (!isPinnedSidebar && sessionsHistoryAllowed) {
-                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                            Icon(Icons.Filled.Menu, contentDescription = stringResource(R.string.cd_sessions))
+                    if (!supervised && onBackToBots != null) {
+                        IconButton(onClick = onBackToBots) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.bot_mode_back_to_bots))
                         }
                     } else if (supervised && !sessionsHistoryAllowed && supervisedPolicy.capabilities.newChat) {
                         IconButton(onClick = { chatViewModel.createNewChat() }) {
@@ -3123,8 +3204,7 @@ fun ChatScreen(
                             )
                         }
                     }
-                    // Clean layout folds Terminal + Settings into the ⋮ menu so
-                    // the header carries only identity plus one action.
+                    // Clean layout keeps navigation and conversation actions in Sessions.
                     if (!cleanLayout) {
                         RelayChromeIconButton(
                             icon = Icons.Filled.Tune,
@@ -3146,131 +3226,23 @@ fun ChatScreen(
                             )
                         }
                     }
-                    // Share is the least-used trailing action (and only valid
-                    // once there's a conversation), so it folds into a ⋮
-                    // overflow instead of competing for width with Terminal +
-                    // Settings — which is what was squeezing the title subtitle.
-                    // Session identity is useful before the first message; sharing only appears
-                    // once the conversation has content.
-                    if (
-                        cleanLayout ||
-                        (!supervised && (messages.isNotEmpty() || !currentSessionId.isNullOrBlank())) ||
-                        (supervised && messages.isNotEmpty() &&
-                            supervisedPolicy.allowsSessionAction(SupervisedSessionAction.ShareTranscript))
-                    ) {
-                        var showOverflowMenu by remember { mutableStateOf(false) }
-                        Box {
-                            if (cleanLayout) {
-                                IconButton(onClick = { showOverflowMenu = true }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.MoreVert,
-                                        contentDescription = stringResource(R.string.chat_more_actions_a11y),
-                                    )
-                                }
-                            } else {
-                                RelayChromeIconButton(
-                                    icon = Icons.Filled.MoreVert,
-                                    contentDescription = stringResource(R.string.chat_more_actions_a11y),
-                                    onClick = { showOverflowMenu = true },
-                                    modifier = Modifier.padding(end = 4.dp),
-                                )
+                    if (!isPinnedSidebar && sessionsHistoryAllowed) {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Icon(Icons.Filled.History, contentDescription = stringResource(R.string.cd_sessions))
+                        }
+                    }
+                    if (supervised && !sessionsHistoryAllowed) {
+                        if (messages.isNotEmpty() && supervisedPolicy.allowsSessionAction(
+                                SupervisedSessionAction.ShareTranscript,
+                            )
+                        ) {
+                            IconButton(onClick = { shareConversation(context, messages) }) {
+                                Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.chat_share_conversation))
                             }
-                            DropdownMenu(
-                                expanded = showOverflowMenu,
-                                onDismissRequest = { showOverflowMenu = false },
-                            ) {
-                                currentSessionId?.takeIf { !supervised && it.isNotBlank() }?.let { sessionId ->
-                                    DropdownMenuItem(
-                                        text = { Text(copySessionIdLabel) },
-                                        leadingIcon = {
-                                            Icon(Icons.Filled.ContentCopy, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showOverflowMenu = false
-                                            scope.launch {
-                                                clipboard.setClipEntry(
-                                                    ClipEntry(
-                                                        ClipData.newPlainText(
-                                                            copySessionIdLabel,
-                                                            sessionId,
-                                                        )
-                                                    )
-                                                )
-                                                snackbarHostState.showSnackbar(
-                                                    message = copiedToClipboardMsg,
-                                                    duration = SnackbarDuration.Short,
-                                                )
-                                            }
-                                        },
-                                    )
-                                }
-                                if (!supervised && messages.isNotEmpty()) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.chat_search_conversation)) },
-                                        leadingIcon = {
-                                            Icon(Icons.Filled.Search, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showOverflowMenu = false
-                                            showTranscriptSearch = true
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.chat_share_conversation)) },
-                                        leadingIcon = {
-                                            Icon(
-                                                imageVector = Icons.Filled.Share,
-                                                contentDescription = null,
-                                            )
-                                        },
-                                        onClick = {
-                                            showOverflowMenu = false
-                                            shareConversation(context, messages)
-                                        },
-                                    )
-                                } else if (
-                                    messages.isNotEmpty() &&
-                                    supervisedPolicy.allowsSessionAction(
-                                        SupervisedSessionAction.ShareTranscript,
-                                    )
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.chat_share_conversation)) },
-                                        leadingIcon = {
-                                            Icon(Icons.Filled.Share, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showOverflowMenu = false
-                                            shareConversation(context, messages)
-                                        },
-                                    )
-                                }
-                                // Navigation entries sit below the conversation actions.
-                                if (cleanLayout) {
-                                    if (!supervised) {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.cd_terminal)) },
-                                            leadingIcon = {
-                                                Icon(Icons.Filled.Code, contentDescription = null)
-                                            },
-                                            onClick = {
-                                                showOverflowMenu = false
-                                                onNavigateToTerminal()
-                                            },
-                                        )
-                                    }
-                                    // Settings lives in the drawer footer; keep it here only when history (and so the drawer) is off.
-                                    if (!sessionsHistoryAllowed) DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.cd_settings)) },
-                                        leadingIcon = {
-                                            Icon(Icons.Filled.Tune, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showOverflowMenu = false
-                                            onNavigateToSettings()
-                                        },
-                                    )
-                                }
+                        }
+                        if (cleanLayout) {
+                            IconButton(onClick = onNavigateToSettings) {
+                                Icon(Icons.Filled.Tune, contentDescription = stringResource(R.string.cd_settings))
                             }
                         }
                     }

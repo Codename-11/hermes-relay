@@ -29,6 +29,26 @@ class RelayNavigationHydrationUiTest {
     val compose = createComposeRule()
 
     @Test
+    fun `main chat back returns to existing Bots and deep linked chat creates Bots home`() {
+        lateinit var controller: NavHostController
+        compose.setContent {
+            controller = rememberNavController()
+            NavHost(navController = controller, startDestination = Screen.Chat.route) {
+                composable(Screen.BotMode.route) { Text("Bots home") }
+                composable(Screen.Chat.route) { Text("Main chat") }
+            }
+        }
+        compose.onNodeWithText("Main chat").assertExists()
+        compose.runOnIdle { controller.returnToBots() }
+        compose.onNodeWithText("Bots home").assertExists()
+        compose.runOnIdle { controller.navigate(Screen.Chat.route()) }
+        compose.onNodeWithText("Main chat").assertExists()
+        compose.runOnIdle { controller.returnToBots() }
+        compose.onNodeWithText("Bots home").assertExists()
+        compose.runOnIdle { org.junit.Assert.assertNull(controller.previousBackStackEntry) }
+    }
+
+    @Test
     fun `connection policy hydration keeps navigation owner and destination mounted`() {
         var navigationHydrated by mutableStateOf(true)
         val observedControllers = mutableListOf<NavHostController>()

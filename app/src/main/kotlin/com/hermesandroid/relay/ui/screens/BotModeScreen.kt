@@ -30,6 +30,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ExpandMore
@@ -112,7 +114,8 @@ private sealed interface BotModeRow {
 @Composable
 fun BotModeScreen(
     connectionViewModel: ConnectionViewModel,
-    onBack: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenChat: () -> Unit,
     onOpenBotChat: (route: BotGatewayRoute, sessionId: String) -> Unit,
     onOpenGroup: (roomKey: String) -> Unit,
 ) {
@@ -146,7 +149,8 @@ fun BotModeScreen(
         connections = connections,
         activeConnection = activeConnection,
         selectedGatewayId = selectedGatewayId,
-        onBack = onBack,
+        onOpenSettings = onOpenSettings,
+        onOpenChat = onOpenChat,
         onRefresh = connectionViewModel::refreshBotMode,
         onSelectGateway = { selectedGatewayId = it },
         openingRoute = openingRoute,
@@ -217,7 +221,8 @@ internal fun BotModeContent(
     connections: List<Connection>,
     activeConnection: Connection?,
     selectedGatewayId: String? = null,
-    onBack: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenChat: () -> Unit,
     onRefresh: () -> Unit,
     onSelectGateway: (String?) -> Unit,
     openingRoute: BotGatewayRouteKey? = null,
@@ -259,9 +264,9 @@ internal fun BotModeContent(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 BotModeCircleButton(
-                    icon = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = stringResource(R.string.onboarding_back),
-                    onClick = onBack,
+                    icon = Icons.Filled.AccountCircle,
+                    contentDescription = stringResource(R.string.cd_settings),
+                    onClick = onOpenSettings,
                 )
                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     // The title doubles as the gateway scope picker when there is more than one.
@@ -328,6 +333,12 @@ internal fun BotModeContent(
                         }
                     }
                 }
+                BotModeCircleButton(
+                    icon = Icons.Filled.ChatBubble,
+                    contentDescription = stringResource(R.string.bot_mode_main_chat),
+                    onClick = onOpenChat,
+                )
+                Spacer(Modifier.width(8.dp))
                 BotModeCircleButton(
                     icon = Icons.Filled.Add,
                     contentDescription = stringResource(R.string.bot_mode_new_chat),
