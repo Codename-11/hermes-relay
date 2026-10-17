@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
@@ -100,6 +101,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.Role
+import androidx.compose.runtime.key
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -166,6 +168,21 @@ import com.hermesandroid.relay.assistant.AssistantWakeRuntimeState
 import kotlinx.coroutines.launch
 
 internal enum class VoiceSettingsSection { Output, Listening, Advanced }
+
+@Composable
+internal fun rememberVoiceSettingsScrollState(
+    selected: VoiceSettingsSection,
+    connectionId: String?,
+    profileName: String?,
+): ScrollState {
+    // One saveable state per tab so inactive tabs keep their position; a new connection/profile resets them.
+    val states = VoiceSettingsSection.entries.map { section ->
+        key(section) {
+            rememberSaveable(connectionId, profileName, saver = ScrollState.Saver) { ScrollState(0) }
+        }
+    }
+    return states[selected.ordinal]
+}
 
 /**
  * Voice settings follow the active connection and profile.
@@ -348,6 +365,7 @@ fun VoiceSettingsScreen(
     val scope = rememberCoroutineScope()
     var presetApplying by remember { mutableStateOf(false) }
     var selectedSection by rememberSaveable { mutableStateOf(VoiceSettingsSection.Output) }
+    val sectionScrollState = rememberVoiceSettingsScrollState(selectedSection, connectionId, selectedProfile?.name)
 
     val presetState = VoiceModePresetState(
         voiceSettings = voiceSettings,
@@ -519,7 +537,7 @@ fun VoiceSettingsScreen(
 
             androidx.compose.runtime.key(selectedSection) {
                 Column(
-                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
+                    modifier = Modifier.weight(1f).verticalScroll(sectionScrollState),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                 ) {
                     VoiceProfileSummaryCard(

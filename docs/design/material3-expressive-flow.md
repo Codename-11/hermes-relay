@@ -82,6 +82,8 @@ These remain secondary destinations rather than competing with chat and voice:
 
 - Native Material tabs expose selection and support horizontal scrolling at enlarged text. Tabs stay visible while each tab's content scrolls; the profile summary scrolls with content so it cannot consume a short window.
 - Service choices use a single radio group, full-row touch targets and semantic container colors. Live conversation explains its Relay requirement even when unavailable. Existing saved engine and route values are retained.
+- Each Voice tab keeps its own scroll position across tab switches and recreation; switching connection or profile resets them.
+- Tapping voice when the Dashboard needs sign-in opens Dashboard sign-in directly (supervised mode keeps the warning).
 - The first Voice tab contains everyday service and output choices. Route selection, scope and host configuration remain under Advanced. The summary returns to the Voice tab.
 - Clean uses the official `MotionScheme.expressive()` at the theme root, including separately hosted themed windows. Custom composer/appearance transitions use the same library specs. Classic uses the standard scheme.
 - Existing semantic palettes, chosen fonts and shape preferences remain authoritative. Clean voice cards and Settings categories use tonal surfaces; Classic retains its outlines and decorations.

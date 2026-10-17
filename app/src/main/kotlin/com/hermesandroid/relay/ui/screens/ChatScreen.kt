@@ -4788,6 +4788,13 @@ fun ChatScreen(
                         },
                         onStartVoice = requestVoiceMode,
                         onSetupNotice = {
+                            // Sign-in is the one fix the user can make right now; supervised mode hides it.
+                            if (!supervised && standardVoiceAvailability ==
+                                com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired
+                            ) {
+                                onNavigateToDashboardSignIn()
+                                return@dispatchChatVoiceAction
+                            }
                             UiMessageBus.warning(when (standardVoiceAvailability) {
                                     com.hermesandroid.relay.viewmodel.StandardVoiceAvailability.SignInRequired ->
                                         standardVoiceSignInRouteHint?.let { route ->
