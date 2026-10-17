@@ -784,7 +784,7 @@
     <string name="settings_connections">Gateways</string>
     <string name="settings_connections_desc">Hermes installations, routes, sign-in, and extensions</string>
     <string name="settings_hermes">Hermes</string>
-    <string name="settings_hermes_management">Hermes management</string>
+    <string name="settings_hermes_management">Manage</string>
     <string name="settings_hermes_management_desc">Dashboard features: skills, cron, MCP, profiles, models</string>
     <string name="settings_chat">Chat</string>
     <string name="settings_chat_desc">Chat behavior, Gateway, Direct API, tool display, message length</string>
@@ -1152,11 +1152,11 @@
     <string name="active_section_revoke_relay">Revoke Relay pairing</string>
 
     <!-- P0: SessionDrawer -->
-    <string name="bot_mode_title">Bot Mode</string>
+    <string name="bot_mode_title">Bots</string>
     <string name="bot_mode_drawer_summary">Bots and group rooms</string>
-    <string name="bot_mode_search">Search Bot Mode</string>
+    <string name="bot_mode_search">Search Bots</string>
     <string name="bot_mode_search_hint">Search Bots and groups</string>
-    <string name="bot_mode_refresh">Refresh Bot Mode</string>
+    <string name="bot_mode_refresh">Refresh Bots</string>
     <string name="bot_mode_new_bot">New Bot</string>
     <string name="bot_mode_gateway_unavailable">Gateway unavailable</string>
     <string name="bot_mode_all_gateways">All gateways</string>
@@ -1178,7 +1178,7 @@
     <string name="bot_mode_bot_description">Role and description</string>
     <string name="bot_mode_create_help">The new Bot starts from the default profile and shares its sign-in. You can refine its skills and model in Manage.</string>
     <string name="bot_mode_create">Create Bot</string>
-    <string name="bot_mode_back_to_bots">Back to Bot Mode</string>
+    <string name="bot_mode_back_to_bots">Back to Bots</string>
     <string name="bot_mode_chat_open_failed">Bot Chat could not open</string>
     <string name="bot_mode_created">%1$s created</string>
     <string name="bot_mode_create_failed">Bot could not be created</string>
@@ -3367,7 +3367,7 @@
     <string name="msg_bubble_not_sent">Not sent</string>
 
     <!-- ProfileInspectorCard -->
-    <string name="profile_inspector_card_title">Inspect Agent</string>
+    <string name="profile_inspector_card_title">Inspect agent</string>
     <string name="profile_inspector_card_subtitle">View config, SOUL, memory, skills</string>
     <string name="profile_inspector_card_no_agent">No active agent</string>
 
@@ -4702,4 +4702,9 @@
     <string name="voice_service_live">Live conversation</string>
     <string name="voice_service_live_desc">Talk back and forth with a realtime voice provider. Hermes handles tools and memory.</string>
     <string name="voice_service_relay_required">Connect Relay to use live conversation. Chat voice works with the standard Hermes Dashboard.</string>
+    <string name="settings_section_assistant">Assistant</string>
+    <string name="settings_section_connection">Connection</string>
+    <string name="settings_section_app">App</string>
+    <string name="settings_section_help">Help &amp; info</string>
+    <string name="settings_relay_tools_desc">Terminal, device control, sessions and notifications. Needs Relay.</string>
 </resources>

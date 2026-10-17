@@ -708,7 +708,7 @@
     <string name="settings_connections">网关</string>
     <string name="settings_connections_desc">API、仪表盘、Relay 配对和路由</string>
     <string name="settings_hermes">Hermes</string>
-    <string name="settings_hermes_management">Hermes 管理</string>
+    <string name="settings_hermes_management">管理</string>
     <string name="settings_hermes_management_desc">仪表盘功能：技能、定时任务、MCP、配置文件、模型</string>
     <string name="settings_chat">聊天</string>
     <string name="settings_chat_desc">聊天行为、Gateway、Direct API、工具显示、消息长度</string>
@@ -953,11 +953,11 @@
     <string name="detail_current_route">当前路由</string>
 
     <!-- P0: SessionDrawer -->
-    <string name="bot_mode_title">Bot 模式</string>
+    <string name="bot_mode_title">Bot</string>
     <string name="bot_mode_drawer_summary">Bot 和群组房间</string>
-    <string name="bot_mode_search">搜索 Bot 模式</string>
+    <string name="bot_mode_search">搜索 Bot</string>
     <string name="bot_mode_search_hint">搜索 Bot 和群组</string>
-    <string name="bot_mode_refresh">刷新 Bot 模式</string>
+    <string name="bot_mode_refresh">刷新 Bot</string>
     <string name="bot_mode_new_bot">新建 Bot</string>
     <string name="bot_mode_gateway_unavailable">网关不可用</string>
     <string name="bot_mode_all_gateways">所有网关</string>
@@ -979,7 +979,7 @@
     <string name="bot_mode_bot_description">角色和说明</string>
     <string name="bot_mode_create_help">新 Bot 基于默认配置文件创建并共享其登录。你可以在“管理”中调整技能和模型。</string>
     <string name="bot_mode_create">创建 Bot</string>
-    <string name="bot_mode_back_to_bots">返回 Bot 模式</string>
+    <string name="bot_mode_back_to_bots">返回 Bot 列表</string>
     <string name="bot_mode_chat_open_failed">无法打开 Bot Chat</string>
     <string name="bot_mode_created">已创建 %1$s</string>
     <string name="bot_mode_create_failed">无法创建 Bot</string>
@@ -4567,4 +4567,9 @@
     <string name="voice_service_relay_required">连接Relay后即可使用实时对话。聊天语音可通过标准Hermes控制台使用。</string>
     <string name="voice_overlay_gpt_live_mode">Live · 自动检测发言结束</string>
     <string name="voice_overlay_gpt_live_listening_action">GPT-Live会持续聆听；点按即可立即获取回复</string>
+    <string name="settings_section_assistant">助手</string>
+    <string name="settings_section_connection">连接</string>
+    <string name="settings_section_app">应用</string>
+    <string name="settings_section_help">帮助与信息</string>
+    <string name="settings_relay_tools_desc">终端、设备控制、会话和通知。需要 Relay。</string>
 </resources>

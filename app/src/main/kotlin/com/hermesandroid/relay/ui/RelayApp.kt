@@ -3009,11 +3009,6 @@ fun RelayApp() {
                         onNavigateToPermissions = {
                             navController.navigate(Screen.PermissionsSettings.route)
                         },
-                        // === PHASE3-safety-rails: bridge safety route ===
-                        onNavigateToBridgeSafety = {
-                            navController.navigate(Screen.BridgeSafetySettings.route)
-                        },
-                        // === END PHASE3-safety-rails ===
                         onNavigateToPairedDevices = {
                             navController.navigate(Screen.PairedDevices.route)
                         },

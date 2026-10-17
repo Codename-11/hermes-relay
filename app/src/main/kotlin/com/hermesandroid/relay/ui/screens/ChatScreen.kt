@@ -2619,6 +2619,10 @@ fun ChatScreen(
                     scope.launch { drawerState.close() }
                     onNavigateToBotMode()
                 },
+                onOpenSettings = {
+                    scope.launch { drawerState.close() }
+                    onNavigateToSettings()
+                },
                 onNewChat = {
                     if (!supervised || supervisedPolicy.capabilities.newChat) {
                         chatViewModel.createNewChat()
@@ -3229,30 +3233,6 @@ fun ChatScreen(
                                 expanded = showOverflowMenu,
                                 onDismissRequest = { showOverflowMenu = false },
                             ) {
-                                if (cleanLayout) {
-                                    if (!supervised) {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.cd_terminal)) },
-                                            leadingIcon = {
-                                                Icon(Icons.Filled.Code, contentDescription = null)
-                                            },
-                                            onClick = {
-                                                showOverflowMenu = false
-                                                onNavigateToTerminal()
-                                            },
-                                        )
-                                    }
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.cd_settings)) },
-                                        leadingIcon = {
-                                            Icon(Icons.Filled.Tune, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            showOverflowMenu = false
-                                            onNavigateToSettings()
-                                        },
-                                    )
-                                }
                                 currentSessionId?.takeIf { !supervised && it.isNotBlank() }?.let { sessionId ->
                                     DropdownMenuItem(
                                         text = { Text(copySessionIdLabel) },
@@ -3316,6 +3296,32 @@ fun ChatScreen(
                                         onClick = {
                                             showOverflowMenu = false
                                             shareConversation(context, messages)
+                                        },
+                                    )
+                                }
+                                // Navigation entries sit below the conversation actions.
+                                if (cleanLayout) {
+                                    if (!supervised) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.cd_terminal)) },
+                                            leadingIcon = {
+                                                Icon(Icons.Filled.Code, contentDescription = null)
+                                            },
+                                            onClick = {
+                                                showOverflowMenu = false
+                                                onNavigateToTerminal()
+                                            },
+                                        )
+                                    }
+                                    // Settings lives in the drawer footer; keep it here only when history (and so the drawer) is off.
+                                    if (!sessionsHistoryAllowed) DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.cd_settings)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Tune, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showOverflowMenu = false
+                                            onNavigateToSettings()
                                         },
                                     )
                                 }

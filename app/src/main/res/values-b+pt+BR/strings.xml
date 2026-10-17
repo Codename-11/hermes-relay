@@ -670,7 +670,7 @@
     <string name="settings_connections">Gateways</string>
     <string name="settings_connections_desc">API, painel, pareamento com o relay e rotas</string>
     <string name="settings_hermes">Hermes</string>
-    <string name="settings_hermes_management">Gerenciamento do Hermes</string>
+    <string name="settings_hermes_management">Gerenciar</string>
     <string name="settings_hermes_management_desc">Recursos do painel: habilidades, cron, MCP, perfis e modelos</string>
     <string name="settings_chat">Chat</string>
     <string name="settings_chat_desc">Comportamento do chat, Gateway, API direta, exibição de ferramentas e tamanho das mensagens</string>
@@ -910,11 +910,11 @@
     <string name="detail_tab_access">Acesso</string>
     <string name="detail_current_route">Rota atual</string>
     <!-- P0: SessionDrawer -->
-    <string name="bot_mode_title">Modo Bot</string>
+    <string name="bot_mode_title">Bots</string>
     <string name="bot_mode_drawer_summary">Bots e salas em grupo</string>
-    <string name="bot_mode_search">Pesquisar no Modo Bot</string>
+    <string name="bot_mode_search">Pesquisar bots</string>
     <string name="bot_mode_search_hint">Pesquisar Bots e grupos</string>
-    <string name="bot_mode_refresh">Atualizar Modo Bot</string>
+    <string name="bot_mode_refresh">Atualizar bots</string>
     <string name="bot_mode_new_bot">Novo Bot</string>
     <string name="bot_mode_gateway_unavailable">Gateway indisponível</string>
     <string name="bot_mode_all_gateways">Todos os gateways</string>
@@ -936,7 +936,7 @@
     <string name="bot_mode_bot_description">Função e descrição</string>
     <string name="bot_mode_create_help">O novo Bot começa com o perfil padrão e compartilha o login dele. Você pode ajustar habilidades e modelo em Gerenciar.</string>
     <string name="bot_mode_create">Criar Bot</string>
-    <string name="bot_mode_back_to_bots">Voltar ao Modo Bot</string>
+    <string name="bot_mode_back_to_bots">Voltar aos Bots</string>
     <string name="bot_mode_chat_open_failed">Não foi possível abrir o Bot Chat</string>
     <string name="bot_mode_created">%1$s criado</string>
     <string name="bot_mode_create_failed">Não foi possível criar o Bot</string>
@@ -4486,4 +4486,9 @@
     <string name="voice_service_relay_required">Conecte o Relay para conversar ao vivo. A voz do chat funciona com o painel padrão do Hermes.</string>
     <string name="voice_overlay_gpt_live_mode">Live · detecção automática de turnos</string>
     <string name="voice_overlay_gpt_live_listening_action">O GPT-Live escuta continuamente; toque para receber uma resposta agora</string>
+    <string name="settings_section_assistant">Assistente</string>
+    <string name="settings_section_connection">Conexão</string>
+    <string name="settings_section_app">App</string>
+    <string name="settings_section_help">Ajuda e informações</string>
+    <string name="settings_relay_tools_desc">Terminal, controle do dispositivo, sessões e notificações. Requer o Relay.</string>
 </resources>

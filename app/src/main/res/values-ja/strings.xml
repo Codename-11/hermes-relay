@@ -708,7 +708,7 @@
     <string name="settings_connections">ゲートウェイ</string>
     <string name="settings_connections_desc">API、ダッシュボード、Relayのペアリング、およびルート</string>
     <string name="settings_hermes">Hermes</string>
-    <string name="settings_hermes_management">Hermes 管理</string>
+    <string name="settings_hermes_management">管理</string>
     <string name="settings_hermes_management_desc">ダッシュボードの機能: スキル、cron、MCP、プロファイル、モデル</string>
     <string name="settings_chat">チャット</string>
     <string name="settings_chat_desc">チャット動作、Gateway、Direct API、ツール表示、メッセージ長</string>
@@ -969,11 +969,11 @@
     <string name="detail_overview_summary">Chat、Manage、Voice では標準の Hermes を使用します。Relay は高度な端末機能を追加するオプションの拡張機能です。</string>
 
     <!-- P0: SessionDrawer -->
-    <string name="bot_mode_title">Botモード</string>
+    <string name="bot_mode_title">Bot</string>
     <string name="bot_mode_drawer_summary">Botとグループルーム</string>
-    <string name="bot_mode_search">Botモードを検索</string>
+    <string name="bot_mode_search">Botを検索</string>
     <string name="bot_mode_search_hint">Botとグループを検索</string>
-    <string name="bot_mode_refresh">Botモードを更新</string>
+    <string name="bot_mode_refresh">Botを更新</string>
     <string name="bot_mode_new_bot">新しいBot</string>
     <string name="bot_mode_gateway_unavailable">ゲートウェイを利用できません</string>
     <string name="bot_mode_all_gateways">すべてのゲートウェイ</string>
@@ -995,7 +995,7 @@
     <string name="bot_mode_bot_description">役割と説明</string>
     <string name="bot_mode_create_help">新しいBotは既定のプロファイルを基に作成され、サインインを共有します。スキルとモデルは管理画面で調整できます。</string>
     <string name="bot_mode_create">Botを作成</string>
-    <string name="bot_mode_back_to_bots">Botモードに戻る</string>
+    <string name="bot_mode_back_to_bots">Bot一覧に戻る</string>
     <string name="bot_mode_chat_open_failed">Bot Chatを開けませんでした</string>
     <string name="bot_mode_created">%1$sを作成しました</string>
     <string name="bot_mode_create_failed">Botを作成できませんでした</string>
@@ -4638,4 +4638,9 @@
     <string name="voice_service_relay_required">リアルタイム会話にはRelayへの接続が必要です。チャット音声は標準のHermesダッシュボードで利用できます。</string>
     <string name="voice_overlay_gpt_live_mode">Live · 発話の区切りを自動検出</string>
     <string name="voice_overlay_gpt_live_listening_action">GPT-Liveは継続的に聞き取ります。タップすると今すぐ返答します</string>
+    <string name="settings_section_assistant">アシスタント</string>
+    <string name="settings_section_connection">接続</string>
+    <string name="settings_section_app">アプリ</string>
+    <string name="settings_section_help">ヘルプと情報</string>
+    <string name="settings_relay_tools_desc">ターミナル、デバイス操作、セッション、通知。Relayが必要です。</string>
 </resources>

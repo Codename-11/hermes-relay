@@ -687,7 +687,7 @@
     <string name="settings_connections">Шлюзы</string>
     <string name="settings_connections_desc">API, панель управления, сопряжение Relay и маршруты</string>
     <string name="settings_hermes">Гермес</string>
-    <string name="settings_hermes_management">Управление Гермесом</string>
+    <string name="settings_hermes_management">Управление</string>
     <string name="settings_hermes_management_desc">Функции панели управления: навыки, cron, MCP, профили, модели</string>
     <string name="settings_chat">Чат</string>
     <string name="settings_chat_desc">Поведение чата, Gateway, Direct API, отображение инструментов, длина сообщения</string>
@@ -988,11 +988,11 @@
     <string name="active_section_unencrypted_transport">Это соединение использует незашифрованный транспорт</string>
     <string name="active_section_actions">Действия</string>
     <string name="active_section_revoke_relay">Отозвать сопряжение Relay</string>
-    <string name="bot_mode_title">Режим ботов</string>
+    <string name="bot_mode_title">Боты</string>
     <string name="bot_mode_drawer_summary">Боты и групповые комнаты</string>
-    <string name="bot_mode_search">Поиск в режиме ботов</string>
+    <string name="bot_mode_search">Поиск ботов</string>
     <string name="bot_mode_search_hint">Поиск ботов и групп</string>
-    <string name="bot_mode_refresh">Обновить режим ботов</string>
+    <string name="bot_mode_refresh">Обновить список ботов</string>
     <string name="bot_mode_new_bot">Новый бот</string>
     <string name="bot_mode_gateway_unavailable">Шлюз недоступен</string>
     <string name="bot_mode_all_gateways">Все шлюзы</string>
@@ -1014,7 +1014,7 @@
     <string name="bot_mode_bot_description">Роль и описание</string>
     <string name="bot_mode_create_help">Новый бот создаётся на основе профиля по умолчанию и использует его вход. Навыки и модель можно настроить в разделе управления.</string>
     <string name="bot_mode_create">Создать бота</string>
-    <string name="bot_mode_back_to_bots">Назад в режим ботов</string>
+    <string name="bot_mode_back_to_bots">Назад к ботам</string>
     <string name="bot_mode_chat_open_failed">Не удалось открыть Bot Chat</string>
     <string name="bot_mode_created">%1$s создан</string>
     <string name="bot_mode_create_failed">Не удалось создать бота</string>
@@ -4382,4 +4382,9 @@
     <string name="voice_service_relay_required">Для живого разговора подключите Relay. Озвучивание чата работает со стандартной панелью Hermes.</string>
     <string name="voice_overlay_gpt_live_mode">Live · автоматическое определение очередности реплик</string>
     <string name="voice_overlay_gpt_live_listening_action">GPT-Live слушает непрерывно; нажмите, чтобы получить ответ сейчас</string>
+    <string name="settings_section_assistant">Ассистент</string>
+    <string name="settings_section_connection">Подключение</string>
+    <string name="settings_section_app">Приложение</string>
+    <string name="settings_section_help">Справка и сведения</string>
+    <string name="settings_relay_tools_desc">Терминал, управление устройством, сеансы и уведомления. Требуется Relay.</string>
 </resources>

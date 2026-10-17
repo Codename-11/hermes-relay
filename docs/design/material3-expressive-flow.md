@@ -40,13 +40,13 @@ flowchart TD
 | Connect / pair | Add or re-pair one connection | Keep transient setup separate from saved connections; cancel/back preserves saved data |
 | Dashboard sign in | Authenticate the selected Dashboard origin | Preserve native callback, trust and authentication boundaries |
 | Chat | Read, compose and send; start voice from the idle waveform action | Keep send, stop and voice mutually meaningful; show reconnect or setup guidance |
-| Conversation drawer | Resume a conversation in its owning connection/profile | Cached, loading, empty, unavailable and pagination retry stay distinct |
+| Conversation drawer | Resume a conversation, open Bots, reach Settings from the footer | Cached, loading, empty, unavailable and pagination retry stay distinct |
 | Profile inspector and switcher | Inspect or change the active profile | Identity and unread state stay connection/profile scoped |
 | Composer action sheet | Attach camera, photos, files or clipboard; change model/effort; browse commands | Scrollable at large text and in short windows; unavailable actions remain gated |
 | Voice conversation | Start/stop listening and hear responses | Preserve microphone permission, hold/tap/continuous input, retry and explicit exit |
 | Focus voice | Converse with fewer visual distractions | Preserve transcript, current state, presentation switch and settings access |
 | Conversation voice dock | Converse while reading the chat | Preserve transcript ownership, pause/stop and return to the full presentation |
-| Settings | Reach Voice directly below the active-agent summary, then other categories | Category descriptions wrap in Clean rather than hiding at large text |
+| Settings | Grouped landing: Assistant (Voice, Chat, Media, Inspect agent, Profile lock), Connection, Hermes, Relay tools, App, Help & info | Relay tools fold into one expandable row until Relay is set up; Bridge safety is reached from Bridge | Category descriptions wrap in Clean rather than hiding at large text |
 | Voice / Voice tab | Choose Chat voice or Live conversation, then configure output | Chat voice works with upstream Dashboard; live conversation requires Relay; provider options remain server supplied |
 | Voice / Listening tab | Configure tap/hold/continuous, assistant, wake word and interruptions | Preserve Android role selection, permissions, install progress and test failures |
 | Voice / Advanced tab | Diagnose/select audio route and edit server configuration | Preserve sign-in actions, route readiness, profile scope and explicit save/error behavior |
@@ -136,3 +136,13 @@ The Google Play debug package was updated in place on the physical Galaxy and
 launched successfully. Live audio and locked-device visual acceptance are not
 certified. The independent native pet screenshot harness gap is tracked in
 [the project TODO](../project/TODO.md).
+
+## Navigation simplification (2026-10-17)
+
+- Drawer follows ChatGPT's sidebar: search and new chat on top, **Bots** as a
+  visible primary entry (was hidden in the Clean overflow), then conversations,
+  with **Settings** pinned to the footer in both layouts.
+- "Bot Mode" is now "Bots" everywhere a user sees it (ADR 67's workspace is unchanged).
+- The chat ⋮ menu lists conversation actions first (copy ID, search, share), then
+  Terminal. Settings appears there only when supervised mode hides the drawer.
+- Settings rows match their destination titles ("Manage").

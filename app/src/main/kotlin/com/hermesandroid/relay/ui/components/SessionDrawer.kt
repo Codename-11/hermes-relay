@@ -75,6 +75,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -275,6 +277,8 @@ fun SessionDrawerContent(
     onRetryLoadMore: (() -> Unit)? = null,
     /** Opens the separate Bot Mode messenger workspace; never changes drawer filters. */
     onOpenBotMode: (() -> Unit)? = null,
+    /** ChatGPT-style footer entry; null hides it. */
+    onOpenSettings: (() -> Unit)? = null,
     onNewChat: () -> Unit,
     onSelectSession: (String) -> Unit,
     onDeleteSession: (String) -> Unit,
@@ -491,6 +495,18 @@ fun SessionDrawerContent(
     }
 
     val cleanDrawer = isCleanLayout
+    // Bots are a primary destination (ChatGPT's GPTs pattern), not an overflow item.
+    val botsEntry: @Composable () -> Unit = {
+        onOpenBotMode?.let { openBotMode ->
+            Spacer(modifier = Modifier.height(8.dp))
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.bot_mode_title)) },
+                icon = { Icon(Icons.Filled.Groups, contentDescription = null) },
+                selected = false,
+                onClick = openBotMode,
+            )
+        }
+    }
     val panel: @Composable () -> Unit = {
         Column(modifier = Modifier.padding(16.dp)) {
             // Clean: ChatGPT/Telegram-style top row. Search is always visible,
@@ -557,7 +573,7 @@ fun SessionDrawerContent(
                     }
                     var moreOpen by remember { mutableStateOf(false) }
                     val sourcesAvailable = onToggleSourceHidden != null && presentSources.isNotEmpty()
-                    if (onRefresh != null || onOpenBotMode != null || sourcesAvailable || supervisedSessionActions == null) {
+                    if (onRefresh != null || sourcesAvailable || supervisedSessionActions == null) {
                         Box {
                             IconButton(onClick = { moreOpen = true }) {
                                 Icon(
@@ -566,16 +582,6 @@ fun SessionDrawerContent(
                                 )
                             }
                             DropdownMenu(expanded = moreOpen, onDismissRequest = { moreOpen = false }) {
-                                onOpenBotMode?.let { openBotMode ->
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.bot_mode_title)) },
-                                        leadingIcon = { Icon(Icons.Filled.Groups, contentDescription = null) },
-                                        onClick = {
-                                            moreOpen = false
-                                            openBotMode()
-                                        },
-                                    )
-                                }
                                 if (supervisedSessionActions == null) {
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.drawer_customize_sessions)) },
@@ -632,6 +638,7 @@ fun SessionDrawerContent(
                         }
                     }
                 }
+                botsEntry()
                 // The connection/profile name stays as quiet context.
                 Text(
                     text = drawerTitle,
@@ -814,27 +821,7 @@ fun SessionDrawerContent(
                 Text(stringResource(R.string.drawer_new_chat))
             }
 
-            if (!cleanDrawer) onOpenBotMode?.let { openBotMode ->
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = openBotMode,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Icon(Icons.Filled.Groups, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        horizontalAlignment = Alignment.Start,
-                    ) {
-                        Text(stringResource(R.string.bot_mode_title))
-                        Text(
-                            stringResource(R.string.bot_mode_drawer_summary),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
+            if (!cleanDrawer) botsEntry()
 
             if (!cleanDrawer && (searchExpanded || query.isNotBlank())) {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1194,6 +1181,18 @@ fun SessionDrawerContent(
     // (compact layouts, unchanged) or as a persistent 320dp leading sidebar
     // (wide layouts with the pin active). Filters, search, rows, and dialogs
     // are defined once above so both presentations stay behaviorally identical.
+    val settingsFooter: @Composable () -> Unit = {
+        onOpenSettings?.let { open ->
+            NavigationDrawerItem(
+                label = { Text(stringResource(R.string.settings_title)) },
+                icon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                selected = false,
+                onClick = open,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
+    }
+
     if (asSidebar) {
         Surface(
             modifier = Modifier.width(320.dp).fillMaxHeight(),
@@ -1202,7 +1201,10 @@ fun SessionDrawerContent(
         ) {
             // ModalDrawerSheet supplies a ColumnScope. Surface does not, so
             // stack the shared header and list explicitly in this presentation.
-            Column(modifier = Modifier.fillMaxHeight()) { panel() }
+            Column(modifier = Modifier.fillMaxHeight()) {
+                Column(modifier = Modifier.weight(1f)) { panel() }
+                settingsFooter()
+            }
         }
     } else {
         ModalDrawerSheet(
@@ -1210,7 +1212,8 @@ fun SessionDrawerContent(
             drawerContainerColor = RelayRefresh.Background,
             drawerContentColor = RelayRefresh.Ink,
         ) {
-            panel()
+            Column(modifier = Modifier.weight(1f)) { panel() }
+            settingsFooter()
         }
     }
 

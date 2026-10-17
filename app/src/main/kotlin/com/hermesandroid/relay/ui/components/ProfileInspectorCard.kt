@@ -27,6 +27,7 @@ import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.Profile
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
+import com.hermesandroid.relay.ui.theme.isCleanLayout
 
 /**
  * Settings card that opens the Profile Inspector full-screen viewer for
@@ -57,11 +58,11 @@ fun ProfileInspectorCard(
             .fillMaxWidth()
             .gradientBorder(
                 shape = appearanceRoundedCornerShape(12.dp),
-                isDarkTheme = isDarkTheme,
+                isDarkTheme = isDarkTheme && !isCleanLayout,
             )
             .alpha(if (enabled) 1f else 0.5f),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            containerColor = if (isCleanLayout) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
         Row(

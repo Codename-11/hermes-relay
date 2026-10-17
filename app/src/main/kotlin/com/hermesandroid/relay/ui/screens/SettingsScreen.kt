@@ -90,6 +90,13 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hermesandroid.relay.util.BatteryOptimizations
 import androidx.compose.ui.semantics.Role
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -205,9 +212,6 @@ fun SettingsScreen(
     onNavigateToNotificationCompanion: () -> Unit,
     onNavigateToProactiveSettings: () -> Unit,
     onNavigateToPermissions: () -> Unit,
-    // === PHASE3-safety-rails: bridge safety entry-point ===
-    onNavigateToBridgeSafety: () -> Unit,
-    // === END PHASE3-safety-rails ===
     onNavigateToPairedDevices: () -> Unit,
     onNavigateToDeveloperSettings: () -> Unit,
     onNavigateToAbout: () -> Unit,
@@ -393,6 +397,8 @@ fun SettingsScreen(
         connectionViewModel.reconnectIfStale()
     }
 
+    var relayToolsExpanded by rememberSaveable { mutableStateOf(false) }
+
     // AgentInfoSheet visibility — driven by a tap on the Active Agent
     // card at the top of the category list. Previously this tapped
     // route was `onNavigateToChatWithAgentSheet` (navigate to Chat +
@@ -500,11 +506,30 @@ fun SettingsScreen(
                 modifier = Modifier.settingsPetSurface("settings-card:active-agent"),
             )
 
+            SettingsSectionHeader(stringResource(R.string.settings_section_assistant))
+
             SettingsCategoryRow(
                 icon = Icons.Filled.GraphicEq,
                 title = stringResource(R.string.settings_voice_mode),
                 subtitle = stringResource(R.string.settings_voice_mode_desc),
                 onClick = onNavigateToVoiceSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.AutoMirrored.Filled.Chat,
+                title = stringResource(R.string.settings_chat),
+                subtitle = stringResource(R.string.settings_chat_desc),
+                badge = chatPill,
+                onClick = onNavigateToChatSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Image,
+                title = stringResource(R.string.settings_media),
+                subtitle = stringResource(R.string.settings_media_desc),
+                onClick = onNavigateToMediaSettings,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -547,32 +572,7 @@ fun SettingsScreen(
                 modifier = Modifier.settingsPetSurface("settings-card:profile-lock"),
             )
 
-
-            // ── Quick Controls ─────────────────────────────────────────
-            // The switches flipped most often, pinned to the top-level Settings
-            // landing instead of buried in a sub-screen. Persistent connection is
-            // connection-level (not chat-specific), so it belongs here beside the
-            // agent / profile cards. Extensible — add more frequently-toggled
-            // switches in QuickControlsCard.
-            QuickControlsCard(
-                connectionViewModel = connectionViewModel,
-                isDarkTheme = isDarkTheme,
-                modifier = Modifier.settingsPetSurface("settings-card:quick-controls"),
-            )
-
-            // (The "Active Connection quick-look card" that used to live
-            // here — showing API / Relay / Session status rows with a
-            // clickable shortcut into a separate singular-connection
-            // detail screen — was removed on 2026-04-21. It was the
-            // second "connection status" surface on a screen that already
-            // had the Active Agent card above it, and it pointed at a
-            // near-identically-named screen (`ConnectionSettings` singular
-            // vs `ConnectionsSettings` plural) which users couldn't tell
-            // apart. Everything the card did — status rows, pair, manual
-            // URL, insecure toggle, manual pairing code — now lives inline
-            // on the active card of the Connections subpage, reached via
-            // the "Connections" category row below. See ADR on the
-            // connection-settings unification.)
+            SettingsSectionHeader(stringResource(R.string.settings_section_connection))
 
             // ── Category list ──────────────────────────────────────────
             // Connections sits ABOVE the Hermes section: it's the foundational
@@ -586,6 +586,19 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
 
+
+            // ── Quick Controls ─────────────────────────────────────────
+            // The switches flipped most often, pinned to the top-level Settings
+            // landing instead of buried in a sub-screen. Persistent connection is
+            // connection-level (not chat-specific), so it belongs here beside the
+            // agent / profile cards. Extensible — add more frequently-toggled
+            // switches in QuickControlsCard.
+            QuickControlsCard(
+                connectionViewModel = connectionViewModel,
+                isDarkTheme = isDarkTheme,
+                modifier = Modifier.settingsPetSurface("settings-card:quick-controls"),
+            )
+
             ProviderUsageLandingCard(
                 response = providerUsageResponse,
                 loaded = providerUsageLoaded,
@@ -597,8 +610,6 @@ fun SettingsScreen(
             )
 
             SettingsSectionHeader(stringResource(R.string.settings_hermes))
-
-
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Link,
@@ -631,98 +642,85 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
 
-            SettingsCategoryRow(
-                icon = Icons.AutoMirrored.Filled.Chat,
-                title = stringResource(R.string.settings_chat),
-                subtitle = stringResource(R.string.settings_chat_desc),
-                badge = chatPill,
-                onClick = onNavigateToChatSettings,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.Image,
-                title = stringResource(R.string.settings_media),
-                subtitle = stringResource(R.string.settings_media_desc),
-                onClick = onNavigateToMediaSettings,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsSectionHeader(stringResource(R.string.settings_power_tools), trailing = pluginBadge)
-
-            SettingsCategoryRow(
-                icon = Icons.AutoMirrored.Filled.Message,
-                title = stringResource(R.string.settings_threads),
-                subtitle = stringResource(R.string.settings_threads_desc),
-                onClick = onNavigateToProactiveSettings,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.Code,
-                title = stringResource(R.string.settings_terminal),
-                subtitle = stringResource(R.string.settings_terminal_desc),                onClick = onNavigateToTerminal,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.PhoneAndroid,
-                title = if (BuildFlavor.isSideload) stringResource(R.string.settings_bridge) else stringResource(R.string.settings_bridge_core),
-                subtitle = if (BuildFlavor.isSideload) {
-                    stringResource(R.string.settings_bridge_desc)
-                } else {
-                    stringResource(R.string.settings_bridge_core_desc)
-                },                onClick = onNavigateToBridge,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.Devices,
-                title = stringResource(R.string.settings_relay_sessions),
-                subtitle = stringResource(R.string.settings_relay_sessions_desc),                onClick = onNavigateToPairedDevices,
-                isDarkTheme = isDarkTheme,
-            )
-
-            // === PHASE3-notif-listener-followup: notification companion entry-point ===
-            SettingsCategoryRow(
-                icon = Icons.Filled.Notifications,
-                title = stringResource(R.string.settings_notification_companion),
-                subtitle = stringResource(R.string.settings_notification_companion_desc),                onClick = onNavigateToNotificationCompanion,
-                isDarkTheme = isDarkTheme,
-            )
-            // === END PHASE3-notif-listener-followup ===
-
-            if (BuildFlavor.isSideload) {
-                // === PHASE3-safety-rails: bridge safety entry-point ===
+            // Relay tools ride the optional plugin; without it they fold into one expandable row.
+            val relayToolsCollapsible = relayUiState == RelayUiState.NotConfigured
+            if (relayToolsCollapsible) {
                 SettingsCategoryRow(
-                    icon = Icons.Filled.Security,
-                    title = stringResource(R.string.settings_bridge_safety),
-                    subtitle = stringResource(R.string.settings_bridge_safety_desc),
-                    badge = SettingsStatusPillModel(
-                        label = stringResource(R.string.settings_sideload),
-                        tone = SettingsStatusTone.Info,
+                    icon = Icons.Filled.Build,
+                    title = stringResource(R.string.settings_power_tools),
+                    subtitle = stringResource(R.string.settings_relay_tools_desc),
+                    badge = pluginBadge,
+                    trailingIcon = if (relayToolsExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                    stateLabel = stringResource(
+                        if (relayToolsExpanded) R.string.changelog_state_expanded else R.string.changelog_state_collapsed,
                     ),
-                    onClick = onNavigateToBridgeSafety,
+                    onClick = { relayToolsExpanded = !relayToolsExpanded },
                     isDarkTheme = isDarkTheme,
                 )
-                // === END PHASE3-safety-rails ===
+            } else {
+                SettingsSectionHeader(stringResource(R.string.settings_power_tools), trailing = pluginBadge)
+            }
+            AnimatedVisibility(visible = !relayToolsCollapsible || relayToolsExpanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SettingsCategoryRow(
+                        icon = Icons.AutoMirrored.Filled.Message,
+                        title = stringResource(R.string.settings_threads),
+                        subtitle = stringResource(R.string.settings_threads_desc),
+                        onClick = onNavigateToProactiveSettings,
+                        isDarkTheme = isDarkTheme,
+                    )
+
+                    SettingsCategoryRow(
+                        icon = Icons.Filled.Code,
+                        title = stringResource(R.string.settings_terminal),
+                        subtitle = stringResource(R.string.settings_terminal_desc),                onClick = onNavigateToTerminal,
+                        isDarkTheme = isDarkTheme,
+                    )
+
+                    SettingsCategoryRow(
+                        icon = Icons.Filled.PhoneAndroid,
+                        title = if (BuildFlavor.isSideload) stringResource(R.string.settings_bridge) else stringResource(R.string.settings_bridge_core),
+                        subtitle = if (BuildFlavor.isSideload) {
+                            stringResource(R.string.settings_bridge_desc)
+                        } else {
+                            stringResource(R.string.settings_bridge_core_desc)
+                        },                onClick = onNavigateToBridge,
+                        isDarkTheme = isDarkTheme,
+                    )
+
+                    SettingsCategoryRow(
+                        icon = Icons.Filled.Devices,
+                        title = stringResource(R.string.settings_relay_sessions),
+                        subtitle = stringResource(R.string.settings_relay_sessions_desc),                onClick = onNavigateToPairedDevices,
+                        isDarkTheme = isDarkTheme,
+                    )
+
+                    // === PHASE3-notif-listener-followup: notification companion entry-point ===
+                    SettingsCategoryRow(
+                        icon = Icons.Filled.Notifications,
+                        title = stringResource(R.string.settings_notification_companion),
+                        subtitle = stringResource(R.string.settings_notification_companion_desc),                onClick = onNavigateToNotificationCompanion,
+                        isDarkTheme = isDarkTheme,
+                    )
+                    // === END PHASE3-notif-listener-followup ===
+                }
             }
 
-            SettingsSectionHeader("App")
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.Security,
-                title = stringResource(R.string.settings_permissions),
-                subtitle = stringResource(R.string.settings_permissions_desc),
-                onClick = onNavigateToPermissions,
-                isDarkTheme = isDarkTheme,
-            )
+            SettingsSectionHeader(stringResource(R.string.settings_section_app))
 
             SettingsCategoryRow(
                 icon = Icons.Filled.Palette,
                 title = stringResource(R.string.settings_appearance),
                 subtitle = stringResource(R.string.settings_appearance_desc),
                 onClick = onNavigateToAppearanceSettings,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Security,
+                title = stringResource(R.string.settings_permissions),
+                subtitle = stringResource(R.string.settings_permissions_desc),
+                onClick = onNavigateToPermissions,
                 isDarkTheme = isDarkTheme,
             )
 
@@ -744,22 +742,6 @@ fun SettingsScreen(
                 isDarkTheme = isDarkTheme,
             )
 
-            SettingsCategoryRow(
-                icon = Icons.Filled.Analytics,
-                title = stringResource(R.string.settings_analytics),
-                subtitle = stringResource(R.string.settings_analytics_desc),
-                onClick = onNavigateToAnalytics,
-                isDarkTheme = isDarkTheme,
-            )
-
-            SettingsCategoryRow(
-                icon = Icons.Filled.Info,
-                title = stringResource(R.string.settings_diagnostics),
-                subtitle = stringResource(R.string.settings_diagnostics_desc),
-                onClick = onNavigateToDiagnostics,
-                isDarkTheme = isDarkTheme,
-            )
-
             if (devOptionsUnlocked) {
                 SettingsCategoryRow(
                     icon = Icons.Filled.Code,
@@ -769,6 +751,24 @@ fun SettingsScreen(
                     isDarkTheme = isDarkTheme,
                 )
             }
+
+            SettingsSectionHeader(stringResource(R.string.settings_section_help))
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Info,
+                title = stringResource(R.string.settings_diagnostics),
+                subtitle = stringResource(R.string.settings_diagnostics_desc),
+                onClick = onNavigateToDiagnostics,
+                isDarkTheme = isDarkTheme,
+            )
+
+            SettingsCategoryRow(
+                icon = Icons.Filled.Analytics,
+                title = stringResource(R.string.settings_analytics),
+                subtitle = stringResource(R.string.settings_analytics_desc),
+                onClick = onNavigateToAnalytics,
+                isDarkTheme = isDarkTheme,
+            )
 
             SettingsCategoryRow(
                 icon = Icons.Filled.NewReleases,
@@ -963,10 +963,10 @@ private fun ProfileLockCard(
             .fillMaxWidth()
             .gradientBorder(
                 shape = appearanceRoundedCornerShape(12.dp),
-                isDarkTheme = isDarkTheme,
+                isDarkTheme = isDarkTheme && !isCleanLayout,
             ),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            containerColor = if (isCleanLayout) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
         Row(
@@ -1044,10 +1044,10 @@ private fun QuickControlsCard(
             .fillMaxWidth()
             .gradientBorder(
                 shape = appearanceRoundedCornerShape(12.dp),
-                isDarkTheme = isDarkTheme,
+                isDarkTheme = isDarkTheme && !isCleanLayout,
             ),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            containerColor = if (isCleanLayout) MaterialTheme.colorScheme.surfaceContainerLow else MaterialTheme.colorScheme.surfaceVariant,
         ),
     ) {
         Column(
@@ -1569,6 +1569,8 @@ internal fun SettingsCategoryRow(
     isDarkTheme: Boolean,
     badge: SettingsStatusPillModel? = null,
     petPerchKey: String? = title,
+    trailingIcon: ImageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+    stateLabel: String? = null,
 ) {
     val surfaceModifier = if (petPerchKey != null) {
         Modifier.settingsPetSurface("settings-category:$petPerchKey")
@@ -1590,6 +1592,7 @@ internal fun SettingsCategoryRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onClick)
+                .semantics { stateLabel?.let { stateDescription = it } }
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1622,7 +1625,7 @@ internal fun SettingsCategoryRow(
                 }
             }
             Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                imageVector = trailingIcon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
