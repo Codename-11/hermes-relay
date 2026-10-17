@@ -4397,4 +4397,10 @@
     <string name="bot_mode_to">Кому:</string>
     <string name="bot_mode_search_or_create">Найдите или создайте агента</string>
     <string name="bot_mode_create_new_agent">Создать нового агента</string>
+    <string name="bot_chat_voice_error">Голосовая связь требует внимания</string>
+    <string name="bot_chat_voice_fallback">Для этого бота используется стандартный голосовой режим Hermes. Голосовой режим Relay не может работать с этим разговором.</string>
+    <string name="bot_chat_voice_permission">Для общения с этим ботом нужен доступ к микрофону. Разрешите его в настройках приложения в Android, затем нажмите Говорить.</string>
+    <string name="bot_chat_voice_start">Говорить</string>
+    <string name="bot_mode_main_chat">Основной чат</string>
+    <string name="chat_conversation_actions">Действия с разговором</string>
 </resources>

@@ -4653,4 +4653,10 @@
     <string name="bot_mode_to">宛先:</string>
     <string name="bot_mode_search_or_create">エージェントを検索または作成</string>
     <string name="bot_mode_create_new_agent">新しいエージェントを作成</string>
+    <string name="bot_chat_voice_error">音声機能の確認が必要です</string>
+    <string name="bot_chat_voice_fallback">このボットではHermesの標準音声を使用します。Relay音声はこの会話に接続できません。</string>
+    <string name="bot_chat_voice_permission">このボットと話すにはマイクの権限が必要です。Androidのアプリ設定で許可してから、話すをタップしてください。</string>
+    <string name="bot_chat_voice_start">話す</string>
+    <string name="bot_mode_main_chat">メインチャット</string>
+    <string name="chat_conversation_actions">会話の操作</string>
 </resources>

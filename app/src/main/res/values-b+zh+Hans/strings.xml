@@ -4582,4 +4582,10 @@
     <string name="bot_mode_to">收件人：</string>
     <string name="bot_mode_search_or_create">搜索或创建智能体</string>
     <string name="bot_mode_create_new_agent">创建新智能体</string>
+    <string name="bot_chat_voice_error">请检查语音功能</string>
+    <string name="bot_chat_voice_fallback">该机器人使用 Hermes 标准语音。Relay 语音无法连接到此对话。</string>
+    <string name="bot_chat_voice_permission">与此机器人进行语音聊天需要麦克风权限。请在 Android 应用设置中允许使用麦克风，然后点按“语音聊天”。</string>
+    <string name="bot_chat_voice_start">语音聊天</string>
+    <string name="bot_mode_main_chat">主聊天</string>
+    <string name="chat_conversation_actions">对话操作</string>
 </resources>

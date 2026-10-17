@@ -4658,4 +4658,10 @@
     <string name="bot_mode_to">An:</string>
     <string name="bot_mode_search_or_create">Agenten suchen oder erstellen</string>
     <string name="bot_mode_create_new_agent">Neuen Agenten erstellen</string>
+    <string name="bot_chat_voice_error">Die Sprachfunktion benötigt Aufmerksamkeit</string>
+    <string name="bot_chat_voice_fallback">Für diesen Bot wird die Standard-Sprachfunktion von Hermes verwendet. Relay-Sprache kann nicht mit dieser Unterhaltung verbunden werden.</string>
+    <string name="bot_chat_voice_permission">Für Gespräche mit diesem Bot ist eine Mikrofonberechtigung erforderlich. Erlaube sie in den Android-App-Einstellungen und tippe dann auf Sprechen.</string>
+    <string name="bot_chat_voice_start">Sprechen</string>
+    <string name="bot_mode_main_chat">Hauptchat</string>
+    <string name="chat_conversation_actions">Unterhaltungsaktionen</string>
 </resources>

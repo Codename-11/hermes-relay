@@ -4501,4 +4501,10 @@
     <string name="bot_mode_to">Para:</string>
     <string name="bot_mode_search_or_create">Pesquise ou crie agentes</string>
     <string name="bot_mode_create_new_agent">Criar novo agente</string>
+    <string name="bot_chat_voice_error">A função de voz precisa de atenção</string>
+    <string name="bot_chat_voice_fallback">Usando a voz padrão do Hermes para este bot. A voz do Relay não pode ser direcionada a esta conversa.</string>
+    <string name="bot_chat_voice_permission">É necessária permissão para usar o microfone e conversar com este bot. Ative-a nas configurações do aplicativo no Android e toque em Conversar.</string>
+    <string name="bot_chat_voice_start">Conversar</string>
+    <string name="bot_mode_main_chat">Chat principal</string>
+    <string name="chat_conversation_actions">Ações da conversa</string>
 </resources>
