@@ -4381,7 +4381,7 @@
     <string name="voice_service_live_desc">Общайтесь с голосовым провайдером в реальном времени. Hermes отвечает за инструменты и память.</string>
     <string name="voice_service_relay_required">Для живого разговора подключите Relay. Озвучивание чата работает со стандартной панелью Hermes.</string>
     <string name="voice_overlay_gpt_live_mode">Live · автоматическое определение очередности реплик</string>
-    <string name="voice_overlay_gpt_live_listening_action">GPT-Live слушает непрерывно; нажмите, чтобы получить ответ сейчас</string>
+    <string name="voice_overlay_gpt_live_listening_action">Приостановить микрофон</string>
     <string name="settings_section_assistant">Ассистент</string>
     <string name="settings_section_connection">Подключение</string>
     <string name="settings_section_app">Приложение</string>

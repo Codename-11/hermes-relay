@@ -4485,7 +4485,7 @@
     <string name="voice_service_live_desc">Converse com um provedor de voz em tempo real. O Hermes cuida das ferramentas e da memória.</string>
     <string name="voice_service_relay_required">Conecte o Relay para conversar ao vivo. A voz do chat funciona com o painel padrão do Hermes.</string>
     <string name="voice_overlay_gpt_live_mode">Live · detecção automática de turnos</string>
-    <string name="voice_overlay_gpt_live_listening_action">O GPT-Live escuta continuamente; toque para receber uma resposta agora</string>
+    <string name="voice_overlay_gpt_live_listening_action">Pausar microfone</string>
     <string name="settings_section_assistant">Assistente</string>
     <string name="settings_section_connection">Conexão</string>
     <string name="settings_section_app">App</string>

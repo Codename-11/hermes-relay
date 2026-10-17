@@ -4637,7 +4637,7 @@
     <string name="voice_service_live_desc">リアルタイム音声プロバイダーと会話します。ツールとメモリはHermesが処理します。</string>
     <string name="voice_service_relay_required">リアルタイム会話にはRelayへの接続が必要です。チャット音声は標準のHermesダッシュボードで利用できます。</string>
     <string name="voice_overlay_gpt_live_mode">Live · 発話の区切りを自動検出</string>
-    <string name="voice_overlay_gpt_live_listening_action">GPT-Liveは継続的に聞き取ります。タップすると今すぐ返答します</string>
+    <string name="voice_overlay_gpt_live_listening_action">マイクを一時停止</string>
     <string name="settings_section_assistant">アシスタント</string>
     <string name="settings_section_connection">接続</string>
     <string name="settings_section_app">アプリ</string>

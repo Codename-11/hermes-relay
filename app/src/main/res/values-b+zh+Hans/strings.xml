@@ -4566,7 +4566,7 @@
     <string name="voice_service_live_desc">与实时语音服务提供商进行对话。Hermes负责工具和记忆。</string>
     <string name="voice_service_relay_required">连接Relay后即可使用实时对话。聊天语音可通过标准Hermes控制台使用。</string>
     <string name="voice_overlay_gpt_live_mode">Live · 自动检测发言结束</string>
-    <string name="voice_overlay_gpt_live_listening_action">GPT-Live会持续聆听；点按即可立即获取回复</string>
+    <string name="voice_overlay_gpt_live_listening_action">暂停麦克风</string>
     <string name="settings_section_assistant">助手</string>
     <string name="settings_section_connection">连接</string>
     <string name="settings_section_app">应用</string>

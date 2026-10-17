@@ -375,7 +375,7 @@ class DashboardApiClient(
     private val controlReadTimeoutMillis: Long = CONTROL_READ_TIMEOUT_MILLIS,
     private val sessionEnrichmentBudgetMillis: Long = SESSION_ENRICHMENT_BUDGET_MILLIS,
 ) {
-    private val baseUrl: String = baseUrl.trim().trimEnd('/')
+    internal val baseUrl: String = baseUrl.trim().trimEnd('/')
     private val sessionPrScanLock = Any()
     private val sessionPrScannedAt = mutableMapOf<String, Long>()
     private val sessionPrScanWasTerminal = mutableMapOf<String, Boolean>()

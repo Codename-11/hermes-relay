@@ -341,6 +341,8 @@ internal fun InteractionMode.storageValue(): String = when (this) {
 data class VoiceUiState(
     /** True when the voice-mode overlay is shown. */
     val voiceMode: Boolean = false,
+    /** The GPT-Live microphone track is disabled until the user starts it again. */
+    val gptLiveMicrophoneMuted: Boolean = false,
     /** Current phase of the voice turn. */
     val state: VoiceState = VoiceState.Idle,
     /** 0.0-1.0. Drives MorphingSphere pulse + on-screen meter. ~60 FPS. */
@@ -789,6 +791,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     // mid-turn take effect on the next turn.
     private var voicePreferences: VoicePreferencesRepository? = null
     private var voicePreferencesJob: Job? = null
+    private var gatewayOnlyVoice = false
     private var voiceEngineMode: VoiceEngineMode = VoiceEngineMode.HermesVoiceOutput
     private var supervisedModePolicy: SupervisedModePolicy = SupervisedModePolicy()
     private var voiceStopPhrases: List<String> = DEFAULT_VOICE_STOP_PHRASES
@@ -1225,7 +1228,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         voicePreferences: VoicePreferencesRepository? = null,
         voiceRelayPreflight: (suspend () -> Result<Unit>)? = null,
         voiceHandoffReporter: ((VoiceHandoffEvent) -> Unit)? = null,
+        gatewayOnlyVoice: Boolean = false,
     ) {
+        this.gatewayOnlyVoice = gatewayOnlyVoice
         cancelStandardSpeechStream("voice dependencies rewired")
         retireInboundSpeech()
         this.chatViewModel?.gatewayInboundSpeechReceiver = null
@@ -1572,7 +1577,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * so it is safe to call repeatedly with the same snapshot.
      */
     private fun applyVoiceSettingsSnapshot(settings: com.hermesandroid.relay.data.VoiceSettings) {
-        val nextEngineMode = VoiceEngineMode.fromStorage(settings.engineMode)
+        val nextEngineMode = gatewayVoiceEngine(settings.engineMode, gatewayOnlyVoice)
         val previousEngineMode = voiceEngineMode
         val engineModeChanged = previousEngineMode != nextEngineMode
         if (engineModeChanged) {
@@ -1802,7 +1807,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             if (fragment.speaker == GptLiveTranscriptFragment.Speaker.User) {
                                 _uiState.update { state ->
                                     state.copy(
-                                        state = VoiceState.Listening,
+                                        state = if (state.gptLiveMicrophoneMuted) VoiceState.Idle else VoiceState.Listening,
                                         transcribedText = appendLiveCaption(state.transcribedText, fragment.text),
                                         outputAudioActive = false,
                                     )
@@ -1812,7 +1817,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                         onSpeakingChanged = { speaking ->
                             _uiState.update { state ->
                                 state.copy(
-                                    state = if (speaking) VoiceState.Speaking else if (gptLiveSession != null) VoiceState.Listening else state.state,
+                                    state = if (speaking) VoiceState.Speaking else if (gptLiveSession != null) {
+                                        if (state.gptLiveMicrophoneMuted) VoiceState.Idle else VoiceState.Listening
+                                    } else state.state,
                                     outputAudioActive = speaking,
                                 )
                             }
@@ -1859,7 +1866,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 _uiState.update {
-                    it.copy(state = VoiceState.Listening, outputAudioActive = false, error = null)
+                    it.copy(state = VoiceState.Listening, gptLiveMicrophoneMuted = false, outputAudioActive = false, error = null)
                 }
                 Log.i(TAG, "GPT-Live voice session started model=${status.model} voice=${status.voice}")
             } finally {
@@ -1958,6 +1965,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         gptLiveStarting = false
         runCatching { gptLiveSession?.close() }
         gptLiveSession = null
+        _uiState.update { it.copy(gptLiveMicrophoneMuted = false) }
         _voiceStats.update {
             it.copy(
                 gptLiveActive = false,
@@ -2335,7 +2343,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun startListening(requireContinuousLoop: Boolean) {
         // GPT-Live owns the microphone continuously. The ordinary recorder must
         // never contend with WebRTC while a Live session is active/starting.
-        if (gptLiveSession != null || gptLiveStarting) return
+        gptLiveSession?.let { session ->
+            session.setMuted(false)
+            _uiState.update { it.copy(gptLiveMicrophoneMuted = false,
+                state = if (it.outputAudioActive) VoiceState.Speaking else VoiceState.Listening) }
+            return
+        }
+        if (gptLiveStarting) return
         // A direct mic tap starts a normal capture. Only the recorder opened by
         // onBargeInDetected may carry response-interruption command context.
         responseInterruptedForVoiceCommand = false
@@ -2454,11 +2468,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopListening() {
-        // Full-duplex GPT-Live has no recorder-owned turn boundary. A tap while
-        // it is listening is a nudge to answer now, not a request to stop a
-        // VoiceRecorder that does not own the microphone.
-        gptLiveSession?.let {
-            it.instruct("The user has finished speaking. Respond now to what they said.")
+        gptLiveSession?.let { session ->
+            session.setMuted(true)
+            _uiState.update { it.copy(gptLiveMicrophoneMuted = true,
+                state = if (it.outputAudioActive) VoiceState.Speaking else VoiceState.Idle) }
             return
         }
         if (cancelPendingListeningStart()) return
@@ -3479,7 +3492,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 respeakBackgroundResult()
             }
             VoiceCommandAction.StartNewChat -> {
-                chatViewModel?.createNewChat()
+                if (gatewayOnlyVoice) chatViewModel?.sendMessage("/new")
+                else chatViewModel?.createNewChat()
                 val resumeContinuous = _uiState.value.interactionMode == InteractionMode.Continuous
                 continuousListeningPaused = false
                 continuousLoopArmed = resumeContinuous
@@ -3487,7 +3501,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         state = VoiceState.Idle,
                         outputAudioActive = false,
-                        responseText = "New chat started.",
+                        responseText = if (gatewayOnlyVoice) "Compacting this bot conversation." else "New chat started.",
                     )
                 }
                 if (resumeContinuous) startListening()
@@ -8200,3 +8214,7 @@ internal suspend fun runTtsPlayWorker(
         }
     }
 }
+
+/** Relay engines cannot prove ownership of a canonical Gateway bot session. */
+internal fun gatewayVoiceEngine(selected: String, gatewayOnly: Boolean): VoiceEngineMode =
+    if (gatewayOnly) VoiceEngineMode.HermesVoiceOutput else VoiceEngineMode.fromStorage(selected)

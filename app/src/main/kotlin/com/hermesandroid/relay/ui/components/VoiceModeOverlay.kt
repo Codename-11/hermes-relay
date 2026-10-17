@@ -193,6 +193,7 @@ fun VoiceModeOverlay(
             },
             onInterrupt = onInterrupt,
             onPauseAutoMode = onPauseAutoMode,
+            liveMode = liveMode,
         )
     }
     val focusMicHoldPress: () -> Unit = {
@@ -672,12 +673,13 @@ private fun VoiceMicButton(
 ) {
     if (!visible) return
 
-    val micActionDescription = when (uiState.state) {
+    val micActionDescription = if (liveMode) {
+        stringResource(if (uiState.gptLiveMicrophoneMuted) R.string.voice_overlay_tap_action_idle
+            else R.string.voice_overlay_gpt_live_listening_action)
+    } else when (uiState.state) {
         VoiceState.Idle, VoiceState.Error -> stringResource(R.string.voice_overlay_tap_action_idle)
         VoiceState.Listening ->
-            if (liveMode) {
-                stringResource(R.string.voice_overlay_gpt_live_listening_action)
-            } else if (uiState.interactionMode == InteractionMode.Continuous) {
+            if (uiState.interactionMode == InteractionMode.Continuous) {
                 stringResource(R.string.voice_overlay_tap_action_pause)
             } else {
                 stringResource(R.string.voice_overlay_tap_action_listening)
@@ -707,16 +709,20 @@ private fun VoiceMicButton(
     // Material Red 600. Speaking needs the same red because tapping it
     // interrupts TTS; the old tertiary (green-ish) read as "playing" and
     // users didn't realize they could stop the agent.
-    val containerColor = when (uiState.state) {
-        VoiceState.Listening -> if (liveMode) MaterialTheme.colorScheme.primary else Color(0xFFE53935)
+    val containerColor = if (liveMode) {
+        if (uiState.gptLiveMicrophoneMuted) MaterialTheme.colorScheme.primary else Color(0xFFE53935)
+    } else when (uiState.state) {
+        VoiceState.Listening -> Color(0xFFE53935)
         VoiceState.Speaking -> Color(0xFFE53935)
         VoiceState.Transcribing, VoiceState.Thinking -> Color(0xFFE53935)
         VoiceState.Error -> MaterialTheme.colorScheme.errorContainer
         else -> MaterialTheme.colorScheme.primary
     }
 
-    val icon = when (uiState.state) {
-        VoiceState.Listening -> if (liveMode) Icons.Filled.Mic else Icons.Filled.Stop
+    val icon = if (liveMode) {
+        if (uiState.gptLiveMicrophoneMuted) Icons.Filled.Mic else Icons.Filled.Stop
+    } else when (uiState.state) {
+        VoiceState.Listening -> Icons.Filled.Stop
         VoiceState.Transcribing, VoiceState.Thinking -> Icons.Filled.Stop
         // Stop icon makes the "tap to interrupt TTS" affordance obvious;
         // VolumeUp looked decorative and users didn't try tapping it.
@@ -905,7 +911,12 @@ internal fun dispatchVoiceMicTap(
     onStopListening: () -> Unit,
     onInterrupt: () -> Unit,
     onPauseAutoMode: () -> Unit,
+    liveMode: Boolean = false,
 ) {
+    if (liveMode) {
+        if (uiState.gptLiveMicrophoneMuted) onStartListening() else onStopListening()
+        return
+    }
     when (uiState.state) {
         VoiceState.Listening -> {
             if (uiState.interactionMode == InteractionMode.Continuous) {

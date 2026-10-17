@@ -4642,7 +4642,7 @@
     <string name="voice_service_live_desc">Sprich abwechselnd mit einem Echtzeit-Sprachanbieter. Hermes übernimmt Tools und Gedächtnis.</string>
     <string name="voice_service_relay_required">Verbinde Relay für Live-Gespräche. Chat mit Sprachausgabe funktioniert mit dem standardmäßigen Hermes-Dashboard.</string>
     <string name="voice_overlay_gpt_live_mode">Live · automatische Erkennung von Sprechpausen</string>
-    <string name="voice_overlay_gpt_live_listening_action">GPT-Live hört kontinuierlich zu; tippe, um jetzt eine Antwort zu erhalten</string>
+    <string name="voice_overlay_gpt_live_listening_action">Mikrofon pausieren</string>
     <string name="settings_section_assistant">Assistent</string>
     <string name="settings_section_connection">Verbindung</string>
     <string name="settings_section_app">App</string>

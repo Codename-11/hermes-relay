@@ -3428,7 +3428,7 @@
     <string name="voice_overlay_engine_realtime">Realtime Agent</string>
     <string name="voice_overlay_engine_gpt_live" translatable="false">GPT-Live</string>
     <string name="voice_overlay_gpt_live_mode">Live · automatic turn detection</string>
-    <string name="voice_overlay_gpt_live_listening_action">GPT-Live is listening continuously; tap to respond now</string>
+    <string name="voice_overlay_gpt_live_listening_action">Pause microphone</string>
     <string name="voice_overlay_engine_hermes">Hermes voice</string>
     <string name="voice_overlay_engine_placeholder">Voice engine ...</string>
 
@@ -4719,4 +4719,8 @@
     <string name="settings_section_app">App</string>
     <string name="settings_section_help">Help &amp; info</string>
     <string name="settings_relay_tools_desc">Terminal, device control, sessions and notifications. Needs Relay.</string>
+    <string name="bot_chat_voice_start">Talk</string>
+    <string name="bot_chat_voice_fallback">Using standard Hermes voice for this bot. Relay voice cannot target this conversation.</string>
+    <string name="bot_chat_voice_error">Voice needs attention</string>
+    <string name="bot_chat_voice_permission">Microphone permission is needed to talk to this bot. Allow it in Android app settings, then tap Talk.</string>
 </resources>

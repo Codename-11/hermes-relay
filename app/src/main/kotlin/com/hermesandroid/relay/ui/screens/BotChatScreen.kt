@@ -53,6 +53,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -91,6 +92,7 @@ import com.hermesandroid.relay.network.upstream.models.MessageItem
 import com.hermesandroid.relay.ui.components.ChatMediaViewerHost
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.theme.RelayRefresh
+import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
 import java.io.File
@@ -113,30 +115,34 @@ fun BotChatScreen(
     dashboardClient: DashboardApiClient,
     chatViewModel: ChatViewModel,
     connectionViewModel: ConnectionViewModel,
+    onVoiceSessionChanged: (VoiceViewModel, Boolean) -> Unit = { _, _ -> },
     onBack: () -> Unit,
 ) {
     val busyMessageAction by connectionViewModel.busyMessageAction.collectAsState()
-    ChatMediaViewerHost(route.key, sessionId) {
-        BotChatScreen(
-            route = route,
-            bot = bot,
-            sessionId = sessionId,
-            gatewayClient = gatewayClient,
-            dashboardClient = dashboardClient,
-            chatViewModel = chatViewModel,
-            onBack = onBack,
-            handlerFactory = ::ChatHandler,
-            historyLoader = { profileName, storedSessionId, mode ->
-                dashboardClient.getSessionMessages(
-                    sessionId = storedSessionId,
-                    profile = profileName,
-                    mode = mode,
-                )
-            },
-            profileIconFlow = connectionViewModel::profileIconFlow,
-            busyMessageAction = busyMessageAction,
-            maxAttachmentMbFlow = connectionViewModel.maxAttachmentMb,
-        )
+    BotChatVoiceHost(route, sessionId, dashboardClient, chatViewModel, onVoiceSessionChanged) { onVoice ->
+        ChatMediaViewerHost(route.key, sessionId) {
+            BotChatScreen(
+                route = route,
+                bot = bot,
+                sessionId = sessionId,
+                gatewayClient = gatewayClient,
+                dashboardClient = dashboardClient,
+                chatViewModel = chatViewModel,
+                onBack = onBack,
+                handlerFactory = ::ChatHandler,
+                historyLoader = { profileName, storedSessionId, mode ->
+                    dashboardClient.getSessionMessages(
+                        sessionId = storedSessionId,
+                        profile = profileName,
+                        mode = mode,
+                    )
+                },
+                profileIconFlow = connectionViewModel::profileIconFlow,
+                busyMessageAction = busyMessageAction,
+                maxAttachmentMbFlow = connectionViewModel.maxAttachmentMb,
+                onVoice = onVoice,
+            )
+        }
     }
 }
 
@@ -155,6 +161,7 @@ internal fun BotChatScreen(
     profileIconFlow: BotChatProfileIconFlow,
     busyMessageAction: BusyMessageAction = BusyMessageAction.CorrectNow,
     maxAttachmentMbFlow: StateFlow<Int> = MutableStateFlow(DEFAULT_BOT_ATTACHMENT_MB),
+    onVoice: (() -> Unit)? = null,
 ) {
     val handler = remember(route.key) { handlerFactory() }
     val context = LocalContext.current
@@ -167,6 +174,7 @@ internal fun BotChatScreen(
     val isStreaming by handler.isStreaming.collectAsState()
     val isLoading by chatViewModel.isLoadingHistory.collectAsState()
     val error by handler.error.collectAsState()
+    val boundSessionId by handler.currentSessionId.collectAsState()
     val iconPath by profileIconFlow(route.connectionId, route.profileName)
         .collectAsState(initial = null)
     val listState = rememberLazyListState()
@@ -386,6 +394,15 @@ internal fun BotChatScreen(
                                     modifier = Modifier.fillMaxWidth().testTag(BOT_CHAT_COMPOSER_TAG),
                                 )
                             }
+                            if (!canSend && !isStreaming && onVoice != null) {
+                                IconButton(
+                                    onClick = onVoice,
+                                    enabled = botVoiceReady(sessionId, boundSessionId, isLoading, error),
+                                    modifier = Modifier.testTag(BOT_CHAT_VOICE_TAG),
+                                ) {
+                                    Icon(Icons.Filled.Mic, stringResource(R.string.bot_chat_voice_start))
+                                }
+                            }
                             if (canSend || isStreaming) {
                                 IconButton(
                                     onClick = {
@@ -520,6 +537,7 @@ internal fun BotChatScreen(
     }
 }
 
+internal const val BOT_CHAT_VOICE_TAG = "botChatVoice"
 internal const val BOT_CHAT_COMPOSER_TAG = "botChatComposer"
 private const val DEFAULT_BOT_ATTACHMENT_MB = 10
 

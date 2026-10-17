@@ -4333,7 +4333,7 @@
     <string name="voice_service_live_desc">Conversa con un proveedor de voz en tiempo real. Hermes se encarga de las herramientas y la memoria.</string>
     <string name="voice_service_relay_required">Conecta Relay para conversar en directo. La voz del chat funciona con el panel estándar de Hermes.</string>
     <string name="voice_overlay_gpt_live_mode">Live · detección automática de turnos</string>
-    <string name="voice_overlay_gpt_live_listening_action">GPT-Live escucha de forma continua; toca para recibir una respuesta ahora</string>
+    <string name="voice_overlay_gpt_live_listening_action">Pausar micrófono</string>
     <string name="settings_section_assistant">Asistente</string>
     <string name="settings_section_connection">Conexión</string>
     <string name="settings_section_app">Aplicación</string>

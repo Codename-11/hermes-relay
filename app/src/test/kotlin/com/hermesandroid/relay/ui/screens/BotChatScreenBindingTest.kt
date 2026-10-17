@@ -3,6 +3,9 @@ package com.hermesandroid.relay.ui.screens
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -165,6 +168,33 @@ class BotChatScreenBindingTest {
         assertEquals(listOf(NEW_HISTORY), secondHandler.messages.value.map { it.content })
     }
 
+    @Test
+    fun composerVoiceWaitsForLoadedBotSessionAndUsesOnlyItsCallback() {
+        val screen = resources("voice-bot")
+        val handler = ChatHandler()
+        val releaseHistory = CompletableDeferred<Unit>()
+        var starts = 0
+        compose.setContent {
+            MaterialTheme {
+                screen.content(handler, { _, _, _ ->
+                    releaseHistory.await()
+                    Result.success(history(screen.sessionId, DELAYED_HISTORY))
+                }, onVoice = { starts++ })
+            }
+        }
+        compose.waitUntil(5_000) { screen.viewModel.isLoadingHistory.value }
+        compose.onNodeWithTag(BOT_CHAT_VOICE_TAG).assertIsNotEnabled()
+        releaseHistory.complete(Unit)
+        compose.waitUntil(5_000) { !screen.viewModel.isLoadingHistory.value }
+        compose.onNodeWithTag(BOT_CHAT_VOICE_TAG).assertIsEnabled().performClick()
+        compose.runOnIdle {
+            assertEquals(1, starts)
+            assertEquals(screen.sessionId, screen.viewModel.currentSessionId.value)
+            handler.onStreamError(HANDLER_ERROR)
+        }
+        compose.onNodeWithTag(BOT_CHAT_VOICE_TAG).assertIsNotEnabled()
+    }
+
     private fun resources(profileName: String): ScreenResources = ScreenResources(profileName).also {
         resources += it
     }
@@ -206,7 +236,7 @@ class BotChatScreenBindingTest {
         )
 
         @androidx.compose.runtime.Composable
-        fun content(handler: ChatHandler, historyLoader: BotChatHistoryLoader) {
+        fun content(handler: ChatHandler, historyLoader: BotChatHistoryLoader, onVoice: (() -> Unit)? = null) {
             BotChatScreen(
                 route = route,
                 bot = bot,
@@ -215,6 +245,7 @@ class BotChatScreenBindingTest {
                 dashboardClient = dashboardClient,
                 chatViewModel = viewModel,
                 onBack = {},
+                onVoice = onVoice,
                 handlerFactory = { handler },
                 historyLoader = historyLoader,
                 profileIconFlow = { _, _ -> MutableStateFlow(null) },

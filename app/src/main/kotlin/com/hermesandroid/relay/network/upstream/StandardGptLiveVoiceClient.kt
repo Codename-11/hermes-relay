@@ -37,6 +37,7 @@ import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
+import org.webrtc.audio.AudioDeviceModule
 import org.webrtc.audio.JavaAudioDeviceModule
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -257,24 +258,24 @@ class StandardGptLiveVoiceClient(
     }
 }
 
-private data class LiveSessionAnswer(
+internal data class LiveSessionAnswer(
     val sessionId: String?,
     val sdp: String,
     val eventDialect: String = "public",
 )
 
-private class AndroidGptLiveSession(
+internal class AndroidGptLiveSession(
     context: Context,
     private val callbacks: GptLiveCallbacks,
     private val createSession: suspend (String) -> LiveSessionAnswer,
     private val json: Json,
+    private val audioDeviceModule: AudioDeviceModule = JavaAudioDeviceModule.builder(context.applicationContext).createAudioDeviceModule(),
 ) : GptLiveSession {
     private val appContext = context.applicationContext
     private val finished = AtomicBoolean(false)
     private val eventCounter = AtomicInteger(0)
     private val iceGatheringComplete = CompletableDeferred<Unit>()
     private val transcript = mutableListOf<GptLiveTranscriptFragment>()
-    private var audioDeviceModule = JavaAudioDeviceModule.builder(appContext).createAudioDeviceModule()
     private var factory: PeerConnectionFactory? = null
     private var peer: PeerConnection? = null
     private var audioSource: AudioSource? = null
@@ -460,9 +461,8 @@ private class AndroidGptLiveSession(
 
     override fun close() {
         if (finished.get()) return
-        if (!send(buildJsonObject { put("type", "session.close") })) {
-            finish("close_requested", null)
-        }
+        runCatching { send(buildJsonObject { put("type", "session.close") }) }
+        finish("close_requested", null)
     }
 
     private fun send(event: JsonObject): Boolean {
