@@ -81,7 +81,14 @@ from typing import Any, Optional
 import requests
 
 
-_DESKTOP_TARGET: ContextVar[str | None] = ContextVar("desktop_target", default=None)
+@dataclass(frozen=True)
+class _DesktopTarget:
+    device: str | None
+    device_id: Any
+    has_device_id: bool
+
+
+_DESKTOP_TARGET: ContextVar[_DesktopTarget | None] = ContextVar("desktop_target", default=None)
 _DESKTOP_CALL_CONTEXT: ContextVar[dict[str, str]] = ContextVar(
     "desktop_call_context", default={}
 )
@@ -145,8 +152,11 @@ def _post(path: str, payload: dict, *, timeout: Optional[float] = None) -> dict:
     """
     payload = dict(payload)
     target = _DESKTOP_TARGET.get()
-    if target:
-        payload["device"] = target
+    if target is not None:
+        if target.device:
+            payload["device"] = target.device
+        if target.has_device_id:
+            payload["device_id"] = target.device_id
     headers = _auth_headers()
     for field, value in _DESKTOP_CALL_CONTEXT.get().items():
         header = _CONTROL_CONTEXT_HEADERS.get(field)
@@ -1304,8 +1314,9 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             "recent commands the relay has dispatched. Answered by the relay "
             "directly — does NOT round-trip through the client — so it works "
             "even when other tools are wedged. When several desktops are listed, "
-            "choose one and pass its device_id in the device field of every "
-            "client-routed call. USB/ADB calls use device for the host PC and "
+            "choose one and pass its authenticated_device_id in the device_id "
+            "field for exact addressing (unavailable for legacy unidentified clients). "
+            "The device field still accepts human-friendly names. USB/ADB calls select the host PC and use "
             "serial for attached hardware where required."
         ),
         "parameters": {"type": "object", "properties": {}},
@@ -1557,13 +1568,20 @@ def _targeted_handler(handler: Any) -> Any:
 
     def invoke(args: dict[str, Any], **kwargs: Any) -> Any:
         call_args = dict(args)
-        target = call_args.pop("device", None) or call_args.pop("device_id", None)
+        has_device_id = "device_id" in call_args
+        device_id = call_args.pop("device_id", None)
+        device = call_args.pop("device", None)
+        target = _DesktopTarget(
+            device=str(device).strip() if device else None,
+            device_id=device_id,
+            has_device_id=has_device_id,
+        )
         # Identity is never a model-owned argument. Drop every reserved shape
         # before dispatch, then obtain authoritative context from Hermes'
         # executor kwargs instead.
         call_args.pop("control_session", None)
         call_args.pop("control_context", None)
-        token = _DESKTOP_TARGET.set(str(target).strip() if target else None)
+        token = _DESKTOP_TARGET.set(target)
         context_token = _DESKTOP_CALL_CONTEXT.set(_trusted_call_context(kwargs))
         try:
             return handler(call_args, **kwargs)
@@ -1631,6 +1649,14 @@ for _tool_name, _schema in _SCHEMAS.items():
         _properties = _parameters.setdefault("properties", {})
         if isinstance(_properties, dict):
             _properties["device"] = dict(_DEVICE_SELECTOR_SCHEMA)
+            _properties["device_id"] = {
+                "type": "string",
+                "description": (
+                    "Exact authenticated_device_id from desktop_health. "
+                    "No name matching or fallback when this device is offline. "
+                    "If device is also supplied, both must identify the same client."
+                ),
+            }
     _capability = _TOOL_CAPABILITIES.get(_tool_name)
     if _capability:
         _schema["x-hermes-capability"] = _capability
