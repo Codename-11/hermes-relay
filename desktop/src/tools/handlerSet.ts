@@ -236,6 +236,7 @@ function guardCapabilityHandler(
 ): ToolHandler {
   if (mode !== 'ask') return handler
   return async (args, ctx) => {
+    ctx.abortSignal.throwIfAborted()
     const approval = await approveComputerGrant({
       mode: `${capability}.${tool.replace(/^desktop_/, '')}`,
       durationSeconds: 120,
@@ -243,8 +244,10 @@ function guardCapabilityHandler(
         ? args.reason.trim()
         : `Run ${tool.replaceAll('_', ' ')}`,
       scope: buildCapabilityGrantScope(tool, capability, args),
-      interactive: ctx.interactive
+      interactive: ctx.interactive,
+      abortSignal: ctx.abortSignal
     })
+    ctx.abortSignal.throwIfAborted()
     if (!approval.approved) throw new Error(approval.reason || `${capability} request rejected locally`)
     return handler(args, ctx)
   }

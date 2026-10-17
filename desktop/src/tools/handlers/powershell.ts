@@ -148,12 +148,14 @@ async function pickShell(prefer: string | null): Promise<ShellPick> {
 }
 
 export const powershellHandler: ToolHandler = async (args, ctx) => {
+  ctx.abortSignal.throwIfAborted()
   const script = argString(args.script, 'script')
   const cwd = argOptionalString(args.cwd) ?? ctx.cwd
   const timeoutMs = resolveTimeoutMs(args)
   const prefer = argOptionalString(args.prefer)
 
   const shell = await pickShell(prefer)
+  ctx.abortSignal.throwIfAborted()
 
   // A private temporary script avoids both cmd.exe quoting and PowerShell's
   // line-oriented `-Command -` stdin parser. The latter can report exit 0 while
@@ -169,7 +171,7 @@ export const powershellHandler: ToolHandler = async (args, ctx) => {
     'if ($null -ne (Get-Variable LASTEXITCODE -ErrorAction SilentlyContinue)) { exit $LASTEXITCODE }'
   ].join('\n')
   try {
-    await writeFile(scriptPath, wrappedScript, { encoding: 'utf8', mode: 0o600 })
+    await writeFile(scriptPath, wrappedScript, { encoding: 'utf8', mode: 0o600, signal: ctx.abortSignal })
   } catch (error) {
     await rm(scriptDirectory, { recursive: true, force: true })
     throw error
@@ -183,6 +185,7 @@ export const powershellHandler: ToolHandler = async (args, ctx) => {
   const start = Date.now()
   let child
   try {
+    ctx.abortSignal.throwIfAborted()
     child = spawn(shell, shellArgs, {
       cwd,
       env: process.env,
@@ -226,6 +229,7 @@ export const powershellHandler: ToolHandler = async (args, ctx) => {
     }
   }
   ctx.abortSignal.addEventListener('abort', onAbort, { once: true })
+  if (ctx.abortSignal.aborted) onAbort()
 
   try {
     const exitCode = await new Promise<number>((resolve, reject) => {

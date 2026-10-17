@@ -199,6 +199,8 @@ export interface RelayTransportConfig {
  * - On unexpected close AFTER auth.ok, schedules a reconnect with exponential
  *   backoff (1s, 2s, 4s, 8s, 16s, 30s, 30s, …). Rate-limit closes get 5min.
  * - `'reconnecting'` fires with `{attempt, delayMs}` before each backoff.
+ * - `'disconnected'` fires immediately on loss/final teardown, independently
+ *   of stream `drain()`. Tool requests must not outlive their socket.
  *   `'reconnected'` fires once auth.ok lands on the new socket.
  * - The original `whenAuthResolved()` promise settles on the FIRST connect
  *   only — subsequent reconnects do not re-resolve it. Callers that care
@@ -980,6 +982,7 @@ export class RelayTransport extends EventEmitter implements Transport {
       /* ignore */
     }
 
+    this.emit('disconnected')
     if (this.subscribed) {
       this.emit('exit', code, reason)
     } else {
@@ -1023,6 +1026,7 @@ export class RelayTransport extends EventEmitter implements Transport {
       return
     }
 
+    this.emit('disconnected')
     this.scheduleReconnect(code, reason)
   }
 

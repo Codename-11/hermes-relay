@@ -98,7 +98,7 @@ export function fitDesktopResponseToWire(payload: ToolResponsePayload): ToolResp
 /** Context passed to every handler. `cwd` defaults to `process.cwd()` but
  * per-call overrides (e.g. terminalHandler's own `cwd` arg) still apply
  * inside the handler — this is just the router-level default. `abortSignal`
- * fires on transport teardown or 30s handler timeout; handlers should
+ * fires on request cancellation, transport teardown or handler timeout; handlers should
  * honor it wherever they spawn children / do long I/O.
  *
  * `interactive` tells handlers whether they may prompt on stdin/stderr.
@@ -147,10 +147,10 @@ export interface DesktopToolRouterOpts {
  * a client goes silent longer than ~90s. */
 const HEARTBEAT_MS = 30_000
 
-/** Per-handler timeout — if the handler hasn't resolved by then, the abort
- * signal fires and we send `{ok:false, error:'aborted'}`. 30s matches the
- * Android bridge's timeout for the same class of request/response RPCs. */
-const HANDLER_TIMEOUT_MS = 30_000
+/** Includes the native 120s local approval window, the default 30s process
+ * budget and cleanup/transport margin. Process execution keeps its own limit.
+ * The relay waits 180s and its HTTP tool wrapper waits 190s. */
+const HANDLER_TIMEOUT_MS = 170_000
 /** Computer-use actions may be waiting on a human reading and approving a
  * visible local prompt, so they get a longer deadline without changing the
  * existing desktop tool latency contract. */
@@ -294,6 +294,15 @@ export class DesktopToolRouter {
   private readonly controlAuthority: ComputerControlAuthority
   private readonly controlSecurity: ComputerControlSecurityState
   private readonly activeControlAuthorities = new Map<string, ComputerControlAuthority>()
+  private readonly inFlight = new Map<string, AbortController>()
+  private connectionGeneration = 0
+  private readonly onTransportLost = (): void => {
+    // The transport may reconnect without detaching this router. Work from
+    // the old socket must not survive or reply on the replacement socket.
+    this.connectionGeneration += 1
+    for (const controller of this.inFlight.values()) controller.abort()
+    this.inFlight.clear()
+  }
 
   constructor(opts: DesktopToolRouterOpts) {
     this.handlers = opts.handlers
@@ -328,6 +337,7 @@ export class DesktopToolRouter {
     }
     this.attached = true
     this.relay = relay
+    relay.on('disconnected', this.onTransportLost)
 
     relay.onChannel('desktop', (type, payload) => {
       if (type === 'desktop.command') {
@@ -336,6 +346,12 @@ export class DesktopToolRouter {
           return
         }
         void this.dispatch(payload)
+        return
+      }
+      if (type === 'desktop.cancel') {
+        if (typeof payload.request_id === 'string') {
+          this.inFlight.get(payload.request_id)?.abort()
+        }
         return
       }
       if (type === 'desktop.control_session_end') {
@@ -367,11 +383,13 @@ export class DesktopToolRouter {
       return
     }
     this.attached = false
+    this.onTransportLost()
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer)
       this.heartbeatTimer = null
     }
     try {
+      this.relay?.off('disconnected', this.onTransportLost)
       this.relay?.onChannel('desktop', null)
     } catch {
       /* ignore */
@@ -450,10 +468,17 @@ export class DesktopToolRouter {
    * paths — so the server's pending-request map never hangs. */
   private async dispatch(cmd: ToolCallPayload): Promise<void> {
     const { request_id, tool, args } = cmd
+    const relay = this.relay
+    const generation = this.connectionGeneration
+    const respond = (payload: ToolResponsePayload): void => {
+      if (this.attached && this.relay === relay && this.connectionGeneration === generation) {
+        this.sendResponse(payload)
+      }
+    }
     const startedAt = Date.now()
     const handler = this.handlers[tool]
     if (!handler) {
-      this.sendResponse({
+      respond({
         request_id,
         ok: false,
         error: `unknown tool: ${tool}`
@@ -463,7 +488,7 @@ export class DesktopToolRouter {
 
     const relayAuthority = parseControlAuthority(cmd.control_session, request_id, this.hostUrl)
     if (tool.startsWith('desktop_computer_') && cmd.control_session !== undefined && !relayAuthority) {
-      this.sendResponse({ request_id, ok: false, error: 'invalid server control_session binding' })
+      respond({ request_id, ok: false, error: 'invalid server control_session binding' })
       return
     }
     const requestAuthority = relayAuthority ?? this.controlAuthority
@@ -473,11 +498,12 @@ export class DesktopToolRouter {
     }
     const controlSession = this.controlSecurity.bindRequest(request_id, requestAuthority)
     if (!controlSession) {
-      this.sendResponse({ request_id, ok: false, error: 'duplicate or invalid desktop request_id' })
+      respond({ request_id, ok: false, error: 'duplicate or invalid desktop request_id' })
       return
     }
 
     const controller = new AbortController()
+    this.inFlight.set(request_id, controller)
     const timeoutMs = tool.startsWith('desktop_computer_') || tool.startsWith('desktop_adb_') || tool.startsWith('desktop_usb_')
       ? COMPUTER_USE_HANDLER_TIMEOUT_MS
       : HANDLER_TIMEOUT_MS
@@ -495,14 +521,17 @@ export class DesktopToolRouter {
       controlSession,
       controlSecurity: this.controlSecurity
     }
+    let rejectAbort!: () => void
+    const aborted = new Promise<never>((_resolve, reject) => {
+      rejectAbort = () => reject(new Error('aborted'))
+      controller.signal.addEventListener('abort', rejectAbort, { once: true })
+    })
 
     try {
-      const result = await handler(args, ctx)
+      const result = await Promise.race([handler(args, ctx), aborted])
+      controller.signal.throwIfAborted()
       clearTimeout(timeoutTimer)
-      // If the abort fired but the handler returned anyway, still treat
-      // the outcome as the canonical result — the handler decided the
-      // work was completable.
-      this.sendResponse({ request_id, ok: true, result })
+      respond({ request_id, ok: true, result })
       // Local audit trail — fire-and-forget so logging never delays the reply.
       const retention = readDesktopUseSettingsSync()
       const canRetainScreenshot = tool.includes('screenshot') || tool === 'desktop_computer_action'
@@ -547,7 +576,7 @@ export class DesktopToolRouter {
       // "is the connected client throwing on every dispatch?" without
       // grep'ing through journal logs.
       this.lastError = { message, tool, ts: Date.now() }
-      this.sendResponse({ request_id, ok: false, error: message })
+      respond({ request_id, ok: false, error: message })
       void appendAudit({
         ts: Date.now(),
         kind: 'tool.completed',
@@ -566,6 +595,10 @@ export class DesktopToolRouter {
         ...auditDetails(args, undefined, { redactComputerContent: tool.startsWith('desktop_computer_') }),
         error: message
       })
+    } finally {
+      clearTimeout(timeoutTimer)
+      controller.signal.removeEventListener('abort', rejectAbort)
+      if (this.inFlight.get(request_id) === controller) this.inFlight.delete(request_id)
     }
   }
 

@@ -8,7 +8,7 @@
 //     single string. A future revision could prefer PowerShell; cmd was
 //     chosen for zero-config parity with git-bash users.
 //
-// The router caps the whole handler at 30s via its AbortController, but
+// The router caps approval plus execution via its AbortController, but
 // callers can ALSO pass a per-call `timeout` in SECONDS — the wire spec
 // in `plugin/tools/desktop_tool.py` passes `timeout: int(timeout)` where
 // `timeout` is the seconds value from the tool schema (default 30s). We
@@ -60,6 +60,7 @@ function resolveTimeoutMs(args: Record<string, unknown>): number {
 }
 
 export const terminalHandler: ToolHandler = async (args, ctx) => {
+  ctx.abortSignal.throwIfAborted()
   const command = argString(args.command, 'command')
   const cwd = argOptionalString(args.cwd) ?? ctx.cwd
   const timeoutMs = resolveTimeoutMs(args)
@@ -112,6 +113,7 @@ export const terminalHandler: ToolHandler = async (args, ctx) => {
     }
   }
   ctx.abortSignal.addEventListener('abort', onAbort, { once: true })
+  if (ctx.abortSignal.aborted) onAbort()
 
   try {
     const exitCode = await new Promise<number>((resolve, reject) => {

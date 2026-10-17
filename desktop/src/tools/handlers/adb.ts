@@ -39,6 +39,7 @@ async function authorize(
   reason: unknown,
   ctx: ToolContext
 ): Promise<void> {
+  ctx.abortSignal.throwIfAborted()
   const policy = capabilityPolicy('usb')
   if (policy === 'disabled') throw new Error('Raw USB access is disabled for this Hermes host')
   if (policy === 'allow') return
@@ -47,8 +48,10 @@ async function authorize(
     durationSeconds: 120,
     reason: typeof reason === 'string' && reason.trim() ? reason.trim() : `Run brokered ADB ${operation}`,
     scope,
-    interactive: ctx.interactive
+    interactive: ctx.interactive,
+    abortSignal: ctx.abortSignal
   })
+  ctx.abortSignal.throwIfAborted()
   if (!approval.approved) throw new Error(approval.reason || 'ADB request rejected locally')
 }
 

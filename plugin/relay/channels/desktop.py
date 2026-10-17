@@ -11,9 +11,9 @@ Two jobs over the same WSS ``desktop`` envelope stream:
    HTTP response. Multiple clients are keyed by stable device identity;
    untargeted dispatch fails closed when more than one is connected.
    ``self.pending`` is asyncio-locked so concurrent add/remove can't drop
-   futures. Normal desktop tools keep the bridge-like
-   30 s timeout; computer-use calls get a longer timeout because they may
-   wait on a visible human approval prompt.
+   futures. Normal desktop tools use a
+   180 s timeout, covering the client's 120 s approval window, default
+   30 s execution and transport margin. ADB calls retain their longer budget.
 
 2. **Workspace awareness (alpha.6).** The desktop CLI advertises its
    local workspace once per auth.ok and optionally polls an
@@ -23,6 +23,7 @@ Two jobs over the same WSS ``desktop`` envelope stream:
 
 Wire envelopes (frozen — do not rename fields):
   * ``desktop.command``       — server → client: ``{request_id, tool, args, control_session?}``
+  * ``desktop.cancel``        — server → client: ``{request_id}`` (best effort, same socket)
   * ``desktop.response``      — client → server: ``{request_id, status, result}``
   * ``desktop.status``        — client → server: ``{advertised_tools, host?, platform?, cwd?, ...}``
   * ``desktop.workspace``     — client → server: opaque dict (``cwd`` / ``git_root`` / ``git_branch`` / ...)
@@ -48,7 +49,7 @@ from aiohttp import web
 logger = logging.getLogger(__name__)
 
 
-RESPONSE_TIMEOUT = 30.0  # seconds — matches bridge.RESPONSE_TIMEOUT
+RESPONSE_TIMEOUT = 180.0  # seconds — approval plus execution and transport margin
 COMPUTER_USE_RESPONSE_TIMEOUT = 180.0  # seconds — allows human approval prompts
 ADB_RESPONSE_TIMEOUT = 300.0  # seconds — approval plus a bounded 120 s operation
 
@@ -116,7 +117,7 @@ class DesktopCommandRecord:
     response_status: int | None = None
     result_summary: str | None = None
     error: str | None = None
-    # One of: pending, executed, error, timeout
+    # One of: pending, executed, error, timeout, cancelled
     decision: str = "pending"
 
 
@@ -546,10 +547,6 @@ class DesktopHandler:
         request_id = str(uuid.uuid4())
         future: asyncio.Future[dict[str, Any]] = asyncio.get_event_loop().create_future()
 
-        async with self._lock:
-            self.pending[request_id] = future
-            self.pending_ws[request_id] = ws
-
         command_payload = {
             "request_id": request_id,
             "tool": method,
@@ -584,8 +581,17 @@ class DesktopHandler:
         )
         self.recent_commands.append(record)
 
+        async with self._lock:
+            self.pending[request_id] = future
+            self.pending_ws[request_id] = ws
+
         try:
             await ws.send_str(_envelope("desktop.command", command_payload, request_id))
+        except asyncio.CancelledError:
+            record.decision = "cancelled"
+            record.error = "Desktop request cancelled"
+            await self._cancel_command(ws, request_id)
+            raise
         except Exception as exc:
             async with self._lock:
                 self.pending.pop(request_id, None)
@@ -621,11 +627,9 @@ class DesktopHandler:
             )
             return response
         except asyncio.TimeoutError:
-            async with self._lock:
-                self.pending.pop(request_id, None)
-                self.pending_ws.pop(request_id, None)
             record.decision = "timeout"
             record.error = f"Desktop client did not respond within {timeout:.0f}s"
+            await self._cancel_command(ws, request_id)
             logger.warning(
                 "desktop: client did not respond within %.0fs for %s",
                 timeout,
@@ -635,10 +639,33 @@ class DesktopHandler:
                 f"Desktop client did not respond within {timeout:.0f}s"
             ) from None
         except asyncio.CancelledError:
-            async with self._lock:
-                self.pending.pop(request_id, None)
-                self.pending_ws.pop(request_id, None)
+            record.decision = "cancelled"
+            record.error = "Desktop request cancelled"
+            await self._cancel_command(ws, request_id)
             raise
+
+    async def _cancel_command(
+        self, ws: web.WebSocketResponse, request_id: str
+    ) -> None:
+        """Retire a request before best-effort cancellation on its original socket.
+
+        This is not a retry or a cancellation acknowledgement. Older clients may
+        ignore the message; HTTP disconnect alone does not cancel the Relay task.
+        """
+        async with self._lock:
+            if self.pending_ws.get(request_id) is not ws:
+                return
+            future = self.pending.pop(request_id, None)
+            self.pending_ws.pop(request_id, None)
+            if future is not None and not future.done():
+                future.cancel()
+        try:
+            await asyncio.wait_for(
+                ws.send_str(_envelope("desktop.cancel", {"request_id": request_id}, request_id)),
+                timeout=1.0,
+            )
+        except Exception:
+            logger.debug("desktop: cancellation send failed request_id=%s", request_id)
 
     # ── Inbound response routing ────────────────────────────────────────
 
@@ -662,17 +689,15 @@ class DesktopHandler:
                     request_id,
                 )
                 return
-            future = self.pending.pop(request_id, None)
+            future = self.pending.get(request_id)
+            if future is None or future.done():
+                logger.debug("desktop: no pending future for request_id=%s", request_id)
+                return
+            self.pending.pop(request_id, None)
             self.pending_ws.pop(request_id, None)
 
         self._update_record_from_response(request_id, payload)
-
-        if future is None:
-            logger.debug("desktop: no pending future for request_id=%s", request_id)
-            return
-
-        if not future.done():
-            future.set_result(payload)
+        future.set_result(payload)
 
     def _update_record_from_response(
         self, request_id: str, payload: dict[str, Any]

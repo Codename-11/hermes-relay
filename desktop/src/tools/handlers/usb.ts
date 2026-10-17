@@ -44,6 +44,7 @@ async function authorize(
   reason: unknown,
   ctx: ToolContext
 ): Promise<void> {
+  ctx.abortSignal.throwIfAborted()
   const policy = capabilityPolicy('usb')
   if (policy === 'disabled') throw new Error('Raw USB access is disabled for this Hermes host')
   if (policy === 'allow') return
@@ -52,8 +53,10 @@ async function authorize(
     durationSeconds: 120,
     reason: typeof reason === 'string' && reason.trim() ? reason.trim() : `Use raw USB ${operation}`,
     scope,
-    interactive: ctx.interactive
+    interactive: ctx.interactive,
+    abortSignal: ctx.abortSignal
   })
+  ctx.abortSignal.throwIfAborted()
   if (!approval.approved) throw new Error(approval.reason || 'Raw USB request rejected locally')
 }
 

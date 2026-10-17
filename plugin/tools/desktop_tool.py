@@ -127,7 +127,9 @@ def _relay_token() -> Optional[str]:
 
 
 def _timeout() -> float:
-    return float(os.getenv("DESKTOP_TOOL_TIMEOUT", "35"))
+    # Relay waits up to 180s, including local Ask approval and execution.
+    # An explicit shorter override remains an HTTP timeout, not remote cancel.
+    return float(os.getenv("DESKTOP_TOOL_TIMEOUT", "190"))
 
 
 def _auth_headers() -> dict:
@@ -464,8 +466,8 @@ def desktop_usb_run(
 
 
 def _adb_http_timeout(operation_timeout: int = 30) -> float:
-    """Cover the local approval window plus the bounded ADB operation."""
-    return max(_timeout(), min(max(int(operation_timeout), 1), 120) + 130.0)
+    """Outwait Relay's existing 300s ADB budget, including local approval."""
+    return max(_timeout(), 310.0)
 
 
 def desktop_adb_devices(reason: Optional[str] = None) -> str:
