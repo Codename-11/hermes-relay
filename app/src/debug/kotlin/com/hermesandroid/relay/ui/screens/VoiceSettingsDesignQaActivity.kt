@@ -53,7 +53,6 @@ private fun VoiceSettingsDesignQaScene() {
             supports_tts = true,
         )
     }
-    var selectedSection by remember { mutableStateOf(VoiceSettingsSection.Output) }
     var selectedVoice by remember { mutableStateOf("eve") }
     var expanded by remember { mutableStateOf(false) }
     val allVoices = remember {
@@ -86,7 +85,6 @@ private fun VoiceSettingsDesignQaScene() {
                     Text("Default profile · Profile voice", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            VoiceSettingsTabs(selectedSection) { selectedSection = it }
             VoiceProviderGroupCard(
                 provider = provider,
                 providerValue = provider.id,

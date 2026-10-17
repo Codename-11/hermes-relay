@@ -22,9 +22,9 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.hermesandroid.relay.data.VoiceEngineMode
+import com.hermesandroid.relay.network.shared.GptLiveStatus
+import com.hermesandroid.relay.ui.screens.GptLiveVoiceCard
 import com.hermesandroid.relay.ui.screens.VoiceServicePicker
-import com.hermesandroid.relay.ui.screens.VoiceSettingsSection
-import com.hermesandroid.relay.ui.screens.VoiceSettingsTabs
 import com.hermesandroid.relay.ui.theme.HermesRelayTheme
 import com.hermesandroid.relay.ui.theme.LayoutStyle
 import org.junit.Assert.assertEquals
@@ -56,16 +56,31 @@ class VoiceServicesScreenshotTest {
         compose.onRoot().captureRoboImage("build/ui-regression/voice-services-standard.png")
     }
 
+    @Test fun gptLivePageShowsHostModelAndVoiceOnly() {
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "clean", themePreference = "dark", layoutStyleId = LayoutStyle.CLEAN.id) {
+                Surface {
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                        VoiceServicePicker(VoiceEngineMode.HermesVoiceOutput, true) {}
+                        GptLiveVoiceCard(GptLiveStatus(mode = "gpt-live", available = true, model = "gpt-live-1", voice = "marin"))
+                    }
+                }
+            }
+        }
+        compose.onNodeWithText("GPT-Live").assertIsDisplayed()
+        compose.onNodeWithText("gpt-live-1").assertIsDisplayed()
+        compose.onNodeWithText("Marin").assertIsDisplayed()
+        compose.onRoot().captureRoboImage("build/ui-regression/voice-settings-gpt-live.png")
+    }
+
     @Test
     @Config(qualifiers = "w320dp-h640dp-xhdpi")
-    fun servicesAndTabsRemainReachableAtLargeFont() {
+    fun servicesRemainReachableAtLargeFont() {
         RuntimeEnvironment.setFontScale(2f)
         compose.setContent {
             HermesRelayTheme(appThemeId = "clean", themePreference = "dark", layoutStyleId = LayoutStyle.CLEAN.id) {
                 Surface {
                     Column(Modifier.fillMaxSize()) {
-                        var section by remember { mutableStateOf(VoiceSettingsSection.Output) }
-                        VoiceSettingsTabs(section) { section = it }
                         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
                             var engine by remember { mutableStateOf(VoiceEngineMode.HermesVoiceOutput) }
                             VoiceServicePicker(engine, true) { engine = it }
@@ -74,9 +89,7 @@ class VoiceServicesScreenshotTest {
                 }
             }
         }
-        compose.onNodeWithText("Advanced").performScrollTo().performClick().assertIsSelected()
         compose.onNodeWithText("Live conversation").performScrollTo().performClick().assertIsSelected()
-        compose.onNodeWithText("Advanced").assertIsDisplayed()
         compose.onRoot().captureRoboImage("build/ui-regression/voice-services-large-text.png")
     }
 }

@@ -42,6 +42,7 @@ import com.hermesandroid.relay.network.shared.VoiceAudioClient
 import com.hermesandroid.relay.network.shared.GptLiveCallbacks
 import com.hermesandroid.relay.network.shared.GptLiveHistoryMessage
 import com.hermesandroid.relay.network.shared.GptLiveSession
+import com.hermesandroid.relay.network.shared.GptLiveStatus
 import com.hermesandroid.relay.network.shared.GptLiveTranscriptFragment
 import com.hermesandroid.relay.network.shared.GptLiveVoiceClient
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
@@ -1751,6 +1752,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         prewarmRealtimeSession()
         startGptLiveIfSelected()
     }
+
+    /** Host GPT-Live status for settings; null when the host can't be reached or has no client. */
+    suspend fun gptLiveStatus(): GptLiveStatus? = gptLiveVoiceClient?.status()?.getOrNull()
 
     /** Start the host-selected GPT-Live frontend when Standard Hermes voice is active. */
     private fun startGptLiveIfSelected() {

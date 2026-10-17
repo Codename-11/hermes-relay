@@ -30,6 +30,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
@@ -165,30 +167,14 @@ import com.hermesandroid.relay.wake.WakeWordTestState
 import com.hermesandroid.relay.assistant.AssistantRole
 import com.hermesandroid.relay.assistant.AssistantRoleStatus
 import com.hermesandroid.relay.assistant.AssistantWakeRuntimeState
+import com.hermesandroid.relay.network.shared.GptLiveStatus
+import com.hermesandroid.relay.ui.components.voiceRouteDisplayLabel
 import kotlinx.coroutines.launch
 
-internal enum class VoiceSettingsSection { Output, Listening, Advanced }
-
-@Composable
-internal fun rememberVoiceSettingsScrollState(
-    selected: VoiceSettingsSection,
-    connectionId: String?,
-    profileName: String?,
-): ScrollState {
-    // One saveable state per tab so inactive tabs keep their position; a new connection/profile resets them.
-    val states = VoiceSettingsSection.entries.map { section ->
-        key(section) {
-            rememberSaveable(connectionId, profileName, saver = ScrollState.Saver) { ScrollState(0) }
-        }
-    }
-    return states[selected.ordinal]
-}
-
 /**
- * Voice settings follow the active connection and profile.
- * Voice contains service choice, reply delivery, provider, model and preview.
- * Listening contains interaction, assistant, wake word and interruption controls.
- * Advanced contains transport routing, scope and server configuration.
+ * Voice settings follow the active connection and profile and show only the
+ * cards that apply to the selected voice mode (GPT-Live, Hermes voice, or
+ * Realtime Agent).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -364,8 +350,19 @@ fun VoiceSettingsScreen(
     val snackbarHost = LocalSnackbarHost.current
     val scope = rememberCoroutineScope()
     var presetApplying by remember { mutableStateOf(false) }
-    var selectedSection by rememberSaveable { mutableStateOf(VoiceSettingsSection.Output) }
-    val sectionScrollState = rememberVoiceSettingsScrollState(selectedSection, connectionId, selectedProfile?.name)
+    val scrollState = rememberSaveable(connectionId, selectedProfile?.name, saver = ScrollState.Saver) {
+        ScrollState(0)
+    }
+    // GPT-Live is chosen on the Hermes host; ask it before deciding which cards apply.
+    var gptLiveStatus by remember { mutableStateOf<GptLiveStatus?>(null) }
+    var gptLiveChecked by remember { mutableStateOf(false) }
+    LaunchedEffect(currentEngine, connectionId, selectedProfile?.name) {
+        gptLiveChecked = currentEngine != VoiceEngineMode.HermesVoiceOutput
+        if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
+            gptLiveStatus = voiceViewModel.gptLiveStatus()
+            gptLiveChecked = true
+        }
+    }
 
     val presetState = VoiceModePresetState(
         voiceSettings = voiceSettings,
@@ -523,214 +520,235 @@ fun VoiceSettingsScreen(
             )
         }
     ) { innerPadding ->
+        // One page per voice mode: only the cards that change how the
+        // selected mode behaves. Rarely used options sit under Advanced.
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .verticalScroll(scrollState)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            VoiceSettingsTabs(
-                selected = selectedSection,
-                onSelect = { selectedSection = it },
-            )
+            VoiceServicePicker(currentEngine, relayVoiceReady) { engine ->
+                scope.launch {
+                    prefsRepo.setEngineMode(engine)
+                    if (engine == VoiceEngineMode.HermesVoiceOutput) {
+                        val route = coerceAudioRoute(engine, currentAudioRoute, relayVoiceReady)
+                        if (route != currentAudioRoute) prefsRepo.setAudioRoute(route)
+                    }
+                }
+            }
 
-            androidx.compose.runtime.key(selectedSection) {
-                Column(
-                    modifier = Modifier.weight(1f).verticalScroll(sectionScrollState),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    VoiceProfileSummaryCard(
-                        displayProfile = displayProfile,
-                        currentEngine = currentEngine,
-                        output = configState.voiceOutputConfig,
-                        realtime = configState.realtimeConfig,
-                        realtimeModel = voiceSettings.realtimeModel,
-                        realtimeVoice = voiceSettings.realtimeVoice,
-                        currentAudioRoute = currentAudioRoute,
-                        relayVoiceReady = relayVoiceReady,
-                        onClick = { selectedSection = VoiceSettingsSection.Output },
-                    )
+            val listeningCards: @Composable () -> Unit = {
+                val wakeWordTestState by settingsViewModel.wakeWordTestState.collectAsState()
+                DigitalAssistantCard(
+                    preferences = wakeWordPrefs,
+                    roleStatus = assistantRoleStatus,
+                    runtimeState = assistantWakeRuntimeState,
+                    installing = wakeWordInstallState.installing,
+                    error = wakeWordPermissionError ?: wakeWordInstallState.error,
+                    onChooseAssistant = requestAssistantRole,
+                    onManageAssistant = {
+                        AssistantRole.managementIntent(context)?.let(assistantRoleLauncher::launch)
+                    },
+                    onEnableWake = requestAssistantWakeEnable,
+                    onDisableWake = { settingsViewModel.setAssistantWakeEnabled(false) },
+                )
+                WakeWordCard(
+                    preferences = wakeWordPrefs,
+                    runtimeState = wakeWordRuntimeState,
+                    testState = wakeWordTestState,
+                    installing = wakeWordInstallState.installing,
+                    error = wakeWordPermissionError ?: wakeWordInstallState.error,
+                    onEnable = requestWakeWordEnable,
+                    onDisable = { settingsViewModel.setWakeWordEnabled(false) },
+                    onSensitivityChange = settingsViewModel::setWakeWordSensitivity,
+                    onConfirmationFramesChange = settingsViewModel::setWakeWordConfirmationFrames,
+                    onStartNewSessionChange = settingsViewModel::setWakeWordStartNewSession,
+                    onTest = settingsViewModel::testWakeWord,
+                )
+            }
 
-                    when (selectedSection) {
-                        VoiceSettingsSection.Output -> {
-                            VoiceServicePicker(currentEngine, relayVoiceReady) { engine ->
-                                scope.launch {
-                                    prefsRepo.setEngineMode(engine)
-                                    if (engine == VoiceEngineMode.HermesVoiceOutput) {
-                                        val route = coerceAudioRoute(engine, currentAudioRoute, relayVoiceReady)
-                                        if (route != currentAudioRoute) prefsRepo.setAudioRoute(route)
-                                    }
-                                }
-                            }
-                            AnswerDeliveryCard(
-                                voiceSettings = voiceSettings,
-                                prefsRepo = prefsRepo,
-                            )
-                            if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
-                                val useRelayOutput = relayVoiceReady && currentAudioRoute != VoiceAudioRoute.Standard
-                                if (useRelayOutput) {
-                                    if (configState.isLoading || !configState.hasLoaded) {
-                                        VoiceOutputLoadingSkeleton()
-                                    } else {
-                                        StreamingVoiceOutputEditor(
-                                            voiceClient = voiceClient,
-                                            settingsViewModel = settingsViewModel,
-                                            configState = configState,
-                                            voiceViewModel = voiceViewModel,
-                                        )
-                                    }
-                                } else {
-                                    StandardVoiceOutputOverview(
-                                        client = dashboardConfigClient,
-                                        availability = standardVoiceAvailability,
-                                        onOpenManage = onOpenManage,
-                                        voiceViewModel = voiceViewModel,
-                                    )
-                                }
-                            } else if (relayVoiceReady) {
-                                if (configState.isLoading || !configState.hasLoaded) {
-                                    VoiceOutputLoadingSkeleton()
-                                } else {
-                                    RealtimeAgentCard(
-                                        voiceClient = voiceClient,
-                                        settingsViewModel = settingsViewModel,
-                                        configState = configState,
-                                        voiceSettings = voiceSettings,
-                                        prefsRepo = prefsRepo,
-                                        voiceViewModel = voiceViewModel,
-                                    )
-                                }
-                            }
-                        }
+            when (voiceSettingsLayout(currentEngine, gptLiveChecked, gptLiveStatus, relayVoiceReady)) {
+                VoiceSettingsLayout.Loading -> VoiceOutputLoadingSkeleton()
 
-                        VoiceSettingsSection.Listening -> {
-                            com.hermesandroid.relay.voice.VoiceOverlaySettingsCard()
-                            GlobalVoiceControlsCard(
-                                voiceSettings = voiceSettings,
-                                prefsRepo = prefsRepo,
+                VoiceSettingsLayout.GptLive -> {
+                    // GPT-Live is full duplex and configured on the Hermes
+                    // host: no interaction mode, barge-in, STT or TTS to tune.
+                    GptLiveVoiceCard(status = gptLiveStatus)
+                    listeningCards()
+                }
+
+                VoiceSettingsLayout.HermesVoice -> {
+                    val useRelayOutput = relayVoiceReady && currentAudioRoute != VoiceAudioRoute.Standard
+                    if (useRelayOutput) {
+                        if (configState.isLoading || !configState.hasLoaded) {
+                            VoiceOutputLoadingSkeleton()
+                        } else {
+                            StreamingVoiceOutputEditor(
+                                voiceClient = voiceClient,
+                                settingsViewModel = settingsViewModel,
+                                configState = configState,
                                 voiceViewModel = voiceViewModel,
                             )
-                            val wakeWordTestState by
-                                settingsViewModel.wakeWordTestState.collectAsState()
-                            DigitalAssistantCard(
-                                preferences = wakeWordPrefs,
-                                roleStatus = assistantRoleStatus,
-                                runtimeState = assistantWakeRuntimeState,
-                                installing = wakeWordInstallState.installing,
-                                error = wakeWordPermissionError ?: wakeWordInstallState.error,
-                                onChooseAssistant = requestAssistantRole,
-                                onManageAssistant = {
-                                    AssistantRole.managementIntent(context)?.let(assistantRoleLauncher::launch)
-                                },
-                                onEnableWake = requestAssistantWakeEnable,
-                                onDisableWake = {
-                                    settingsViewModel.setAssistantWakeEnabled(false)
-                                },
-                            )
-                            WakeWordCard(
-                                preferences = wakeWordPrefs,
-                                runtimeState = wakeWordRuntimeState,
-                                testState = wakeWordTestState,
-                                installing = wakeWordInstallState.installing,
-                                error = wakeWordPermissionError ?: wakeWordInstallState.error,
-                                onEnable = requestWakeWordEnable,
-                                onDisable = { settingsViewModel.setWakeWordEnabled(false) },
-                                onSensitivityChange = settingsViewModel::setWakeWordSensitivity,
-                                onConfirmationFramesChange =
-                                    settingsViewModel::setWakeWordConfirmationFrames,
-                                onStartNewSessionChange =
-                                    settingsViewModel::setWakeWordStartNewSession,
-                                onTest = settingsViewModel::testWakeWord,
-                            )
-                            BargeInCard(
-                                bargeInPrefs = bargeInPrefs,
-                                aecAvailable = aecAvailable,
-                                settingsViewModel = settingsViewModel,
-                            )
-                            SpeechToTextCard(
-                                relayVoiceReady = relayVoiceReady,
-                                configState = configState,
-                            )
-                            if (currentEngine == VoiceEngineMode.RealtimeAgent && relayVoiceReady) {
-                                VoiceModePresetCard(
-                                    activePreset = activePreset,
-                                    enabled = presetsReady,
-                                    applying = presetApplying,
-                                    onSelect = ::applyPreset,
-                                )
-                            }
                         }
-
-                        VoiceSettingsSection.Advanced -> {
-                            if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
-                                VoiceRoutingCard(
-                                    currentEngine = currentEngine,
-                                    currentAudioRoute = currentAudioRoute,
-                                    relayVoiceReady = relayVoiceReady,
-                                    prefsRepo = prefsRepo,
-                                    standardVoiceAvailability = standardVoiceAvailability,
-                                    standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
-                                    onOpenManage = onOpenManage,
-                                )
-                            }
-                            VoiceScopeBanner(
-                                relayVoiceReady = relayVoiceReady,
-                                currentEngine = currentEngine,
-                                configState = configState,
-                                displayProfile = displayProfile,
+                    } else {
+                        StandardVoiceOutputOverview(
+                            client = dashboardConfigClient,
+                            availability = standardVoiceAvailability,
+                            onOpenManage = onOpenManage,
+                            voiceViewModel = voiceViewModel,
+                        )
+                    }
+                    AnswerDeliveryCard(voiceSettings = voiceSettings, prefsRepo = prefsRepo)
+                    GlobalVoiceControlsCard(
+                        voiceSettings = voiceSettings,
+                        prefsRepo = prefsRepo,
+                        voiceViewModel = voiceViewModel,
+                    )
+                    BargeInCard(
+                        bargeInPrefs = bargeInPrefs,
+                        aecAvailable = aecAvailable,
+                        settingsViewModel = settingsViewModel,
+                    )
+                    listeningCards()
+                    AdvancedVoiceSection {
+                        SpeechToTextCard(relayVoiceReady = relayVoiceReady, configState = configState)
+                        VoiceRoutingCard(
+                            currentEngine = currentEngine,
+                            currentAudioRoute = currentAudioRoute,
+                            relayVoiceReady = relayVoiceReady,
+                            prefsRepo = prefsRepo,
+                            standardVoiceAvailability = standardVoiceAvailability,
+                            standardVoiceSignInRouteHint = standardVoiceSignInRouteHint,
+                            onOpenManage = onOpenManage,
+                        )
+                        VoiceScopeBanner(
+                            relayVoiceReady = relayVoiceReady,
+                            currentEngine = currentEngine,
+                            configState = configState,
+                            displayProfile = displayProfile,
+                        )
+                        if (dashboardConfigClient != null) {
+                            StandardVoiceServerConfigCard(
+                                client = dashboardConfigClient,
+                                profileName = AgentDisplay.profileRequestName(selectedProfile?.name),
+                                onOpenManage = onOpenManage,
+                                onMessage = { message ->
+                                    scope.launch { snackbarHost.showSnackbar(message) }
+                                },
                             )
-                            if (currentEngine == VoiceEngineMode.RealtimeAgent && relayVoiceReady) {
-                                RealtimeBehaviorSettingsCard(
-                                    voiceClient = voiceClient,
-                                    settingsViewModel = settingsViewModel,
-                                    configState = configState,
-                                    voiceSettings = voiceSettings,
-                                    prefsRepo = prefsRepo,
-                                )
-                            }
-                            if (dashboardConfigClient != null) {
-                                StandardVoiceServerConfigCard(
-                                    client = dashboardConfigClient,
-                                    profileName = AgentDisplay.profileRequestName(selectedProfile?.name),
-                                    onOpenManage = onOpenManage,
-                                    onMessage = { message ->
-                                        scope.launch { snackbarHost.showSnackbar(message) }
-                                    },
-                                )
-                            }
                         }
                     }
                 }
+
+                VoiceSettingsLayout.RealtimeAgent -> {
+                    if (configState.isLoading || !configState.hasLoaded) {
+                        VoiceOutputLoadingSkeleton()
+                    } else {
+                        RealtimeAgentCard(
+                            voiceClient = voiceClient,
+                            settingsViewModel = settingsViewModel,
+                            configState = configState,
+                            voiceSettings = voiceSettings,
+                            prefsRepo = prefsRepo,
+                            voiceViewModel = voiceViewModel,
+                        )
+                    }
+                    VoiceModePresetCard(
+                        activePreset = activePreset,
+                        enabled = presetsReady,
+                        applying = presetApplying,
+                        onSelect = ::applyPreset,
+                    )
+                    GlobalVoiceControlsCard(
+                        voiceSettings = voiceSettings,
+                        prefsRepo = prefsRepo,
+                        voiceViewModel = voiceViewModel,
+                    )
+                    BargeInCard(
+                        bargeInPrefs = bargeInPrefs,
+                        aecAvailable = aecAvailable,
+                        settingsViewModel = settingsViewModel,
+                    )
+                    listeningCards()
+                    AdvancedVoiceSection {
+                        RealtimeBehaviorSettingsCard(
+                            voiceClient = voiceClient,
+                            settingsViewModel = settingsViewModel,
+                            configState = configState,
+                            voiceSettings = voiceSettings,
+                            prefsRepo = prefsRepo,
+                        )
+                        VoiceScopeBanner(
+                            relayVoiceReady = relayVoiceReady,
+                            currentEngine = currentEngine,
+                            configState = configState,
+                            displayProfile = displayProfile,
+                        )
+                    }
+                }
+
+                // Realtime Agent without a paired Relay: the picker already explains why.
+                VoiceSettingsLayout.None -> Unit
+            }
+        }
+    }
+}
+
+internal enum class VoiceSettingsLayout { Loading, GptLive, HermesVoice, RealtimeAgent, None }
+
+/** Which voice mode's cards apply. GPT-Live is a host choice layered on Hermes voice. */
+internal fun voiceSettingsLayout(
+    engine: VoiceEngineMode,
+    gptLiveChecked: Boolean,
+    gptLiveStatus: GptLiveStatus?,
+    relayVoiceReady: Boolean,
+): VoiceSettingsLayout = when {
+    engine == VoiceEngineMode.RealtimeAgent ->
+        if (relayVoiceReady) VoiceSettingsLayout.RealtimeAgent else VoiceSettingsLayout.None
+    !gptLiveChecked -> VoiceSettingsLayout.Loading
+    gptLiveStatus?.mode == "gpt-live" -> VoiceSettingsLayout.GptLive
+    else -> VoiceSettingsLayout.HermesVoice
+}
+
+/** Read-only GPT-Live summary: model and voice are chosen on the Hermes host. */
+@Composable
+internal fun GptLiveVoiceCard(status: GptLiveStatus?) {
+    SectionCard(title = stringResource(R.string.voice_settings_gpt_live_title)) {
+        Text(
+            text = stringResource(R.string.voice_settings_gpt_live_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        status?.let {
+            ProviderRow(stringResource(R.string.voice_settings_gpt_live_model), it.model)
+            ProviderRow(stringResource(R.string.voice_settings_gpt_live_voice), voiceRouteDisplayLabel(it.voice))
+            if (!it.available) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = it.reason ?: stringResource(R.string.voice_settings_gpt_live_unavailable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
         }
     }
 }
 
 @Composable
-internal fun VoiceSettingsTabs(
-    selected: VoiceSettingsSection,
-    onSelect: (VoiceSettingsSection) -> Unit,
-) {
-    PrimaryScrollableTabRow(
-        selectedTabIndex = selected.ordinal,
-        edgePadding = 0.dp,
-        containerColor = MaterialTheme.colorScheme.surface,
-    ) {
-        VoiceSettingsSection.entries.forEach { section ->
-            Tab(
-                selected = selected == section,
-                onClick = { onSelect(section) },
-                text = {
-                    Text(stringResource(when (section) {
-                        VoiceSettingsSection.Output -> R.string.voice_tab_voice
-                        VoiceSettingsSection.Listening -> R.string.voice_tab_listening
-                        VoiceSettingsSection.Advanced -> R.string.voice_tab_advanced
-                    }))
-                },
-            )
-        }
+private fun AdvancedVoiceSection(content: @Composable () -> Unit) {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    TextButton(onClick = { expanded = !expanded }) {
+        Text(stringResource(R.string.voice_tab_advanced))
+        Icon(
+            imageVector = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+            contentDescription = null,
+        )
     }
+    if (expanded) content()
 }
 
 // ---------------------------------------------------------------------------
@@ -4983,198 +5001,6 @@ private fun providerOptionsStatusText(
 @Composable
 private fun commonLanguages(current: String, provider: RealtimeProviderInfo?): List<VoiceChoice> {
     return valueChoices(provider?.languages.orEmpty(), current, provider?.language_labels.orEmpty())
-}
-
-@Composable
-private fun voiceOutputSummary(
-    profile: Profile?,
-    currentEngine: VoiceEngineMode,
-    output: VoiceOutputConfig?,
-    realtime: RealtimeVoiceConfig?,
-    realtimeModel: String = "",
-    realtimeVoice: String = "",
-): Pair<String, String> {
-    val profileLabel = profile?.description?.takeIf { it.isNotBlank() }
-        ?: profile?.name?.takeIf { it.isNotBlank() }
-        ?: stringResource(R.string.voice_settings_server_default)
-    val outputLabel = output?.let { config ->
-        val provider = config.default_provider?.takeIf { it.isNotBlank() } ?: stringResource(R.string.voice_settings_summary_provider)
-        val voice = config.default_voice?.takeIf { it.isNotBlank() } ?: stringResource(R.string.voice_settings_summary_voice)
-        val model = config.default_model?.takeIf { it.isNotBlank() }
-        if (model == null) "$provider / $voice" else "$provider / $model / $voice"
-    } ?: stringResource(R.string.voice_settings_loading_output)
-    val realtimeLabel = realtime?.let { config ->
-        val provider = config.default_provider?.takeIf { it.isNotBlank() } ?: "realtime ..."
-        val model = realtimeModel.takeIf { it.isNotBlank() }
-            ?: config.default_model?.takeIf { it.isNotBlank() }
-        val voice = realtimeVoice.takeIf { it.isNotBlank() }
-            ?: config.default_voice?.takeIf { it.isNotBlank() }
-            ?: "voice ..."
-        if (model == null) "$provider / $voice" else "$provider / $model / $voice"
-    } ?: "realtime loading..."
-    return profileLabel to when (currentEngine) {
-        VoiceEngineMode.HermesVoiceOutput -> stringResource(R.string.voice_settings_summary_hermes_engine, outputLabel)
-        VoiceEngineMode.RealtimeAgent -> stringResource(R.string.voice_settings_summary_realtime_engine, realtimeLabel)
-    }
-}
-
-@Composable
-private fun VoiceProfileSummaryCard(
-    displayProfile: Profile?,
-    currentEngine: VoiceEngineMode,
-    output: VoiceOutputConfig?,
-    realtime: RealtimeVoiceConfig?,
-    realtimeModel: String,
-    realtimeVoice: String,
-    currentAudioRoute: VoiceAudioRoute,
-    relayVoiceReady: Boolean,
-    onClick: () -> Unit,
-) {
-    val (profileLabel, voiceSummary) = voiceOutputSummary(
-        profile = displayProfile,
-        currentEngine = currentEngine,
-        output = output,
-        realtime = realtime,
-        realtimeModel = realtimeModel,
-        realtimeVoice = realtimeVoice,
-    )
-    val profileScoped = currentEngine == VoiceEngineMode.RealtimeAgent ||
-        (relayVoiceReady && currentAudioRoute != VoiceAudioRoute.Standard)
-    val displayedVoiceSummary = if (profileScoped) {
-        voiceSummary
-    } else {
-        stringResource(R.string.voice_standard_host_config)
-    }
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = appearanceRoundedCornerShape(18.dp),
-        border = if (isCleanLayout) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Surface(
-                modifier = Modifier.size(44.dp),
-                shape = appearanceRoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                contentColor = MaterialTheme.colorScheme.primary,
-            ) {
-                Icon(
-                    Icons.Filled.GraphicEq,
-                    contentDescription = null,
-                    modifier = Modifier.padding(10.dp),
-                )
-            }
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = stringResource(
-                        if (currentEngine == VoiceEngineMode.RealtimeAgent) R.string.voice_service_live
-                        else R.string.voice_service_chat,
-                    ),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = profileLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = displayedVoiceSummary,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            ) {
-                Text(
-                    text = if (profileScoped) stringResource(R.string.voice_settings_label_profile) else stringResource(R.string.voice_settings_label_host),
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                )
-            }
-            Icon(Icons.Filled.ChevronRight, contentDescription = "Change voice mode")
-        }
-    }
-}
-
-@Composable
-private fun VoiceModePickerDialog(
-    currentEngine: VoiceEngineMode,
-    currentAudioRoute: VoiceAudioRoute,
-    relayVoiceReady: Boolean,
-    onEngineChange: (VoiceEngineMode) -> Unit,
-    onRouteChange: (VoiceAudioRoute) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.settings_voice_mode)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(
-                    VoiceEngineMode.HermesVoiceOutput to ("Hermes Chat + Voice Output" to "Hermes answers with your selected TTS voice"),
-                    VoiceEngineMode.RealtimeAgent to ("Real-time Voice Agent" to "Low-latency provider-native conversation"),
-                ).forEach { (engine, copy) ->
-                    val available = engine != VoiceEngineMode.RealtimeAgent || relayVoiceReady
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
-                                selected = currentEngine == engine,
-                                enabled = available,
-                                onClick = { onEngineChange(engine) },
-                            )
-                            .padding(vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        RadioButton(selected = currentEngine == engine, onClick = null, enabled = available)
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(copy.first, style = MaterialTheme.typography.titleSmall)
-                            Text(copy.second, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-                if (currentEngine == VoiceEngineMode.HermesVoiceOutput) {
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    Text(stringResource(R.string.voice_settings_output_route_label), style = MaterialTheme.typography.labelLarge)
-                    listOf(
-                        VoiceAudioRoute.Auto to "Automatic",
-                        VoiceAudioRoute.Standard to stringResource(R.string.voice_provider_standard),
-                        VoiceAudioRoute.Relay to "Relay voice output",
-                    ).forEach { (route, label) ->
-                        val available = route != VoiceAudioRoute.Relay || relayVoiceReady
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = currentAudioRoute == route,
-                                    enabled = available,
-                                    onClick = { onRouteChange(route) },
-                                ),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            RadioButton(selected = currentAudioRoute == route, onClick = null, enabled = available)
-                            Text(label)
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.settings_done)) } },
-    )
 }
 
 @Composable

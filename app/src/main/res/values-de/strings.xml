@@ -4648,4 +4648,9 @@
     <string name="settings_section_app">App</string>
     <string name="settings_section_help">Hilfe &amp; Info</string>
     <string name="settings_relay_tools_desc">Terminal, Gerätesteuerung, Sitzungen und Benachrichtigungen. Erfordert Relay.</string>
+    <string name="voice_settings_gpt_live_title">GPT-Live</string>
+    <string name="voice_settings_gpt_live_desc">Vollduplex-Sprache von deinem Hermes-Host. Sprich natürlich und unterbrich jederzeit. Modell und Stimme werden auf dem Host festgelegt.</string>
+    <string name="voice_settings_gpt_live_model">Modell</string>
+    <string name="voice_settings_gpt_live_voice">Stimme</string>
+    <string name="voice_settings_gpt_live_unavailable">GPT-Live ist auf dem Host ausgewählt, aber nicht verfügbar. Hermes verwendet die Standardsprache.</string>
 </resources>

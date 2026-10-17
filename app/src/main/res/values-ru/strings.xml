@@ -4387,4 +4387,9 @@
     <string name="settings_section_app">Приложение</string>
     <string name="settings_section_help">Справка и сведения</string>
     <string name="settings_relay_tools_desc">Терминал, управление устройством, сеансы и уведомления. Требуется Relay.</string>
+    <string name="voice_settings_gpt_live_title">GPT-Live</string>
+    <string name="voice_settings_gpt_live_desc">Полнодуплексный голос с вашего хоста Hermes. Говорите естественно и перебивайте в любой момент. Модель и голос задаются на хосте.</string>
+    <string name="voice_settings_gpt_live_model">Модель</string>
+    <string name="voice_settings_gpt_live_voice">Голос</string>
+    <string name="voice_settings_gpt_live_unavailable">GPT-Live выбран на хосте, но недоступен. Hermes использует стандартный голос.</string>
 </resources>

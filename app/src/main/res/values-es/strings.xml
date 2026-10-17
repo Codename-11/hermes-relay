@@ -4339,4 +4339,9 @@
     <string name="settings_section_app">Aplicación</string>
     <string name="settings_section_help">Ayuda e información</string>
     <string name="settings_relay_tools_desc">Terminal, control del dispositivo, sesiones y notificaciones. Requiere Relay.</string>
+    <string name="voice_settings_gpt_live_title">GPT-Live</string>
+    <string name="voice_settings_gpt_live_desc">Voz full-duplex desde tu host de Hermes. Habla con naturalidad e interrumpe cuando quieras. El modelo y la voz se configuran en el host.</string>
+    <string name="voice_settings_gpt_live_model">Modelo</string>
+    <string name="voice_settings_gpt_live_voice">Voz</string>
+    <string name="voice_settings_gpt_live_unavailable">GPT-Live está seleccionado en el host pero no está disponible. Hermes usa la voz estándar.</string>
 </resources>

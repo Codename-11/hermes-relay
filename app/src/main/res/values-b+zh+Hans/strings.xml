@@ -4572,4 +4572,9 @@
     <string name="settings_section_app">应用</string>
     <string name="settings_section_help">帮助与信息</string>
     <string name="settings_relay_tools_desc">终端、设备控制、会话和通知。需要 Relay。</string>
+    <string name="voice_settings_gpt_live_title">GPT-Live</string>
+    <string name="voice_settings_gpt_live_desc">来自 Hermes 主机的全双工语音。自然说话，随时打断。模型和音色在主机上设置。</string>
+    <string name="voice_settings_gpt_live_model">模型</string>
+    <string name="voice_settings_gpt_live_voice">音色</string>
+    <string name="voice_settings_gpt_live_unavailable">主机已选择 GPT-Live，但当前不可用。Hermes 将使用标准语音。</string>
 </resources>

@@ -4643,4 +4643,9 @@
     <string name="settings_section_app">アプリ</string>
     <string name="settings_section_help">ヘルプと情報</string>
     <string name="settings_relay_tools_desc">ターミナル、デバイス操作、セッション、通知。Relayが必要です。</string>
+    <string name="voice_settings_gpt_live_title">GPT-Live</string>
+    <string name="voice_settings_gpt_live_desc">Hermes ホストによる全二重音声です。自然に話し、いつでも割り込めます。モデルと音声はホストで設定します。</string>
+    <string name="voice_settings_gpt_live_model">モデル</string>
+    <string name="voice_settings_gpt_live_voice">音声</string>
+    <string name="voice_settings_gpt_live_unavailable">GPT-Live はホストで選択されていますが利用できません。Hermes は標準音声を使用します。</string>
 </resources>
