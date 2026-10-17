@@ -24,6 +24,9 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
@@ -69,8 +72,12 @@ internal fun BotChatVoiceHost(
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
-    val voice = remember(route.key, sessionId, dashboard) { VoiceViewModel(context.applicationContext as Application) }
-    val store = remember(voice) { ViewModelStore().apply { put("bot-voice", voice) } }
+    val store = remember(route.key, sessionId, dashboard) { ViewModelStore() }
+    val voice = remember(store) {
+        ViewModelProvider(store, viewModelFactory {
+            initializer { VoiceViewModel(context.applicationContext as Application) }
+        })[VoiceViewModel::class.java]
+    }
     val prefs = remember(voice) {
         VoicePreferencesRepository(context).apply { setActiveScope(route.connectionId, route.profileName) }
     }
@@ -83,6 +90,7 @@ internal fun BotChatVoiceHost(
     var entering by remember(voice) { mutableStateOf(false) }
     var fallbackDismissed by remember(voice) { mutableStateOf(false) }
     var startupError by remember(voice) { mutableStateOf<String?>(null) }
+    val startupErrorMessage = stringResource(R.string.bot_chat_voice_error)
 
     DisposableEffect(voice, lifecycle) {
         onVoiceSessionChanged(voice, true)
@@ -148,7 +156,7 @@ internal fun BotChatVoiceHost(
                     throw error
                 } catch (error: Exception) {
                     voice.exitVoiceMode()
-                    startupError = error.message ?: context.getString(R.string.bot_chat_voice_error)
+                    startupError = error.message ?: startupErrorMessage
                 } finally {
                     entering = false
                 }
