@@ -2,6 +2,8 @@ package com.hermesandroid.relay.screenshots
 
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onRoot
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.hermesandroid.relay.data.BotGroupMessage
@@ -53,6 +55,50 @@ class BotModeScreenshotTest {
                         onOpenGroup = {},
                         onNewBot = {},
                         nowMs = NOW,
+                    )
+                }
+            }
+        }
+        compose.onRoot().captureRoboImage(output.absolutePath)
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h720dp-432dpi")
+    fun compactLargeTypePicker() {
+        capture("bot-mode-compact-picker", "dark", 1.3f, picker = true)
+    }
+
+    @Test
+    @Config(qualifiers = "w640dp-h360dp-432dpi")
+    fun compactLandscapeLargeType() {
+        capture("bot-mode-landscape", "dark", 1.3f)
+        compose.onAllNodesWithText("Researcher").assertCountEquals(1)
+    }
+
+    @Test
+    @Config(qualifiers = "w840dp-h900dp-240dpi")
+    fun tabletLightLargeType() {
+        capture("bot-mode-tablet-light", "light", 1.3f)
+    }
+
+    private fun capture(name: String, theme: String, scale: Float, picker: Boolean = false) {
+        val output = File("build/ui-evidence/$name.png")
+        output.parentFile?.mkdirs()
+        val base = fixtureState()
+        val expanded = base.copy(roster = base.roster.copy(bots = base.roster.bots.mapIndexed { index, bot ->
+            if (index == 0) bot.copy(displayName = "Research and release planning assistant with a long name", stale = true)
+            else bot
+        }))
+        compose.setContent {
+            HermesRelayTheme(appThemeId = "hermes-relay", themePreference = theme, fontScale = scale) {
+                CompositionLocalProvider(LocalSphereSkin provides SphereRegistry.Adaptive) {
+                    BotModeContent(
+                        openPicker = picker,
+                        state = expanded,
+                        connections = listOf(fixtureConnection("hermes", "Hermes"), fixtureConnection("lab", "Lab server")),
+                        activeConnection = fixtureConnection("hermes", "Hermes"),
+                        onOpenSettings = {}, onOpenChat = {}, onRefresh = {}, onSelectGateway = {},
+                        onOpenBot = {}, onOpenGroup = {}, onNewBot = {}, nowMs = NOW,
                     )
                 }
             }

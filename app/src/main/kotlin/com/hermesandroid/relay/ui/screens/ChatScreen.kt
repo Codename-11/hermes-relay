@@ -785,12 +785,17 @@ fun ChatScreen(
     supervisedPolicy: SupervisedModePolicy = SupervisedModePolicy(),
     onNavigateToBotMode: () -> Unit = {},
     onBackToBots: (() -> Unit)? = null,
+    onNewBotChat: (() -> Unit)? = null,
     gitWorkspaceSummary: ChatGitWorkspaceSummary? = null,
     gitWorkspaceAvailable: Boolean = gitWorkspaceSummary != null,
     onNavigateToGitWorkspace: () -> Unit = {},
 ) {
     val responsiveLayout = chatResponsiveLayout(LocalConfiguration.current.screenWidthDp)
     val supervised = supervisedPolicy.enabled
+    val startNewConversation: () -> Unit = {
+        if (!supervised && onNewBotChat != null) onNewBotChat()
+        else chatViewModel.createNewChat()
+    }
     val supervisedVisibility = supervisedPolicy.visibility.resolved()
     LaunchedEffect(supervisedPolicy) {
         voiceViewModel.updateSupervisedModePolicy(supervisedPolicy)
@@ -2656,7 +2661,7 @@ fun ChatScreen(
                 },
                 onNewChat = {
                     if (!supervised || supervisedPolicy.capabilities.newChat) {
-                        chatViewModel.createNewChat()
+                        startNewConversation()
                         scope.launch { drawerState.close() }
                     }
                 },
@@ -2898,7 +2903,7 @@ fun ChatScreen(
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.bot_mode_back_to_bots))
                         }
                     } else if (supervised && !sessionsHistoryAllowed && supervisedPolicy.capabilities.newChat) {
-                        IconButton(onClick = { chatViewModel.createNewChat() }) {
+                        IconButton(onClick = startNewConversation) {
                             Icon(Icons.Filled.Edit, contentDescription = "New chat")
                         }
                     }
@@ -3217,7 +3222,7 @@ fun ChatScreen(
                     // sessions keep their own new-chat placement.
                     if (cleanLayout && !supervised && sessionsHistoryAllowed) {
                         IconButton(
-                            onClick = { chatViewModel.createNewChat() },
+                            onClick = startNewConversation,
                             modifier = Modifier.testTag("chat-header-new-chat"),
                         ) {
                             Icon(

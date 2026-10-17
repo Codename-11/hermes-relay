@@ -71,6 +71,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -453,13 +455,17 @@ internal fun relayStartDestination(onboardingCompleted: Boolean, supervisedEnabl
         else -> Screen.BotMode.route
     }
 
-internal fun NavHostController.returnToBots() {
+internal fun isBotWorkspaceRoute(route: String?): Boolean =
+    route == Screen.BotMode.route || route?.startsWith("${Screen.BotMode.route}/") == true
+
+internal fun NavHostController.returnToBots(openPicker: Boolean = false) {
     if (!popBackStack(Screen.BotMode.route, inclusive = false)) {
         navigate(Screen.BotMode.route) {
             popUpTo(Screen.Chat.route) { inclusive = true }
             launchSingleTop = true
         }
     }
+    if (openPicker) getBackStackEntry(Screen.BotMode.route).savedStateHandle["openBotPicker"] = true
 }
 
 sealed class Screen(
@@ -1464,6 +1470,7 @@ fun RelayApp() {
                 isDemoMode = isDemoMode,
                 currentRoute = currentRoute,
             )
+        val botWorkspaceVisible = isBotWorkspaceRoute(currentRoute)
 
         // Safety net: landing on a real connect surface (onboarding or the
         // Connect/Pair wizard) while demo is still active — via the banner's
@@ -1827,6 +1834,7 @@ fun RelayApp() {
         }
         val showStartupSphere =
             !suppressGlobalChrome &&
+                !botWorkspaceVisible &&
                 !startupGateReleased &&
                 !voiceModeActive &&
                 // Demo mode skips the startup connect-narration sphere entirely
@@ -2165,6 +2173,7 @@ fun RelayApp() {
             bottomBar = {
                 if (
                     !suppressGlobalChrome &&
+                    !botWorkspaceVisible &&
                     !isKeyboardVisible &&
                     !showStartupSphere &&
                     (!supervisedPolicy.enabled ||
@@ -2611,6 +2620,8 @@ fun RelayApp() {
                             },
                             onBackToBots = { navController.returnToBots() }
                                 .takeIf { !supervisedPolicy.enabled && onboardingCompleted },
+                            onNewBotChat = { navController.returnToBots(openPicker = true) }
+                                .takeIf { !supervisedPolicy.enabled && onboardingCompleted && !isDemoMode },
                             gitWorkspaceAvailable = gitWorkspaceAvailable,
                             gitWorkspaceSummary = gitWorkspaceSummary,
                             onNavigateToGitWorkspace = {
@@ -2619,13 +2630,18 @@ fun RelayApp() {
                         )
                     }
                 }
-                composable(Screen.BotMode.route) {
+                composable(Screen.BotMode.route) { entry ->
+                    val openPicker by entry.savedStateHandle
+                        .getStateFlow("openBotPicker", false).collectAsState()
                     BotModeScreen(
                         connectionViewModel = connectionViewModel,
+                        openPicker = openPicker,
+                        onPickerHandled = { entry.savedStateHandle["openBotPicker"] = false },
                         onOpenSettings = {
                             navController.navigate(Screen.Settings.route) { launchSingleTop = true }
                         },
                         onOpenChat = {
+                            chatViewModel.createNewChat()
                             navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
                                 launchSingleTop = true
                             }
@@ -2655,7 +2671,7 @@ fun RelayApp() {
                     val botModeState by connectionViewModel.botModeState.collectAsState()
                     BotGroupDetailScreen(
                         room = botModeState.roster.groups.firstOrNull { it.key == roomKey },
-                        onBack = { navController.popBackStack() },
+                        onBack = { navController.returnToBots() },
                     )
                 }
                 composable(
@@ -2711,6 +2727,11 @@ fun RelayApp() {
                     } else {
                         val botChatViewModel: ChatViewModel = viewModel(
                             key = "bot-chat:${route.connectionId}:${route.profileName}:$sessionId",
+                            factory = viewModelFactory {
+                                initializer { ChatViewModel().apply {
+                                    installComposerDraftStore(chatViewModel.composerDraftStore)
+                                } }
+                            },
                         )
                         BotChatScreen(
                             route = route,
@@ -2720,6 +2741,7 @@ fun RelayApp() {
                             dashboardClient = botDashboardClient,
                             chatViewModel = botChatViewModel,
                             connectionViewModel = connectionViewModel,
+                            onNewChat = { navController.returnToBots(openPicker = true) },
                             onVoiceSessionChanged = { voice, mounted ->
                                 if (mounted) {
                                     voiceViewModel.exitVoiceMode()
@@ -2728,7 +2750,7 @@ fun RelayApp() {
                                     processRuntime.unregisterBotVoiceSession(voice)
                                 }
                             },
-                            onBack = { navController.popBackStack() },
+                            onBack = { navController.returnToBots() },
                         )
                     }
                 }

@@ -64,6 +64,10 @@ FOCUSED_TESTS = (
     "com.hermesandroid.relay.ui.components.MarkdownStreamingParserTest",
     "com.hermesandroid.relay.ui.screens.ChangelogScreenTest",
     "com.hermesandroid.relay.ui.screens.ChatUnreadStateTest",
+    "com.hermesandroid.relay.ui.screens.BotModeScreenTest",
+    "com.hermesandroid.relay.ui.screens.BotChatScreenBindingTest",
+    "com.hermesandroid.relay.ui.RelayNavigationHydrationUiTest",
+    "com.hermesandroid.relay.screenshots.BotModeScreenshotTest",
 )
 RELEASE_PREP_TESTS = (
     "com.hermesandroid.relay.screenshots.ChangelogHistoryScreenshotTest",

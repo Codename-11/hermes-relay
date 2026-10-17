@@ -20,6 +20,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RelayAppStatusTest {
+    @Test
+    fun `bot workspace owns its loading and connection chrome`() {
+        listOf(Screen.BotMode.route, Screen.BotChat.route, Screen.BotGroup.route).forEach {
+            assertTrue(isBotWorkspaceRoute(it))
+        }
+        listOf(null, Screen.Chat.route, Screen.Settings.route, "bot_mode_other").forEach {
+            assertFalse(isBotWorkspaceRoute(it))
+        }
+    }
 
     @Test
     fun `startup preserves onboarding and supervised chat with Bots as ordinary home`() {

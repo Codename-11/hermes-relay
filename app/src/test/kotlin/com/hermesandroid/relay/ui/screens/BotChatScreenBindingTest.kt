@@ -11,9 +11,12 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performClick
 import com.github.takahirom.roborazzi.captureRoboImage
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.hermesandroid.relay.data.ChatComposerDraft
+import com.hermesandroid.relay.data.ChatComposerDraftKey
 import com.hermesandroid.relay.data.BotGatewayRoute
 import com.hermesandroid.relay.data.BotGatewayRouteKey
 import com.hermesandroid.relay.data.BotRosterEntry
@@ -28,6 +31,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.JsonPrimitive
@@ -195,6 +199,41 @@ class BotChatScreenBindingTest {
         compose.onNodeWithTag(BOT_CHAT_VOICE_TAG).assertIsNotEnabled()
     }
 
+    @Test
+    fun newAndBotIdentityOpenTheBotPicker() {
+        val screen = resources("research")
+        var pickerRequests = 0
+        compose.setContent {
+            MaterialTheme {
+                screen.content(handler = ChatHandler(), historyLoader = { _, _, _ -> Result.success(emptyList()) },
+                    onNewChat = { pickerRequests++ })
+            }
+        }
+        compose.onNodeWithContentDescription("New chat").performClick()
+        compose.onNodeWithText("Research").performClick()
+        compose.runOnIdle { assertEquals(2, pickerRequests) }
+    }
+
+    @Test
+    fun newSavesDraftUnderTheExactBotOwner() {
+        val screen = resources("research")
+        val owner = ChatComposerDraftKey(screen.route.connectionId, "research", screen.sessionId)
+        runBlocking { screen.viewModel.composerDraftStore.save(owner, ChatComposerDraft(text = "Unsent plan")) }
+        var opened = false
+        compose.setContent {
+            MaterialTheme {
+                screen.content(ChatHandler(), { _, _, _ -> Result.success(emptyList()) }, onNewChat = { opened = true })
+            }
+        }
+        compose.onNodeWithText("Unsent plan").performTextInput(" update")
+        compose.onNodeWithContentDescription("New chat").performClick()
+        compose.waitUntil { opened }
+        runBlocking {
+            assertEquals("Unsent plan update", screen.viewModel.composerDraftStore.snapshot(owner).text)
+            assertEquals("", screen.viewModel.composerDraftStore.snapshot(owner.copy(profileId = "other")).text)
+        }
+    }
+
     private fun resources(profileName: String): ScreenResources = ScreenResources(profileName).also {
         resources += it
     }
@@ -236,7 +275,7 @@ class BotChatScreenBindingTest {
         )
 
         @androidx.compose.runtime.Composable
-        fun content(handler: ChatHandler, historyLoader: BotChatHistoryLoader, onVoice: (() -> Unit)? = null) {
+        fun content(handler: ChatHandler, historyLoader: BotChatHistoryLoader, onVoice: (() -> Unit)? = null, onNewChat: (() -> Unit)? = null) {
             BotChatScreen(
                 route = route,
                 bot = bot,
@@ -248,6 +287,7 @@ class BotChatScreenBindingTest {
                 onVoice = onVoice,
                 handlerFactory = { handler },
                 historyLoader = historyLoader,
+                onNewChat = onNewChat,
                 profileIconFlow = { _, _ -> MutableStateFlow(null) },
             )
         }

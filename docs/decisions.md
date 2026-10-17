@@ -3978,7 +3978,15 @@ group orchestration locally while publishing a bounded recent-history projection
 through Gateway `ui_meta` for other clients.
 
 **Decision.** Bots is the ordinary startup home after onboarding. Its settings
-avatar and Main chat shortcut remain available with one gateway or none.
+avatar remains available with one gateway or none. New from ordinary Chat or
+Bot Chat returns to the bot picker; Main chat is an explicit secondary option
+there. Back from a Bot or group returns to Bots. Recent shortcuts represent
+conversation recency, not live availability; timestamps cannot authorize an
+online badge. Bot rows and picker choices disclose their immutable source and
+profile, and roster refresh runs only while the Bots destination is resumed.
+Bot composers reuse the app-private draft store, keyed by connection, profile,
+and canonical session. New and Back save text and attachments before leaving;
+a failed write keeps the conversation open.
 Supervised devices retain locked Chat startup. Setup and deep links keep their
 existing destinations. Main chat uses Back to return to Bots and a Sessions
 button for history; Copy session ID, Search, Share and Terminal remain reachable

@@ -63,6 +63,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -73,14 +74,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.ChatComposerDraft
+import com.hermesandroid.relay.data.ChatComposerDraftKey
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.BotGatewayRoute
 import com.hermesandroid.relay.data.BotRosterEntry
@@ -89,13 +92,14 @@ import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.GatewayChatClient
 import com.hermesandroid.relay.network.upstream.SessionMessageLoadMode
 import com.hermesandroid.relay.network.upstream.models.MessageItem
+import com.hermesandroid.relay.ui.UiMessageBus
+import java.io.IOException
 import com.hermesandroid.relay.ui.components.ChatMediaViewerHost
 import com.hermesandroid.relay.ui.components.MessageBubble
 import com.hermesandroid.relay.ui.theme.RelayRefresh
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import com.hermesandroid.relay.viewmodel.ChatViewModel
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
-import java.io.File
 import kotlinx.coroutines.flow.Flow
 
 internal typealias BotChatHistoryLoader = suspend (
@@ -115,6 +119,7 @@ fun BotChatScreen(
     dashboardClient: DashboardApiClient,
     chatViewModel: ChatViewModel,
     connectionViewModel: ConnectionViewModel,
+    onNewChat: (() -> Unit)? = null,
     onVoiceSessionChanged: (VoiceViewModel, Boolean) -> Unit = { _, _ -> },
     onBack: () -> Unit,
 ) {
@@ -141,6 +146,7 @@ fun BotChatScreen(
                 busyMessageAction = busyMessageAction,
                 maxAttachmentMbFlow = connectionViewModel.maxAttachmentMb,
                 onVoice = onVoice,
+                onNewChat = onNewChat,
             )
         }
     }
@@ -162,6 +168,7 @@ internal fun BotChatScreen(
     busyMessageAction: BusyMessageAction = BusyMessageAction.CorrectNow,
     maxAttachmentMbFlow: StateFlow<Int> = MutableStateFlow(DEFAULT_BOT_ATTACHMENT_MB),
     onVoice: (() -> Unit)? = null,
+    onNewChat: (() -> Unit)? = null,
 ) {
     val handler = remember(route.key) { handlerFactory() }
     val context = LocalContext.current
@@ -178,7 +185,8 @@ internal fun BotChatScreen(
     val iconPath by profileIconFlow(route.connectionId, route.profileName)
         .collectAsState(initial = null)
     val listState = rememberLazyListState()
-    var composer by remember(route.key, sessionId) { mutableStateOf("") }
+    var composerInput by remember(route.key, sessionId) { mutableStateOf(TextFieldValue()) }
+    val composer = composerInput.text
     var editingQueuedMessage by remember(route.key, sessionId) { mutableStateOf(false) }
     var busyActionOverride by remember(route.key, sessionId, busyMessageAction) {
         mutableStateOf<BusyMessageAction?>(null)
@@ -234,6 +242,42 @@ internal fun BotChatScreen(
     }
 
     val scope = rememberCoroutineScope()
+    val draftKey = remember(route.key, sessionId) {
+        ChatComposerDraftKey(route.connectionId, route.profileName, sessionId)
+    }
+    var draftReady by remember(draftKey) { mutableStateOf(false) }
+    val draftError = stringResource(R.string.error_classify_generic)
+    LaunchedEffect(draftKey) {
+        try {
+            val draft = chatViewModel.composerDraftStore.snapshot(draftKey)
+            composerInput = TextFieldValue(draft.text, TextRange(draft.selectionStart, draft.selectionEnd))
+            chatViewModel.replacePendingAttachments(draft.attachments)
+            draftReady = true
+        } catch (_: IOException) {
+            UiMessageBus.error(draftError)
+        }
+    }
+    suspend fun saveDraft(): Boolean = try {
+        chatViewModel.composerDraftStore.save(draftKey, ChatComposerDraft(
+            text = composer, selectionStart = composerInput.selection.start,
+            selectionEnd = composerInput.selection.end, attachments = attachments,
+        ))
+        true
+    } catch (_: IOException) {
+        UiMessageBus.error(draftError)
+        false
+    }
+    LaunchedEffect(draftKey, draftReady, composer, attachments) {
+        if (draftReady) {
+            kotlinx.coroutines.delay(200)
+            saveDraft()
+        }
+    }
+    val leaveChat: (() -> Unit) -> Unit = { navigate ->
+        if (!draftReady) navigate()
+        else scope.launch { if (saveDraft()) navigate() }
+    }
+    BackHandler { leaveChat(onBack) }
     val maxAttachmentMb by maxAttachmentMbFlow.collectAsState()
     var showAttachSheet by remember { mutableStateOf(false) }
     val ingest: (List<Uri>) -> Unit = { uris ->
@@ -262,10 +306,13 @@ internal fun BotChatScreen(
                 BotChatCircleButton(
                     icon = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(R.string.bot_mode_back_to_bots),
-                    onClick = onBack,
+                    onClick = { leaveChat(onBack) },
                 )
                 Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     Surface(
+                        onClick = { onNewChat?.let(leaveChat) },
+                        enabled = onNewChat != null,
+                        modifier = Modifier.padding(horizontal = 8.dp),
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
@@ -274,27 +321,29 @@ internal fun BotChatScreen(
                             modifier = Modifier.padding(start = 6.dp, end = 16.dp, top = 6.dp, bottom = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            BotChatAvatar(iconPath, bot.displayName, 30.dp)
+                            BotAvatar(iconPath, bot.displayName, 32.dp)
                             Spacer(Modifier.width(10.dp))
-                            Text(
-                                bot.displayName,
-                                style = MaterialTheme.typography.titleMedium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (bot.stale) {
+                            Column(Modifier.weight(1f, fill = false)) {
                                 Text(
-                                    " · " + stringResource(R.string.bot_mode_offline),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.error,
+                                    bot.displayName,
+                                    style = MaterialTheme.typography.titleMedium,
                                     maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (bot.stale) Text(
+                                    stringResource(R.string.bot_mode_offline),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error,
                                 )
                             }
                         }
                     }
                 }
-                // Balances the back button so the pill stays centred.
-                Spacer(Modifier.size(48.dp))
+                if (onNewChat != null) BotChatCircleButton(
+                    icon = Icons.Filled.Add,
+                    contentDescription = stringResource(R.string.bot_mode_new_chat),
+                    onClick = { leaveChat(onNewChat) },
+                ) else Spacer(Modifier.size(48.dp))
             }
         },
         bottomBar = {
@@ -318,7 +367,7 @@ internal fun BotChatScreen(
                     canEdit = composer.isBlank() && attachments.isEmpty(),
                     onEdit = { index ->
                         chatViewModel.takeQueuedForEdit(index)?.let {
-                            composer = it
+                            composerInput = TextFieldValue(it, TextRange(it.length))
                             editingQueuedMessage = true
                         }
                     },
@@ -384,8 +433,9 @@ internal fun BotChatScreen(
                                     )
                                 }
                                 BasicTextField(
-                                    value = composer,
-                                    onValueChange = { composer = it },
+                                    value = composerInput,
+                                    enabled = draftReady,
+                                    onValueChange = { composerInput = it },
                                     textStyle = MaterialTheme.typography.bodyLarge.copy(
                                         color = MaterialTheme.colorScheme.onSurface,
                                     ),
@@ -411,7 +461,7 @@ internal fun BotChatScreen(
                                         } else {
                                             // Matches Chat: an attachment-only send carries a placeholder body.
                                             val text = composer.trim().ifBlank { attachmentPlaceholder }
-                                            composer = ""
+                                            composerInput = TextFieldValue()
                                             chatViewModel.sendMessage(text, effectiveBusyAction)
                                             editingQueuedMessage = false
                                             busyActionOverride = null
@@ -560,19 +610,6 @@ private fun BotChatCircleButton(
     }
 }
 
-@Composable
-private fun BotChatAvatar(iconPath: String?, name: String, size: Dp) {
-    if (!iconPath.isNullOrBlank()) {
-        AsyncImage(
-            model = File(iconPath),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.size(size).clip(CircleShape),
-        )
-    } else {
-        BotFallbackAvatar(name, size)
-    }
-}
 
 @Composable
 private fun BotChatSheetItem(icon: ImageVector, label: String, onClick: () -> Unit) {
