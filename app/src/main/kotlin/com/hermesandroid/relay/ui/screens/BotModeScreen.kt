@@ -82,7 +82,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import coil3.compose.AsyncImage
+import coil3.compose.SubcomposeAsyncImage
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.BotGroupMessage
 import com.hermesandroid.relay.data.BotGroupRoom
@@ -808,16 +808,16 @@ private fun BotProfileAvatar(
 
 @Composable
 internal fun BotAvatar(path: String?, label: String, size: Dp) {
-    Surface(modifier = Modifier.size(size), shape = CircleShape) {
-        Box {
-            BotFallbackAvatar(label, size)
-            if (!path.isNullOrBlank()) AsyncImage(
-                model = File(path),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+    if (path.isNullOrBlank()) {
+        BotFallbackAvatar(label, size)
+    } else {
+        SubcomposeAsyncImage(
+            model = File(path),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.size(size),
+            error = { BotFallbackAvatar(label, size) },
+        )
     }
 }
 
