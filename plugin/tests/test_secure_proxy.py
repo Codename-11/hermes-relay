@@ -78,8 +78,9 @@ class SecureProxyRouteTests(AioHTTPTestCase):
             "plugin.relay.secure_proxy._proxy_http",
             new=AsyncMock(return_value=aiohttp_web.Response(status=401, text="auth")),
         ) as mock_relay_http:
+            # /relay/sessions* stays on the dedicated bearer handlers (not the
+            # catch-all). Catch-all covers phone HTTP: voice/push/phone/pairing.
             for path in (
-                "/relay/sessions",
                 "/relay/voice/config",
                 "/relay/push/token",
                 "/relay/phone/threads",
@@ -87,7 +88,10 @@ class SecureProxyRouteTests(AioHTTPTestCase):
             ):
                 response = await self.client.get(path) if path != "/relay/push/token" else await self.client.post(path, json={})
                 self.assertEqual(response.status, 401, path)
-            self.assertGreaterEqual(mock_relay_http.await_count, 5)
+            self.assertGreaterEqual(mock_relay_http.await_count, 4)
+            self.assertEqual((await self.client.get("/relay/sessions")).status, 401)
+            # Operator-ish tails under /relay must stay closed (not proxied).
+            self.assertEqual((await self.client.get("/relay/security")).status, 404)
 
         # Deterministic failures; never depend on a developer's local services.
         with patch("plugin.relay.secure_proxy._proxy_http", new=AsyncMock(side_effect=ClientConnectionError)):

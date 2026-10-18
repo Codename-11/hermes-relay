@@ -1455,6 +1455,14 @@
     <string name="proactive_fcm_title">Push-Wake (BYO FCM)</string>
     <string name="proactive_fcm_desc">Optional. Nutze dein eigenes Firebase-Projekt, damit Hermes dieses Telefon wecken kann, wenn die Live-Verbindung weg ist. Der volle Text kommt weiter über Relay nach dem Reconnect. Nur Sideload; braucht Google Play Services.</string>
     <string name="proactive_fcm_enable">FCM-Wake aktivieren</string>
+    <string name="proactive_fcm_hide_content">Nachrichtentext in Benachrichtigungen ausblenden</string>
+    <string name="proactive_fcm_hide_content_desc">Standardmäßig aus. Wenn an, nutzen Wake- und Antwort-Benachrichtigungen nur generischen Text (und der Host lässt die Vorschau in FCM weg).</string>
+    <string name="proactive_fcm_config_heading">Firebase-Client-Konfiguration</string>
+    <string name="proactive_fcm_load_file">google-services.json laden</string>
+    <string name="proactive_fcm_load_file_hint">Datei aus Downloads / Dateien wählen (kein Öffnen oder Kopieren nötig). Einfügen funktioniert weiterhin.</string>
+        <string name="proactive_fcm_loaded_from">Felder aus %1$s geladen — unten prüfen, dann Speichern.</string>
+    <string name="proactive_fcm_read_failed">Datei konnte nicht gelesen werden.</string>
+    <string name="proactive_fcm_parse_failed">Firebase-JSON konnte nicht geparst werden.</string>
     <string name="proactive_fcm_paste_json">google-services.json einfügen</string>
     <string name="proactive_fcm_import_json">JSON-Felder importieren</string>
     <string name="proactive_fcm_project_id">Projekt-ID</string>
@@ -1469,6 +1477,7 @@
     <string name="proactive_fcm_wake_title">Hermes</string>
     <string name="proactive_fcm_wake_body">Hermes hat eine Nachricht — öffnen zum Reconnect und Zustellen.</string>
     <string name="proactive_fcm_wake_channel">Push-Wake</string>
+    <string name="notification_content_hidden">Hermes öffnen, um die Nachricht zu sehen.</string>
 
     <!-- ProfileInspectorScreen -->
     <string name="profile_inspector_back">Zurück</string>

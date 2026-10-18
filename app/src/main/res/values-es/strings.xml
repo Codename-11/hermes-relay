@@ -1338,6 +1338,14 @@
     <string name="proactive_fcm_title">Despertar push (BYO FCM)</string>
     <string name="proactive_fcm_desc">Opcional. Usa tu propio proyecto Firebase para que Hermes despierte este teléfono cuando la conexión en vivo esté caída. El texto completo sigue llegando por Relay tras reconectar. Solo sideload; necesita Google Play Services.</string>
     <string name="proactive_fcm_enable">Activar despertar FCM</string>
+    <string name="proactive_fcm_hide_content">Ocultar el contenido del mensaje en las notificaciones</string>
+    <string name="proactive_fcm_hide_content_desc">Desactivado por defecto. Si está activo, las notificaciones de despertar y respuesta usan solo texto genérico (y el host omite la vista previa en FCM).</string>
+    <string name="proactive_fcm_config_heading">Configuración de cliente Firebase</string>
+    <string name="proactive_fcm_load_file">Cargar google-services.json</string>
+    <string name="proactive_fcm_load_file_hint">Elige el archivo en Descargas / Archivos (no hace falta abrirlo ni copiarlo). Pegar sigue funcionando si lo prefieres.</string>
+        <string name="proactive_fcm_loaded_from">Campos cargados desde %1$s — revísalos abajo y guarda.</string>
+    <string name="proactive_fcm_read_failed">No se pudo leer ese archivo.</string>
+    <string name="proactive_fcm_parse_failed">No se pudo analizar el JSON de Firebase.</string>
     <string name="proactive_fcm_paste_json">Pegar google-services.json</string>
     <string name="proactive_fcm_import_json">Importar campos JSON</string>
     <string name="proactive_fcm_project_id">ID del proyecto</string>
@@ -1352,6 +1360,7 @@
     <string name="proactive_fcm_wake_title">Hermes</string>
     <string name="proactive_fcm_wake_body">Hermes tiene un mensaje: abre para reconectar y entregar.</string>
     <string name="proactive_fcm_wake_channel">Despertar push</string>
+    <string name="notification_content_hidden">Abre Hermes para ver el mensaje.</string>
     <string name="profile_inspector_back">Atrás</string>
     <string name="profile_inspector_refresh_all">Actualizar todo</string>
     <string name="profile_inspector_title">Inspeccionar %1$s</string>
