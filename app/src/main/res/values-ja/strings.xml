@@ -1465,6 +1465,14 @@
     <string name="proactive_fcm_title">プッシュ起床 (BYO FCM)</string>
     <string name="proactive_fcm_desc">任意。独自の Firebase プロジェクトを使い、ライブ接続が切れたときに Hermes がこの端末を起床できます。本文は再接続後に Relay 経由で届きます。サイドロードのみ。Google Play 開発者サービスが必要です。</string>
     <string name="proactive_fcm_enable">FCM 起床を有効化</string>
+    <string name="proactive_fcm_hide_content">通知にメッセージ本文を出さない</string>
+    <string name="proactive_fcm_hide_content_desc">既定はオフ。オンにすると起床・返信通知は一般文言のみ（ホストも FCM からプレビューを省きます）。</string>
+    <string name="proactive_fcm_config_heading">Firebase クライアント設定</string>
+    <string name="proactive_fcm_load_file">google-services.json を読み込む</string>
+    <string name="proactive_fcm_load_file_hint">ダウンロード / ファイルから選ぶだけ（開いたりコピーする必要なし）。貼り付けも使えます。</string>
+        <string name="proactive_fcm_loaded_from">%1$s からフィールドを読み込みました — 下を確認して保存。</string>
+    <string name="proactive_fcm_read_failed">そのファイルを読めませんでした。</string>
+    <string name="proactive_fcm_parse_failed">Firebase JSON を解析できませんでした。</string>
     <string name="proactive_fcm_paste_json">google-services.json を貼り付け</string>
     <string name="proactive_fcm_import_json">JSON フィールドをインポート</string>
     <string name="proactive_fcm_project_id">プロジェクト ID</string>
@@ -1479,6 +1487,7 @@
     <string name="proactive_fcm_wake_title">Hermes</string>
     <string name="proactive_fcm_wake_body">Hermes にメッセージがあります — 開いて再接続し配信します。</string>
     <string name="proactive_fcm_wake_channel">プッシュ起床</string>
+    <string name="notification_content_hidden">Hermes を開いてメッセージを確認してください。</string>
 
     <!-- ProfileInspectorScreen -->
     <string name="profile_inspector_back">戻る</string>

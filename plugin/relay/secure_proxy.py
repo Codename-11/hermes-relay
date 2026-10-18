@@ -671,17 +671,37 @@ def create_secure_proxy_app(server: "RelayServer") -> web.Application:
             "X-Hermes-Proxy-Peer": request.remote or "unknown",
         })
 
+    def _relay_http_path_allowed(tail: str) -> bool:
+        # Allow only phone power-tool surfaces. Do not open loopback-trusted
+        # operator paths (security, secure-link preflight, pairing mint, …).
+        if tail in {"/push/token", "/pairing/register"}:
+            return True
+        return any(
+            tail == prefix.rstrip("/") or tail.startswith(prefix)
+            for prefix in (
+                "/phone/",
+                "/voice/",
+                "/media/",
+                "/usage/",
+                "/push/",
+            )
+        )
+
     async def relay_http(request: web.Request) -> web.StreamResponse:
         # Phone HTTP uses the same /relay base as WSS (PluginProxyTransport).
-        # Only /relay/health + /relay/ws are special-cased above; everything else
-        # (sessions, push/token, phone/threads, voice, media, …) reverse-proxies
-        # to the plain loopback relay with the internal hop secret.
+        # Dedicated routes own /relay/health, /relay/ws, and /relay/sessions*.
+        # Everything else is an allowlisted reverse-proxy to loopback relay.
         if request.headers.get("Upgrade", "").lower() == "websocket":
             raise web.HTTPNotFound()
         tail = _safe_tail(request, "/relay")
         if tail is None:
             raise web.HTTPBadRequest(text="unsafe proxy path")
         if not tail or tail == "/":
+            raise web.HTTPNotFound()
+        # Health is GET/HEAD-only via add_get; other methods must 405, not proxy.
+        if tail.rstrip("/") == "/health" or tail == "health":
+            raise web.HTTPMethodNotAllowed(request.method, ["GET", "HEAD"])
+        if not _relay_http_path_allowed(tail):
             raise web.HTTPNotFound()
         upstream = f"http://127.0.0.1:{server.config.port}{tail}"
         try:
