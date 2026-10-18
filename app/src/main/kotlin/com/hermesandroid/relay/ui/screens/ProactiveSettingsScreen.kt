@@ -45,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -203,6 +204,7 @@ private fun FcmByoSection(
     paired: Boolean,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val prefs by connectionViewModel.fcmPushPreferences.collectAsState()
     val status by connectionViewModel.fcmStatusMessage.collectAsState()
     var projectId by remember(prefs.config.projectId) { mutableStateOf(prefs.config.projectId) }
@@ -230,12 +232,12 @@ private fun FcmByoSection(
                 // full multi-KB JSON is awkward to scroll on phone.
                 pasteJson = raw.trim().let { if (it.length <= 400) it else it.take(400) + "\n…" }
                 importError = null
-                importNote = context.getString(R.string.proactive_fcm_loaded_from, sourceLabel)
+                importNote = resources.getString(R.string.proactive_fcm_loaded_from, sourceLabel)
             },
             onFailure = { err ->
                 importNote = null
                 importError = err.message
-                    ?: context.getString(R.string.proactive_fcm_parse_failed)
+                    ?: resources.getString(R.string.proactive_fcm_parse_failed)
             },
         )
     }
@@ -251,12 +253,12 @@ private fun FcmByoSection(
         }.getOrElse { err ->
             importNote = null
             importError = err.message
-                ?: context.getString(R.string.proactive_fcm_read_failed)
+                ?: resources.getString(R.string.proactive_fcm_read_failed)
             return@rememberLauncherForActivityResult
         }
         if (raw.isNullOrBlank()) {
             importNote = null
-            importError = context.getString(R.string.proactive_fcm_read_failed)
+            importError = resources.getString(R.string.proactive_fcm_read_failed)
             return@rememberLauncherForActivityResult
         }
         val label = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }

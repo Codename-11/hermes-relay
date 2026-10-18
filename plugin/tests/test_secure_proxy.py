@@ -74,9 +74,13 @@ class SecureProxyRouteTests(AioHTTPTestCase):
 
         # /relay/* HTTP (except health/ws) reverse-proxies to loopback relay.
         from aiohttp import ClientConnectionError, web as aiohttp_web
+        async def _fake_proxy(*_a, **_k):
+            # Fresh Response per call — reusing one instance hangs the test client.
+            return aiohttp_web.Response(status=401, text="auth")
+
         with patch(
             "plugin.relay.secure_proxy._proxy_http",
-            new=AsyncMock(return_value=aiohttp_web.Response(status=401, text="auth")),
+            new=AsyncMock(side_effect=_fake_proxy),
         ) as mock_relay_http:
             # /relay/sessions* stays on the dedicated bearer handlers (not the
             # catch-all). Catch-all covers phone HTTP: voice/push/phone/pairing.
