@@ -227,6 +227,54 @@ class AssistantSessionProtocolTest {
     }
 
     @Test
+    fun platformAssistantInvocation_acceptsContextFlagsWithoutPrivateExtras() {
+        val platformFlags =
+            VoiceInteractionSession.SHOW_WITH_ASSIST or
+                VoiceInteractionSession.SHOW_WITH_SCREENSHOT
+
+        assertTrue(
+            assistantSessionExpectsScreenContext(
+                hasExplicitPolicy = false,
+                explicitlyRequested = false,
+                showFlags = platformFlags,
+                keyguardLocked = false,
+            )
+        )
+        assertFalse(
+            assistantSessionExpectsScreenContext(
+                hasExplicitPolicy = false,
+                explicitlyRequested = false,
+                showFlags = platformFlags,
+                keyguardLocked = true,
+            )
+        )
+    }
+
+    @Test
+    fun privateAssistantInvocation_preservesExplicitContextPolicy() {
+        val platformFlags =
+            VoiceInteractionSession.SHOW_WITH_ASSIST or
+                VoiceInteractionSession.SHOW_WITH_SCREENSHOT
+
+        assertFalse(
+            assistantSessionExpectsScreenContext(
+                hasExplicitPolicy = true,
+                explicitlyRequested = false,
+                showFlags = platformFlags,
+                keyguardLocked = false,
+            )
+        )
+        assertTrue(
+            assistantSessionExpectsScreenContext(
+                hasExplicitPolicy = true,
+                explicitlyRequested = true,
+                showFlags = 0,
+                keyguardLocked = false,
+            )
+        )
+    }
+
+    @Test
     fun retry_reusesCurrentActivationId() {
         assertEquals("activation-1", assistantRetryActivationId("activation-1"))
         assertNull(assistantRetryActivationId(null))

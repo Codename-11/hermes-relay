@@ -241,10 +241,17 @@ private class HermesVoiceInteractionSession(
             ?: UUID.randomUUID().toString()
         AssistantSessionState.reset(activationId!!)
         manualMic = args?.getBoolean(AssistantSessionProtocol.EXTRA_MANUAL_MIC, false) ?: false
-        expectScreenContext = args?.getBoolean(
-            AssistantSessionProtocol.EXTRA_EXPECT_SCREEN_CONTEXT,
-            false,
-        ) ?: false
+        expectScreenContext = assistantSessionExpectsScreenContext(
+            hasExplicitPolicy = args?.containsKey(
+                AssistantSessionProtocol.EXTRA_EXPECT_SCREEN_CONTEXT,
+            ) == true,
+            explicitlyRequested = args?.getBoolean(
+                AssistantSessionProtocol.EXTRA_EXPECT_SCREEN_CONTEXT,
+                false,
+            ) ?: false,
+            showFlags = showFlags,
+            keyguardLocked = keyguardLocked,
+        )
         if (expectScreenContext == true) {
             flushPendingContext()
         } else {
@@ -967,4 +974,17 @@ private fun compactAssistantText(snapshot: AssistantSessionSnapshot): String =
 @Composable
 private fun assistantNoticeText(notice: AssistantSessionNotice): String = when (notice) {
     AssistantSessionNotice.NoSpeech -> stringResource(R.string.voice_no_speech_try_again)
+}
+
+internal fun assistantSessionExpectsScreenContext(
+    hasExplicitPolicy: Boolean,
+    explicitlyRequested: Boolean,
+    showFlags: Int,
+    keyguardLocked: Boolean,
+): Boolean {
+    if (keyguardLocked) return false
+    if (hasExplicitPolicy) return explicitlyRequested
+    val platformContextFlags =
+        VoiceInteractionSession.SHOW_WITH_ASSIST or VoiceInteractionSession.SHOW_WITH_SCREENSHOT
+    return showFlags and platformContextFlags != 0
 }
