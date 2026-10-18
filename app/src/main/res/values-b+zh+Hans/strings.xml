@@ -1449,6 +1449,14 @@
     <string name="proactive_fcm_title">推送唤醒（BYO FCM）</string>
     <string name="proactive_fcm_desc">可选。使用你自己的 Firebase 项目，以便在实时连接断开时由 Hermes 唤醒本机。完整正文仍在重连后通过 Relay 送达。仅 sideload；需要 Google Play 服务。</string>
     <string name="proactive_fcm_enable">启用 FCM 唤醒</string>
+    <string name="proactive_fcm_hide_content">在通知中隐藏消息内容</string>
+    <string name="proactive_fcm_hide_content_desc">默认关闭。开启后，唤醒与回复通知仅显示通用文案（主机也会在 FCM 中省略预览）。</string>
+    <string name="proactive_fcm_config_heading">Firebase 客户端配置</string>
+    <string name="proactive_fcm_load_file">加载 google-services.json</string>
+    <string name="proactive_fcm_load_file_hint">从“下载 / 文件”选择即可（无需打开或复制）。仍可粘贴。</string>
+        <string name="proactive_fcm_loaded_from">已从 %1$s 加载字段 — 请在下方核对后保存。</string>
+    <string name="proactive_fcm_read_failed">无法读取该文件。</string>
+    <string name="proactive_fcm_parse_failed">无法解析 Firebase JSON。</string>
     <string name="proactive_fcm_paste_json">粘贴 google-services.json</string>
     <string name="proactive_fcm_import_json">导入 JSON 字段</string>
     <string name="proactive_fcm_project_id">项目 ID</string>
@@ -1463,6 +1471,7 @@
     <string name="proactive_fcm_wake_title">Hermes</string>
     <string name="proactive_fcm_wake_body">Hermes 有一条消息 — 打开以重连并投递。</string>
     <string name="proactive_fcm_wake_channel">推送唤醒</string>
+    <string name="notification_content_hidden">打开 Hermes 查看消息。</string>
 
     <!-- ProfileInspectorScreen -->
     <string name="profile_inspector_back">返回</string>
