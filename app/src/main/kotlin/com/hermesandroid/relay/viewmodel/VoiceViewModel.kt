@@ -103,6 +103,9 @@ import com.hermesandroid.relay.data.VoiceAudioRoute
  */
 enum class VoiceState { Idle, Listening, Transcribing, Thinking, Speaking, Error }
 
+internal fun shouldPlayVoiceModeLifecycleChime(assistantActivationId: String?): Boolean =
+    assistantActivationId == null
+
 internal fun canSpeakSettledResponse(
     state: VoiceUiState,
     providerRealtimeAgentTurnActive: Boolean,
@@ -1685,8 +1688,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         realtimeAmplitudeDecayJob = null
         realtimeConfirmationControl = null
         clearVoiceHandoffStatus()
-        // Fire the chime first so the sound lands with the overlay appearing.
-        try { sfxPlayer?.playEnter() } catch (_: Exception) { /* ignore */ }
+        // The compact Android-assistant overlay already has platform invocation
+        // feedback. Its 200 ms enter sweep sounds like a spoken response being
+        // clipped before the real answer arrives, so keep lifecycle chimes for
+        // ordinary in-app voice mode only.
+        if (shouldPlayVoiceModeLifecycleChime(activationId)) {
+            try { sfxPlayer?.playEnter() } catch (_: Exception) { /* ignore */ }
+        }
         _uiState.update {
             it.copy(
                 voiceMode = true,
@@ -1934,7 +1942,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         // add a separate `forceExitVoiceMode()` when that need materializes.
         if (!_uiState.value.voiceMode) return
 
-        assistantActivationId?.let { id ->
+        val exitingAssistantActivationId = assistantActivationId
+        exitingAssistantActivationId?.let { id ->
             viewModelScope.launch(Dispatchers.IO) {
                 assistantContextStore(getApplication()).discard(id)
             }
@@ -1945,7 +1954,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         assistantContextRetryAvailable = false
 
         // Chime BEFORE teardown — AudioTrack release would cut it off otherwise.
-        try { sfxPlayer?.playExit() } catch (_: Exception) { /* ignore */ }
+        // Assistant-owned overlays stay silent for the same reason as entry.
+        if (shouldPlayVoiceModeLifecycleChime(exitingAssistantActivationId)) {
+            try { sfxPlayer?.playExit() } catch (_: Exception) { /* ignore */ }
+        }
         // Exit = detach, chip ✕ = cancel. A promoted/durable run stays alive
         // server-side; the relay delivers its result on the next voice session
         // or as a proactive notification. Cancelling here both killed the task
