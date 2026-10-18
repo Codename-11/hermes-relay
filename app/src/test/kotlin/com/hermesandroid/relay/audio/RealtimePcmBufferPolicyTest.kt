@@ -7,6 +7,86 @@ import org.junit.Test
 
 class RealtimePcmBufferPolicyTest {
     @Test
+    fun `partial stopped-track write preserves the complete provider chunk`() {
+        val writes = mutableListOf<Pair<Int, Int>>()
+        val accepted = mutableListOf<Int>()
+        var call = 0
+
+        val total = writePcmFully(
+            pcmSize = 192_800,
+            writeChunk = { offset, size ->
+                writes += offset to size
+                if (call++ == 0) 33_600 else size
+            },
+            onWritten = accepted::add,
+        )
+
+        assertEquals(192_800, total)
+        assertEquals(listOf(0 to 192_800, 33_600 to 159_200), writes)
+        assertEquals(listOf(33_600, 159_200), accepted)
+    }
+
+    @Test
+    fun `zero-progress write stops without spinning`() {
+        var calls = 0
+
+        val total = writePcmFully(
+            pcmSize = 48_000,
+            writeChunk = { _, _ ->
+                calls++
+                0
+            },
+            onWritten = { error("zero-byte writes must not be reported as accepted") },
+        )
+
+        assertEquals(0, total)
+        assertEquals(1, calls)
+    }
+
+    @Test
+    fun `stop signal cancels remaining partial writes`() {
+        val writes = mutableListOf<Pair<Int, Int>>()
+        var active = true
+
+        val total = writePcmFully(
+            pcmSize = 192_800,
+            writeChunk = { offset, size ->
+                writes += offset to size
+                33_600
+            },
+            onWritten = { active = false },
+            shouldContinue = { active },
+        )
+
+        assertEquals(33_600, total)
+        assertEquals(listOf(0 to 192_800), writes)
+    }
+
+    @Test
+    fun `interrupted write cannot revive amplitude after stop`() {
+        assertFalse(
+            shouldPublishPcmAmplitude(
+                writtenBytes = 33_600,
+                writeEpoch = 4L,
+                currentEpoch = 5L,
+                trackStillCurrent = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `completed current write publishes amplitude`() {
+        assertTrue(
+            shouldPublishPcmAmplitude(
+                writtenBytes = 192_800,
+                writeEpoch = 5L,
+                currentEpoch = 5L,
+                trackStillCurrent = true,
+            ),
+        )
+    }
+
+    @Test
     fun `does not start on tiny first realtime chunk`() {
         val decision = RealtimePcmBufferPolicy.startDecision(
             pendingBytes = RealtimePcmBufferPolicy.bytesForDurationMs(24_000, 80),
