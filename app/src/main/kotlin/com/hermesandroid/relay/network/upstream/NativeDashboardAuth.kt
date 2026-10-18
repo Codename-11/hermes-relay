@@ -134,6 +134,7 @@ class NativeDashboardAuthClient(
     fun beginAuthorization(
         redirectUri: String,
         provider: String? = null,
+        discoveryProvider: String? = provider,
     ): NativeDashboardAuthorization {
         requireStrictLoopbackRedirect(redirectUri)
         // RFC 7636 uses unpadded Base64URL. Okio's base64Url() preserves
@@ -146,7 +147,7 @@ class NativeDashboardAuthClient(
             .base64Url()
             .trimEnd('=')
         val state = randomBytes(24).base64Url()
-        val authorizationBaseUrl = resolveAuthorizationBaseUrl(provider)
+        val authorizationBaseUrl = resolveAuthorizationBaseUrl(discoveryProvider)
         val root = "$authorizationBaseUrl/auth/native/authorize".toHttpUrlOrNull()
             ?: throw IOException("Dashboard URL is not a valid http(s) address")
         val url = root.newBuilder()
@@ -469,6 +470,15 @@ internal fun canonicalDashboardBaseFromProviderRedirect(
     val providerUrl = location?.toHttpUrlOrNull() ?: return fallback
     val callback = providerUrl.queryParameter("redirect_uri")
         ?.toHttpUrlOrNull()
+        ?: providerUrl.queryParameter("callbackUrl")
+            ?.let(providerUrl::resolve)
+            ?.takeIf {
+                it.scheme == providerUrl.scheme &&
+                    it.host.equals(providerUrl.host, ignoreCase = true) &&
+                    it.port == providerUrl.port
+            }
+            ?.queryParameter("redirect_uri")
+            ?.toHttpUrlOrNull()
         ?: return fallback
     if (
         providerUrl.username.isNotEmpty() || providerUrl.password.isNotEmpty() ||
