@@ -1461,6 +1461,36 @@ matching authenticated backend scope.
 
 ---
 
+### 10.3 Desktop binary file transfers
+
+The optional Relay plugin exposes `desktop_push_file(local_path, remote_path,
+overwrite?, device?)` and `desktop_pull_file(path, dest_dir?, device?)`. They
+transfer between the Relay host and one explicitly selected desktop. They do
+not change the upstream Gateway or Android attachment contracts.
+
+Loopback-only `POST /desktop/transfer/push` and `/desktop/transfer/pull` initiate
+ordinary, locally authorized `desktop_transfer_receive` / `desktop_transfer_send`
+commands. The desktop must acknowledge `protocol: 1`, `status: ready` and the
+matching transfer ID. Pull additionally reports the byte size and chunk count;
+the Relay sends `desktop.transfer_start` only after validating that metadata.
+Older clients fail explicitly without falling back to text file operations.
+
+Data uses `desktop.transfer_chunk` envelopes with `{transfer_id, index, total,
+data}`; `data` is canonical base64 for at most 256 KiB. Exactly one chunk is in
+flight. The receiver acknowledges `{transfer_id, received}` in
+`desktop.transfer_progress`; the final receiver on push, or sender after the
+last acknowledgement on pull, emits `desktop.transfer_done` with `{transfer_id,
+size, sha256}`. Empty files use one empty chunk. Both sides enforce sequence,
+size and digest checks; Relay frames must come from the selected WebSocket.
+
+Transfers are scoped to the router/connection, limited to four active sessions
+and 8 GiB per file, with a 60-second idle timeout and a bounded Relay operation.
+Disconnect, cancellation, malformed data and checksum failures remove partial
+files. Desktop reconnect discards the prior connection's transfers. Private
+staging files are published atomically on the destination filesystem. Push
+replaces a destination only when `overwrite: true`; pull never replaces an
+existing destination. No automatic resume is claimed.
+
 ## Related
 
 - **ARC** — CI/CD patterns, project structure conventions

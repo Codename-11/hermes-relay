@@ -35,12 +35,17 @@ Unknown envelope types log-and-drop (forward-compat).
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
+import math
+import tempfile
 import time
 import uuid
 from collections import deque
 from dataclasses import asdict, dataclass, field
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from aiohttp import web
@@ -51,6 +56,12 @@ logger = logging.getLogger(__name__)
 RESPONSE_TIMEOUT = 30.0  # seconds — matches bridge.RESPONSE_TIMEOUT
 COMPUTER_USE_RESPONSE_TIMEOUT = 180.0  # seconds — allows human approval prompts
 ADB_RESPONSE_TIMEOUT = 300.0  # seconds — approval plus a bounded 120 s operation
+
+# File-transfer channel — chunked streaming over the desktop envelope stream.
+TRANSFER_CHUNK_SIZE = 256 * 1024  # raw bytes per chunk (base64 ≈ 341 KB)
+TRANSFER_IDLE_TIMEOUT = 60.0
+TRANSFER_TIMEOUT = 600.0
+TRANSFER_MAX_BYTES = 8 * 1024 ** 3
 
 # Keys whose values must never appear in the ring buffer. Matched
 # case-insensitively against the full key name.
@@ -118,6 +129,27 @@ class DesktopCommandRecord:
     error: str | None = None
     # One of: pending, executed, error, timeout
     decision: str = "pending"
+
+
+@dataclass
+class TransferSession:
+    """State for one in-flight file transfer (server-initiated push/pull)."""
+
+    transfer_id: str
+    direction: str  # 'push' (relay → desktop) | 'pull' (desktop → relay)
+    target_ws: web.WebSocketResponse
+    path: str  # desktop-side absolute path
+    size: int = 0
+    sha256: str = ""  # expected (push) or computed (pull, via hasher)
+    total_chunks: int = 0
+    received_chunks: int = 0
+    received_bytes: int = 0
+    stage_path: str = ""  # pull: relay-local assembly path
+    hasher: Any = None  # pull: hashlib.sha256() instance
+    done_future: asyncio.Future[dict[str, Any]] | None = None
+    ack: asyncio.Event = field(default_factory=asyncio.Event)
+    created_at: float = 0.0
+    touched_at: float = 0.0
 
 
 class DesktopSession:
@@ -218,6 +250,10 @@ class DesktopHandler:
         # only trusted context fields; this handler always owns the id and
         # binds every emitted identity to the selected target + request id.
         self._control_sessions: dict[tuple[str, str, str, str, str], _ControlSessionRecord] = {}
+
+        # In-flight file transfers keyed by transfer_id.
+        self.transfers: dict[str, TransferSession] = {}
+        self._transfer_lock = asyncio.Lock()
 
     async def _send_control_session_end(
         self,
@@ -407,6 +443,22 @@ class DesktopHandler:
                 payload.get("source", "?"),
                 payload.get("editor", "(none)"),
             )
+            return
+
+        if msg_type == "transfer_chunk":
+            await self._handle_transfer_chunk(ws, envelope)
+            return
+
+        if msg_type == "transfer_progress":
+            await self._handle_transfer_progress(ws, envelope)
+            return
+
+        if msg_type == "transfer_done":
+            await self._handle_transfer_done(ws, envelope)
+            return
+
+        if msg_type in ("transfer_error", "transfer_abort"):
+            await self._handle_transfer_failure(ws, envelope)
             return
 
         logger.debug("desktop: ignoring unknown type %r", raw_type)
@@ -639,6 +691,360 @@ class DesktopHandler:
                 self.pending.pop(request_id, None)
                 self.pending_ws.pop(request_id, None)
             raise
+
+    # ── File transfer (server-initiated push/pull) ───────────────────────
+
+    @staticmethod
+    async def _sha256_file(path: Path) -> str:
+        hasher = hashlib.sha256()
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(TRANSFER_CHUNK_SIZE)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                if f.tell() > TRANSFER_MAX_BYTES:
+                    raise DesktopError("Source exceeds 8 GiB")
+                await asyncio.sleep(0)
+        return hasher.hexdigest()
+
+    async def push_file(
+        self,
+        local_path: str,
+        remote_path: str,
+        overwrite: bool = False,
+        device: str | None = None,
+    ) -> dict[str, Any]:
+        """Stream a relay-local file to the desktop (control → controlled).
+
+        Reads the file, sends ``desktop_transfer_receive`` to initialize the
+        desktop session, then streams ``desktop.transfer_chunk`` envelopes and
+        awaits the desktop's ``desktop.transfer_done``.
+        """
+        started_at = time.monotonic()
+        local = Path(local_path).expanduser().resolve()
+        if not local.is_file():
+            raise DesktopError(f"push_file: not a regular file: {local_path}")
+
+        size = local.stat().st_size
+        self._validate_transfer_size(size)
+        if len(self.transfers) >= 4:
+            raise DesktopError("Too many active transfers")
+        sha256 = await asyncio.wait_for(self._sha256_file(local), timeout=TRANSFER_TIMEOUT)
+        transfer_id = str(uuid.uuid4())
+        total = max(1, math.ceil(size / TRANSFER_CHUNK_SIZE))
+        ws, _session = self._resolve_target(device)
+        if len(self.transfers) >= 4:
+            raise DesktopError("Too many active transfers")
+
+        loop = asyncio.get_event_loop()
+        done_future: asyncio.Future[dict[str, Any]] = loop.create_future()
+        now = started_at
+        record = TransferSession(
+            transfer_id=transfer_id,
+            direction="push",
+            target_ws=ws,
+            path=remote_path,
+            size=size,
+            sha256=sha256,
+            total_chunks=total,
+            done_future=done_future,
+            created_at=now,
+            touched_at=now,
+        )
+        async with self._transfer_lock:
+            self.transfers[transfer_id] = record
+
+        try:
+            async with asyncio.timeout(max(0, TRANSFER_TIMEOUT - (time.monotonic() - record.created_at))):
+                resp = await self.handle_command(
+                    "desktop_transfer_receive",
+                    {
+                        "transfer_id": transfer_id,
+                        "path": remote_path,
+                        "size": size,
+                        "sha256": sha256,
+                        "overwrite": bool(overwrite),
+                    },
+                    device=device,
+                )
+                result = resp.get("result") if isinstance(resp, dict) else None
+                if (not isinstance(result, dict) or result.get("status") != "ready"
+                        or result.get("protocol") != 1 or result.get("transfer_id") != transfer_id):
+                    raise DesktopError(
+                        f"desktop did not acknowledge transfer_receive: {result!r}"
+                    )
+
+                with open(local, "rb") as f:
+                    for index in range(total):
+                        if done_future.done():
+                            done_future.result()
+                            raise DesktopError("Premature transfer completion")
+                        chunk = f.read(TRANSFER_CHUNK_SIZE)
+                        expected = min(TRANSFER_CHUNK_SIZE, size - index * TRANSFER_CHUNK_SIZE)
+                        if len(chunk) != expected:
+                            raise DesktopError("Source changed during transfer")
+                        record.ack.clear()
+                        record.received_chunks = index + 1
+                        await ws.send_str(
+                            _envelope(
+                                "desktop.transfer_chunk",
+                                {
+                                    "transfer_id": transfer_id,
+                                    "index": index,
+                                    "total": total,
+                                    "data": base64.b64encode(chunk).decode(),
+                                },
+                            )
+                        )
+                        record.touched_at = time.monotonic()
+                        await self._wait_transfer(record, ack=index + 1 < total)
+
+                done = await self._wait_transfer(record)
+                return {
+                    "ok": True,
+                    "target": {"device_id": _session.device_id, "device_name": _session.device_name} if _session else {},
+                    "path": remote_path,
+                    "size": int(done.get("size", size)),
+                    "sha256": done.get("sha256", sha256),
+                }
+        except asyncio.CancelledError:
+            await self._abort_transfer(transfer_id, "Transfer cancelled")
+            raise
+        except asyncio.TimeoutError:
+            await self._abort_transfer(transfer_id, "transfer idle timeout")
+            raise DesktopError("push_file timed out waiting for desktop transfer_done")
+        except Exception as exc:
+            await self._abort_transfer(transfer_id, str(exc))
+            if isinstance(exc, DesktopError):
+                raise
+            raise DesktopError(f"push_file failed: {exc}") from exc
+        finally:
+            async with self._transfer_lock:
+                self.transfers.pop(transfer_id, None)
+            if done_future.done() and not done_future.cancelled():
+                done_future.exception()
+            else:
+                done_future.cancel()
+
+    async def pull_file(
+        self,
+        path: str,
+        dest_dir: str,
+        device: str | None = None,
+    ) -> dict[str, Any]:
+        """Pull a large file from the desktop (controlled → control).
+
+        Sends ``desktop_transfer_send`` to initialize the desktop session, then
+        accumulates ``desktop.transfer_chunk`` envelopes into a staging file and
+        moves it into ``dest_dir`` once the desktop reports ``transfer_done``.
+        """
+        transfer_id = str(uuid.uuid4())
+        ws, _session = self._resolve_target(device)
+        if len(self.transfers) >= 4:
+            raise DesktopError("Too many active transfers")
+
+        name = PureWindowsPath(path).name if "\\" in path else Path(path).name
+        if not name or name in (".", ".."):
+            raise DesktopError("Invalid source filename")
+        final_dir = Path(dest_dir).expanduser().resolve()
+        final_dir.mkdir(parents=True, exist_ok=True)
+        dest = final_dir / name
+        if dest.exists():
+            raise DesktopError("Destination exists; choose a different dest_dir")
+        stage_dir = Path(tempfile.mkdtemp(prefix=".hermes-transfer-", dir=final_dir))
+        stage_path = stage_dir / "data"
+        stage_path.touch(mode=0o600)
+
+        loop = asyncio.get_event_loop()
+        done_future: asyncio.Future[dict[str, Any]] = loop.create_future()
+        now = time.monotonic()
+        record = TransferSession(
+            transfer_id=transfer_id,
+            direction="pull",
+            target_ws=ws,
+            path=path,
+            stage_path=str(stage_path),
+            hasher=hashlib.sha256(),
+            done_future=done_future,
+            created_at=now,
+            touched_at=now,
+        )
+        async with self._transfer_lock:
+            self.transfers[transfer_id] = record
+
+        try:
+            async with asyncio.timeout(max(0, TRANSFER_TIMEOUT - (time.monotonic() - record.created_at))):
+                resp = await self.handle_command(
+                    "desktop_transfer_send",
+                    {"transfer_id": transfer_id, "path": path},
+                    device=device,
+                )
+                result = resp.get("result") if isinstance(resp, dict) else None
+                if (not isinstance(result, dict) or result.get("status") != "ready"
+                        or result.get("protocol") != 1 or result.get("transfer_id") != transfer_id):
+                    raise DesktopError(
+                        f"desktop did not acknowledge transfer_send: {result!r}"
+                    )
+                record.size = self._validate_transfer_size(result.get("size"))
+                record.total_chunks = max(1, math.ceil(record.size / TRANSFER_CHUNK_SIZE))
+                if result.get("total_chunks") != record.total_chunks:
+                    raise DesktopError("Invalid total_chunks")
+                record.touched_at = time.monotonic()
+                await ws.send_str(_envelope("desktop.transfer_start", {"transfer_id": transfer_id}))
+                done = await self._wait_transfer(record)
+                dest.hardlink_to(stage_path)
+                return {
+                    "ok": True,
+                    "target": {"device_id": _session.device_id, "device_name": _session.device_name} if _session else {},
+                    "path": str(dest),
+                    "size": int(done.get("size", record.size)),
+                    "sha256": done.get("sha256", ""),
+                }
+        except asyncio.CancelledError:
+            await self._abort_transfer(transfer_id, "Transfer cancelled")
+            raise
+        except asyncio.TimeoutError:
+            await self._abort_transfer(transfer_id, "transfer idle timeout")
+            raise DesktopError("pull_file timed out waiting for desktop transfer_done")
+        except Exception as exc:
+            await self._abort_transfer(transfer_id, str(exc))
+            if isinstance(exc, DesktopError):
+                raise
+            raise DesktopError(f"pull_file failed: {exc}") from exc
+        finally:
+            async with self._transfer_lock:
+                self.transfers.pop(transfer_id, None)
+            if done_future.done() and not done_future.cancelled():
+                done_future.exception()
+            else:
+                done_future.cancel()
+            try:
+                stage_path.unlink(missing_ok=True)
+                stage_dir.rmdir()
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def _abort_transfer(self, transfer_id: str, reason: str) -> None:
+        record = self.transfers.get(transfer_id)
+        if record is None or record.target_ws.closed:
+            return
+        try:
+            async with asyncio.timeout(3):
+                await record.target_ws.send_str(
+                    _envelope(
+                        "desktop.transfer_abort",
+                        {"transfer_id": transfer_id, "reason": reason[:256]},
+                    )
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
+    @staticmethod
+    def _validate_transfer_size(value: Any) -> int:
+        if type(value) is not int or not 0 <= value <= TRANSFER_MAX_BYTES:
+            raise DesktopError("Invalid transfer size (maximum 8 GiB)")
+        return value
+
+    async def _wait_transfer(self, record: TransferSession, *, ack: bool = False) -> dict[str, Any]:
+        assert record.done_future is not None
+        while not record.done_future.done():
+            if ack and record.ack.is_set():
+                return {}
+            now = time.monotonic()
+            if now - record.touched_at >= TRANSFER_IDLE_TIMEOUT or now - record.created_at >= TRANSFER_TIMEOUT:
+                raise asyncio.TimeoutError("Transfer timeout")
+            await asyncio.sleep(0.01)
+        return record.done_future.result()
+
+    def _incoming_transfer(self, ws: web.WebSocketResponse, envelope: dict[str, Any]) -> tuple[TransferSession | None, dict[str, Any]]:
+        payload = envelope.get("payload")
+        if not isinstance(payload, dict) or not isinstance(payload.get("transfer_id"), str):
+            return None, {}
+        record = self.transfers.get(payload["transfer_id"])
+        if (record is None or record.target_ws is not ws or record.done_future is None
+                or record.done_future.done()):
+            return None, payload
+        return record, payload
+
+    async def _handle_transfer_chunk(self, ws: web.WebSocketResponse, envelope: dict[str, Any]) -> None:
+        record, payload = self._incoming_transfer(ws, envelope)
+        if record is None:
+            return
+        assert record.done_future is not None
+        try:
+            if (record.direction != "pull" or not record.total_chunks
+                    or type(payload.get("index")) is not int
+                    or payload.get("index") != record.received_chunks
+                    or type(payload.get("total")) is not int
+                    or payload.get("total") != record.total_chunks
+                    or record.received_chunks >= record.total_chunks):
+                raise DesktopError("Invalid chunk sequence")
+            data = payload.get("data")
+            if not isinstance(data, str) or len(data) > 4 * math.ceil(TRANSFER_CHUNK_SIZE / 3):
+                raise DesktopError("Invalid chunk data")
+            chunk = base64.b64decode(data, validate=True)
+            expected = min(TRANSFER_CHUNK_SIZE, record.size - record.received_bytes)
+            if len(chunk) != expected or base64.b64encode(chunk).decode() != data:
+                raise DesktopError("Chunk size or encoding mismatch")
+            with open(record.stage_path, "ab") as output:
+                output.write(chunk)
+            record.hasher.update(chunk)
+            record.received_chunks += 1
+            record.received_bytes += len(chunk)
+            record.touched_at = time.monotonic()
+            await ws.send_str(_envelope("desktop.transfer_progress", {
+                "transfer_id": record.transfer_id, "received": record.received_chunks,
+            }))
+        except Exception as exc:
+            record.done_future.set_exception(DesktopError(str(exc)))
+
+    async def _handle_transfer_progress(self, ws: web.WebSocketResponse, envelope: dict[str, Any]) -> None:
+        record, payload = self._incoming_transfer(ws, envelope)
+        if record is None or record.direction != "push":
+            return
+        assert record.done_future is not None
+        if (type(payload.get("received")) is not int
+                or payload.get("received") != record.received_chunks
+                or record.received_chunks == 0 or record.ack.is_set()):
+            record.done_future.set_exception(DesktopError("Invalid transfer acknowledgement"))
+            return
+        record.touched_at = time.monotonic()
+        record.ack.set()
+
+    async def _handle_transfer_done(self, ws: web.WebSocketResponse, envelope: dict[str, Any]) -> None:
+        record, payload = self._incoming_transfer(ws, envelope)
+        if record is None:
+            return
+        assert record.done_future is not None
+        expected_sha = record.hasher.hexdigest() if record.direction == "pull" else record.sha256
+        if (not record.total_chunks or record.received_chunks != record.total_chunks
+                or type(payload.get("size")) is not int or payload.get("size") != record.size
+                or (record.direction == "pull" and record.received_bytes != record.size)
+                or payload.get("sha256") != expected_sha):
+            record.done_future.set_exception(DesktopError("Transfer size, count or sha256 mismatch"))
+            return
+        record.done_future.set_result({"size": record.size, "sha256": expected_sha})
+
+    async def _handle_transfer_failure(self, ws: web.WebSocketResponse, envelope: dict[str, Any]) -> None:
+        record, payload = self._incoming_transfer(ws, envelope)
+        if record is not None and record.done_future is not None:
+            message = payload.get("message") or payload.get("reason") or "Transfer failed"
+            record.done_future.set_exception(DesktopError(str(message)[:512]))
+
+    async def _fail_transfers_for_ws(self, ws: web.WebSocketResponse, reason: str) -> None:
+        async with self._transfer_lock:
+            doomed = [
+                transfer_id
+                for transfer_id, record in self.transfers.items()
+                if record.target_ws is ws
+            ]
+            for transfer_id in doomed:
+                record = self.transfers.get(transfer_id)
+                if record is not None and record.done_future is not None and not record.done_future.done():
+                    record.done_future.set_exception(
+                        ConnectionError(f"Desktop client disconnected ({reason})")
+                    )
 
     # ── Inbound response routing ────────────────────────────────────────
 
@@ -918,6 +1324,9 @@ class DesktopHandler:
             if not future.done():
                 future.set_exception(ConnectionError(f"Desktop client disconnected ({reason})"))
 
+        # Fail any in-flight file transfers bound to this WebSocket.
+        await self._fail_transfers_for_ws(ws, reason)
+
     async def close(self) -> None:
         """Server shutdown — cancel all pending commands, drop the
         client ref, and clear all per-ws workspace sessions.
@@ -929,6 +1338,13 @@ class DesktopHandler:
             record.expiry_task.cancel()
         self._control_sessions.clear()
         await self._fail_pending("Relay server shutting down")
+        async with self._transfer_lock:
+            for record in self.transfers.values():
+                if record.done_future is not None and not record.done_future.done():
+                    record.done_future.set_exception(
+                        ConnectionError("Relay server shutting down")
+                    )
+            self.transfers.clear()
 
 
 # Backwards-compat alias. The alpha.6 file exported this name; some

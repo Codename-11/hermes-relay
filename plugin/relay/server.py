@@ -1492,6 +1492,77 @@ async def handle_desktop_dispatch(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": msg}, status=status)
 
 
+# ── File transfer (server-initiated push/pull) ──────────────────────────────
+
+
+async def _desktop_transfer_args(request: web.Request) -> tuple[dict[str, Any], str | None]:
+    """Parse a transfer POST body into (args, device) with loopback enforcement."""
+    _require_loopback(request)
+    try:
+        args = await request.json()
+    except Exception as exc:
+        raise web.HTTPBadRequest(text="Expected a JSON object") from exc
+    if not isinstance(args, dict):
+        raise web.HTTPBadRequest(text="Expected a JSON object")
+    device = args.pop("device", None) or args.pop("device_id", None)
+    if device is not None and (not isinstance(device, str) or not device.strip()):
+        raise web.HTTPBadRequest(text="Invalid device selector")
+    return args, device
+
+
+async def handle_desktop_transfer_push(request: web.Request) -> web.Response:
+    """POST /desktop/transfer/push
+      Body: {local_path, remote_path, overwrite?}
+      → 200 {ok, path, size, sha256}
+
+    Streams a relay-local file to the selected desktop client.
+    """
+    server: RelayServer = request.app["server"]
+    args, device = await _desktop_transfer_args(request)
+    local_path = args.get("local_path")
+    remote_path = args.get("remote_path")
+    overwrite = args.get("overwrite", False)
+    if type(overwrite) is not bool:
+        return web.json_response({"ok": False, "error": "overwrite must be boolean"}, status=400)
+    if not isinstance(local_path, str) or not local_path:
+        return web.json_response({"ok": False, "error": "local_path is required"}, status=400)
+    if not isinstance(remote_path, str) or not remote_path:
+        return web.json_response({"ok": False, "error": "remote_path is required"}, status=400)
+    try:
+        result = await server.desktop.push_file(
+            local_path, remote_path, overwrite=overwrite, device=device
+        )
+        return web.json_response(result)
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc) or exc.__class__.__name__
+        status = 504 if "timeout" in msg.lower() or isinstance(exc, asyncio.TimeoutError) else 502
+        return web.json_response({"ok": False, "error": msg}, status=status)
+
+
+async def handle_desktop_transfer_pull(request: web.Request) -> web.Response:
+    """POST /desktop/transfer/pull
+      Body: {path, dest_dir?}
+      → 200 {ok, path, size, sha256}
+
+    Pulls a large file from the selected desktop client onto the relay host.
+    """
+    server: RelayServer = request.app["server"]
+    args, device = await _desktop_transfer_args(request)
+    path = args.get("path")
+    dest_dir = args.get("dest_dir") or str(Path.home() / ".hermes" / "desktop-pulls")
+    if not isinstance(path, str) or not path:
+        return web.json_response({"ok": False, "error": "path is required"}, status=400)
+    if not isinstance(dest_dir, str):
+        return web.json_response({"ok": False, "error": "dest_dir must be a string"}, status=400)
+    try:
+        result = await server.desktop.pull_file(path, dest_dir, device=device)
+        return web.json_response(result)
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc) or exc.__class__.__name__
+        status = 504 if "timeout" in msg.lower() or isinstance(exc, asyncio.TimeoutError) else 502
+        return web.json_response({"ok": False, "error": msg}, status=status)
+
+
 # ── Clipboard inbox (remote paste rendezvous) ───────────────────────────────
 
 
@@ -4931,6 +5002,8 @@ def create_app(config: RelayConfig) -> web.Application:
     # wildcard route or aiohttp swallows it.
     app.router.add_get("/desktop/health", handle_desktop_health)
     app.router.add_post("/desktop/{tool_name}", handle_desktop_dispatch)
+    app.router.add_post("/desktop/transfer/push", handle_desktop_transfer_push)
+    app.router.add_post("/desktop/transfer/pull", handle_desktop_transfer_pull)
 
     # Clipboard inbox — remote-client paste rendezvous for the upstream
     # hermes CLI's /paste / Alt+V. Bearer-protected. Pairs with the

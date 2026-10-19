@@ -339,11 +339,13 @@ def _availability() -> _DesktopAvailability:
 
 def _check_tool(tool_name: str) -> bool:
     """Match DesktopHandler.has_client_for across every connected client."""
+    tool_name = {"desktop_push_file": "desktop_transfer_receive",
+                 "desktop_pull_file": "desktop_transfer_send"}.get(tool_name, tool_name)
     snapshot = _availability()
     if not snapshot.reachable or not snapshot.valid or not snapshot.connected:
         return False
     return any(tool_name in tools for tools in snapshot.client_toolsets) or (
-        not tool_name.startswith("desktop_computer_")
+        not tool_name.startswith(("desktop_computer_", "desktop_transfer_"))
         and any(not tools for tools in snapshot.client_toolsets)
     )
 
@@ -711,6 +713,42 @@ def desktop_unzip(source: str, dest: str) -> str:
 def desktop_checksum(path: str, algorithm: str = "sha256") -> str:
     """Compute a digest (sha256/sha1/md5) of a file on the desktop client."""
     data = _post("/desktop/desktop_checksum", {"path": path, "algorithm": algorithm})
+    return json.dumps(data)
+
+
+# ── Large-file transfer (server-initiated push/pull) ─────────────────────────
+
+
+# The relay bounds each operation to 600 seconds; allow HTTP cleanup margin.
+_TRANSFER_HTTP_TIMEOUT = 660.0
+
+
+def desktop_push_file(local_path: str, remote_path: str, overwrite: bool = False) -> str:
+    """Push a large file from the relay host onto the desktop client.
+
+    Streams the file in 256 KB chunks over the desktop relay channel with
+    whole-file sha256 verification, so it is not bounded by the ordinary
+    3 MB tool-response budget.
+    """
+    data = _post(
+        "/desktop/transfer/push",
+        {"local_path": local_path, "remote_path": remote_path, "overwrite": bool(overwrite)},
+        timeout=_TRANSFER_HTTP_TIMEOUT,
+    )
+    return json.dumps(data)
+
+
+def desktop_pull_file(path: str, dest_dir: str = "~/.hermes/desktop-pulls") -> str:
+    """Pull a large file from the desktop client onto the relay host.
+
+    Streams the file in 256 KB chunks over the desktop relay channel with
+    whole-file sha256 verification, then saves it under ``dest_dir``.
+    """
+    data = _post(
+        "/desktop/transfer/pull",
+        {"path": path, "dest_dir": dest_dir},
+        timeout=_TRANSFER_HTTP_TIMEOUT,
+    )
     return json.dumps(data)
 
 
@@ -1502,6 +1540,58 @@ _SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     },
+    "desktop_push_file": {
+        "name": "desktop_push_file",
+        "description": (
+            "Push a large file from the relay host onto the connected desktop "
+            "client. Streams in 256 KB chunks with whole-file sha256 "
+            "verification, so it is not subject to the ordinary 3 MB tool-"
+            "response budget."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "local_path": {
+                    "type": "string",
+                    "description": "Path to the file on the relay host to send.",
+                },
+                "remote_path": {
+                    "type": "string",
+                    "description": "Absolute destination path on the desktop machine.",
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Replace an existing destination file.",
+                    "default": False,
+                },
+            },
+            "required": ["local_path", "remote_path"],
+            "additionalProperties": False,
+        },
+    },
+    "desktop_pull_file": {
+        "name": "desktop_pull_file",
+        "description": (
+            "Pull a large file from the connected desktop client onto the relay "
+            "host. Streams in 256 KB chunks with whole-file sha256 verification."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute path to the file on the desktop machine.",
+                },
+                "dest_dir": {
+                    "type": "string",
+                    "description": "Directory on the relay host to save into.",
+                    "default": "~/.hermes/desktop-pulls",
+                },
+            },
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+    },
 }
 
 
@@ -1541,6 +1631,8 @@ _HANDLERS: dict[str, Any] = {
     "desktop_zip":            lambda args, **kw: desktop_zip(**args),
     "desktop_unzip":          lambda args, **kw: desktop_unzip(**args),
     "desktop_checksum":       lambda args, **kw: desktop_checksum(**args),
+    "desktop_push_file":      lambda args, **kw: desktop_push_file(**args),
+    "desktop_pull_file":      lambda args, **kw: desktop_pull_file(**args),
     # Diagnostics — answered by the relay directly, no client round-trip.
     "desktop_health": lambda args, **kw: desktop_health(),
     # Experimental computer-use — observe-first, fail-closed for input.
@@ -1586,6 +1678,8 @@ _DEVICE_SELECTOR_SCHEMA = {
     ),
 }
 _TOOL_CAPABILITIES = {
+    "desktop_push_file": "files.write",
+    "desktop_pull_file": "files.read",
     "desktop_read_file": "files.read",
     "desktop_search_files": "files.read",
     "desktop_checksum": "files.read",
