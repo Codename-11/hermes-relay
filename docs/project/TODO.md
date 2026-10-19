@@ -486,6 +486,13 @@ intentionally remain outside that code batch:
   responses after a profile switch, but it deliberately does not send an
   invented `profile` parameter. API-server fallback can use the separate,
   authenticated `/p/<profile>/api/model/options` surface when multiplexed.
+- Advertise the multiplexed profile-scoped API route so the Android
+  API-server fallback can actually reach a non-default profile. The relay
+  serves `<base>/p/<profile>` as that profile's `api_server_url` when the
+  profile shares the default profile's gateway, carries the same API-server
+  credential, and the gateway answers `200` for `<base>/p/<profile>/health`.
+  Without the scoped route the app reads the gateway root as a dedicated
+  profile API and silently runs the selected profile on the default profile.
 - Expand the desktop upstream-baseline workflow into a live mock-provider E2E
   once the harness can boot a credential-free upstream gateway deterministically.
   The initial `ci-desktop-upstream-baseline` gate only checks a clean vanilla
