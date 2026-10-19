@@ -701,6 +701,130 @@ class ProfileDiscoveryTests(unittest.TestCase):
         self.assertTrue(entry["api_server_key_present"])
 
 
+class ProfileScopedApiUrlTests(unittest.TestCase):
+    """A profile served by the shared gateway must be addressed via ``/p/<profile>``.
+
+    Upstream's multiplexed API server mirrors every native route under
+    ``/p/<profile>/...``. Without the profile-scoped URL the client would
+    address the gateway's default profile and silently run there.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.hermes_dir = Path(self._tmp.name)
+        self.root_config = self.hermes_dir / "config.yaml"
+        self.profiles_dir = self.hermes_dir / "profiles"
+        self.profiles_dir.mkdir(parents=True, exist_ok=True)
+        self.root_config.write_text(
+            "model:\n  default: gpt-4o-mini\n", encoding="utf-8"
+        )
+
+    def _write_env(self, home: Path, body: str) -> None:
+        (home / ".env").write_text(body, encoding="utf-8")
+
+    def _write_profile(self, name: str, env_body: str) -> Path:
+        pdir = self.profiles_dir / name
+        pdir.mkdir(parents=True, exist_ok=True)
+        (pdir / "config.yaml").write_text("model:\n  default: x\n", encoding="utf-8")
+        self._write_env(pdir, env_body)
+        return pdir
+
+    def _load(self, base_api_url: str | None = None) -> list[dict]:
+        return _load_profiles(
+            str(self.root_config),
+            enabled=True,
+            base_api_url=base_api_url,
+        )
+
+    _SHARED_ENV = textwrap.dedent(
+        """\
+        API_SERVER_ENABLED=true
+        API_SERVER_HOST=127.0.0.1
+        API_SERVER_PORT=8642
+        API_SERVER_KEY=shared-credential
+        """
+    )
+
+    def test_shared_gateway_profile_gets_profile_scoped_url(self) -> None:
+        self._write_env(self.hermes_dir, self._SHARED_ENV)
+        self._write_profile("coder", self._SHARED_ENV)
+
+        with patch(
+            "plugin.relay.config._profile_prefix_served", return_value=True
+        ) as probe:
+            out = self._load(base_api_url="http://100.76.210.14:8642")
+
+        coder = next(p for p in out if p["name"] == "coder")
+        default = next(p for p in out if p["name"] == "default")
+
+        self.assertEqual(
+            coder["api_server_url"],
+            "http://100.76.210.14:8642/p/coder",
+        )
+        self.assertEqual(
+            default["api_server_url"],
+            "http://100.76.210.14:8642",
+        )
+        probe.assert_called_once_with("http://100.76.210.14:8642", "coder")
+
+    def test_profile_scoped_url_skipped_when_gateway_does_not_serve_profile(
+        self,
+    ) -> None:
+        self._write_env(self.hermes_dir, self._SHARED_ENV)
+        self._write_profile("coder", self._SHARED_ENV)
+
+        with patch("plugin.relay.config._profile_prefix_served", return_value=False):
+            out = self._load(base_api_url="http://100.76.210.14:8642")
+
+        coder = next(p for p in out if p["name"] == "coder")
+        self.assertEqual(
+            coder["api_server_url"],
+            "http://100.76.210.14:8642",
+        )
+
+    def test_profile_scoped_url_skipped_when_credential_differs(self) -> None:
+        self._write_env(self.hermes_dir, self._SHARED_ENV)
+        self._write_profile(
+            "coder",
+            self._SHARED_ENV.replace(
+                "API_SERVER_KEY=shared-credential",
+                "API_SERVER_KEY=profile-only-credential",
+            ),
+        )
+
+        with patch(
+            "plugin.relay.config._profile_prefix_served", return_value=True
+        ) as probe:
+            out = self._load(base_api_url="http://100.76.210.14:8642")
+
+        coder = next(p for p in out if p["name"] == "coder")
+        self.assertEqual(
+            coder["api_server_url"],
+            "http://100.76.210.14:8642",
+        )
+        probe.assert_not_called()
+
+    def test_dedicated_profile_api_server_is_left_alone(self) -> None:
+        self._write_env(self.hermes_dir, self._SHARED_ENV)
+        self._write_profile(
+            "coder",
+            self._SHARED_ENV.replace("API_SERVER_PORT=8642", "API_SERVER_PORT=8643"),
+        )
+
+        with patch(
+            "plugin.relay.config._profile_prefix_served", return_value=True
+        ) as probe:
+            out = self._load(base_api_url="http://100.76.210.14:8642")
+
+        coder = next(p for p in out if p["name"] == "coder")
+        self.assertEqual(
+            coder["api_server_url"],
+            "http://100.76.210.14:8643",
+        )
+        probe.assert_not_called()
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     unittest.main()
