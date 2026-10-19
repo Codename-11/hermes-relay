@@ -413,6 +413,7 @@ Sources: `plugin/relay/channels/notifications.py`, `app/src/main/kotlin/.../noti
 | Type | Direction | Payload |
 |------|-----------|---------|
 | `desktop.command` | Server → Client | `{request_id, tool, args, control_session?}` |
+| `desktop.cancel` | Server → Client | `{request_id}` |
 | `desktop.control_session_end` | Server → Client | `{version: 1, id, target_device_id, reason?}` |
 | `desktop.response` | Client → Server | `{request_id, ok: true, result}` or `{request_id, ok: false, error}` |
 | `desktop.status` | Client → Server | `{advertised_tools, device_id, host, platform, version, computer_use?}` |
@@ -428,6 +429,26 @@ be an exact device ID or an unambiguous host/device name. The Relay binds each
 pending request to the selected WebSocket, ignores responses from other PCs,
 and includes resolved target metadata in the response. `/desktop/health` lists
 the connected targets.
+
+Ordinary desktop requests allow 170 seconds on the client: the native local
+approval window (120 seconds), the default process execution budget (30 seconds)
+and margin. The Relay waits 180 seconds; the Python tool HTTP wrapper defaults
+to 190 seconds (`DESKTOP_TOOL_TIMEOUT` overrides that HTTP wait only). A process
+`timeout` still limits execution, separately from time spent awaiting approval.
+Existing computer-use and ADB deadlines remain tool-specific; the ADB HTTP
+wrapper waits at least 310 seconds to outwait the Relay's 300-second budget.
+
+When its request times out or its command task is cancelled, the Relay retires
+the pending request and sends `desktop.cancel` best-effort on the same WebSocket
+that received the command. The client aborts only that in-flight request.
+Client timeout, router detach and transport loss also abort pending approvals;
+an aborted approval cannot start the operation. Cancellation produces at most
+one terminal response, and late responses cannot change a retired Relay record.
+This message has no acknowledgement and older clients may ignore it: both
+updated Relay and desktop client are required for this behavior. HTTP caller
+disconnect or WebUI Stop alone is not a guaranteed remote cancellation path.
+Cancellation cannot roll back an operation that already started; its outcome
+may be partial or unknown and must not be automatically retried.
 
 For `desktop_computer_*`, current relays can attach a server-owned
 `control_session` object with `version`, opaque `id`, `request_id`,
