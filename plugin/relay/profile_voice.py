@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from ..voice_lab.registry import default_registry
+
 logger = logging.getLogger(__name__)
 
 
@@ -142,6 +144,17 @@ def voice_output_settings(config: Any, profile: str | None) -> dict[str, Any]:
     if scope.requested_profile:
         overrides = _voice_output_overrides(scope.data)
         if overrides:
+            provider = overrides.get("provider")
+            if provider and provider != _normalize_provider(settings["provider"], realtime=False):
+                # Model and voice belong to the selected renderer. Only explicit
+                # profile values may cross this provider boundary.
+                try:
+                    info = default_registry().info(provider)
+                    settings.update(model=info.default_model, voice=info.default_voice)
+                except KeyError:
+                    # Preserve the requested provider for the route's existing
+                    # validation; never substitute another provider's options.
+                    settings.update(model="", voice="")
             settings.update(overrides)
             applied_scope = scope.scope
             fallback = scope.fallback_to_global

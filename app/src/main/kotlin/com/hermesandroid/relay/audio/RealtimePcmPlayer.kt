@@ -39,6 +39,9 @@ class RealtimePcmPlayer(private val context: Context? = null) {
         Log.i(TAG, "Realtime PCM audio focus change=$change")
     }
     private var audioTrack: AudioTrack? = null
+    private var playbackGeneration: Long = 0L
+    internal val generation: Long
+        get() = synchronized(trackLock) { playbackGeneration }
     private var audioFocusRequest: AudioFocusRequest? = null
     private var audioFocusHeld: Boolean = false
     private var currentSampleRate: Int = 0
@@ -70,22 +73,29 @@ class RealtimePcmPlayer(private val context: Context? = null) {
     val audioSessionId: Int
         get() = synchronized(trackLock) { audioTrack?.audioSessionId ?: 0 }
 
-    fun write(pcm: ByteArray, sampleRate: Int): Float {
-        if (pcm.isEmpty()) return 0f
+    fun write(pcm: ByteArray, sampleRate: Int): Float = write(pcm, sampleRate, generation)
+
+    internal fun write(pcm: ByteArray, sampleRate: Int, expectedGeneration: Long): Float {
+        if (pcm.isEmpty() || sampleRate <= 0) return 0f
         val level = computePcm16LeRms(pcm)
         val now = SystemClock.elapsedRealtime()
         val written = synchronized(writeLock) {
             val track = try {
                 synchronized(trackLock) {
+                    if (expectedGeneration != playbackGeneration) return@synchronized null
                     val currentTrack = ensureTrackLocked(sampleRate)
                     notePlaybackGapLocked(currentTrack, now)
                     currentTrack
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "PCM track preparation failed: ${e.message}")
-                synchronized(trackLock) { releaseTrackLocked(reason = "PCM track preparation failure") }
+                synchronized(trackLock) {
+                    if (expectedGeneration == playbackGeneration) {
+                        releaseTrackLocked(reason = "PCM track preparation failure")
+                    }
+                }
                 return@synchronized 0
-            }
+            } ?: return@synchronized 0
 
             try {
                 val prerollWritten = maybeWriteStartupPreroll(track, sampleRate)
@@ -103,7 +113,7 @@ class RealtimePcmPlayer(private val context: Context? = null) {
                 // normal start decision, and the end-of-turn flush
                 // (voice.output_audio.done) force-starts anything still buffered.
 
-                val writtenBytes = writeBlocking(track, pcm)
+                val writtenBytes = writeFully(track, pcm, sampleRate, level)
                 if (writtenBytes < 0) {
                     Log.w(TAG, "PCM write returned $writtenBytes; restarting track")
                     synchronized(trackLock) {
@@ -116,11 +126,9 @@ class RealtimePcmPlayer(private val context: Context? = null) {
                 if (writtenBytes > 0) {
                     synchronized(trackLock) {
                         if (audioTrack === track) {
-                            noteWrittenBytesLocked(writtenBytes, sampleRate)
-                            enqueuePlaybackAmplitudeLocked(level)
-                            maybeStartPlaybackLocked(track, sampleRate, force = false)
                             updateUnderrunCursorLocked(track)
                             logPlaybackHealthLocked(track, now)
+                            _amplitude.value = level
                             accepted = writtenBytes
                         }
                     }
@@ -134,24 +142,62 @@ class RealtimePcmPlayer(private val context: Context? = null) {
                 return@synchronized 0
             }
         }
-        if (written > 0) {
-            _amplitude.value = level
-        }
-        return level
+        return if (written > 0) level else 0f
     }
 
-    private fun writeBlocking(track: AudioTrack, pcm: ByteArray): Int =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            track.write(pcm, 0, pcm.size, AudioTrack.WRITE_BLOCKING)
-        } else {
-            @Suppress("DEPRECATION")
-            track.write(pcm, 0, pcm.size)
+    /** Start before filling a stopped track, and retain every short-write suffix. */
+    private fun writeFully(
+        track: AudioTrack,
+        pcm: ByteArray,
+        sampleRate: Int,
+        level: Float,
+        preroll: Boolean = false,
+    ): Int {
+        var offset = 0
+        val sliceBytes = RealtimePcmBufferPolicy.bytesForDurationMs(sampleRate, 20L)
+            .coerceAtLeast(BYTES_PER_FRAME)
+        while (offset < pcm.size) {
+            val count = minOf(sliceBytes, pcm.size - offset)
+            synchronized(trackLock) {
+                if (audioTrack !== track) return offset
+                // Adaptive prebuffering must never exceed the actual allocation.
+                if (!preroll && !playbackStarted && pendingStartBytes > 0 &&
+                    pendingStartBytes + count > track.bufferSizeInFrames * BYTES_PER_FRAME
+                ) {
+                    maybeStartPlaybackLocked(track, sampleRate, force = true)
+                }
+            }
+            val written = track.write(pcm, offset, count, AudioTrack.WRITE_BLOCKING)
+            synchronized(trackLock) {
+                if (audioTrack !== track) return offset
+                if (written <= 0) return if (written < 0) written else AudioTrack.ERROR_INVALID_OPERATION
+                noteWrittenBytesLocked(written, sampleRate)
+                enqueuePlaybackAmplitudeLocked(level)
+                if (!preroll) maybeStartPlaybackLocked(track, sampleRate, force = false)
+            }
+            offset += written
         }
+        return offset
+    }
 
     fun flushBufferedPlayback(cushionMs: Long = DEFAULT_DRAIN_CUSHION_MS): Long {
         val now = SystemClock.elapsedRealtime()
         return synchronized(trackLock) {
             val track = audioTrack ?: return@synchronized 0L
+            // Before API 31 the start/refill threshold cannot be lowered. Supply
+            // only enough silence to unblock a short tail after an underrun.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                val queuedFrames = (totalFramesWritten - readHeadFrames(track)).coerceAtLeast(0L)
+                val paddingFrames = (track.bufferSizeInFrames - queuedFrames).coerceAtLeast(0L)
+                if (queuedFrames > 0L && paddingFrames > 0L) {
+                    val padding = ByteArray((paddingFrames * BYTES_PER_FRAME).toInt())
+                    val written = track.write(padding, 0, padding.size, AudioTrack.WRITE_NON_BLOCKING)
+                    if (written > 0) {
+                        noteWrittenBytesLocked(written, currentSampleRate)
+                        enqueuePlaybackAmplitudeLocked(0f)
+                    }
+                }
+            }
             maybeStartPlaybackLocked(track, currentSampleRate, force = true)
             val remaining = remainingPlaybackMsLocked(now, cushionMs)
             Log.i(
@@ -165,12 +211,12 @@ class RealtimePcmPlayer(private val context: Context? = null) {
     }
 
     fun stop() {
-        synchronized(writeLock) {
-            synchronized(trackLock) {
-                releaseTrackLocked(reason = "stop")
-                currentSampleRate = 0
-                estimatedPlaybackEndAtMs = 0L
-            }
+        synchronized(trackLock) {
+            // pause releases a blocked native write; never wait for writeLock here.
+            playbackGeneration++
+            releaseTrackLocked(reason = "stop")
+            currentSampleRate = 0
+            estimatedPlaybackEndAtMs = 0L
         }
         _amplitude.value = 0f
     }
@@ -354,12 +400,10 @@ class RealtimePcmPlayer(private val context: Context? = null) {
         val silenceBytes = RealtimePcmBufferPolicy.bytesForDurationMs(sampleRate, prerollMs)
         if (silenceBytes <= 0) return 0
 
-        val written = writeBlocking(track, ByteArray(silenceBytes))
+        val written = writeFully(track, ByteArray(silenceBytes), sampleRate, 0f, preroll = true)
         if (written > 0) {
             synchronized(trackLock) {
                 if (audioTrack === track) {
-                    noteWrittenBytesLocked(written, sampleRate)
-                    enqueuePlaybackAmplitudeLocked(0f) // preroll is silence
                     Log.i(
                         TAG,
                         "Primed realtime PCM playback with " +
@@ -395,6 +439,11 @@ class RealtimePcmPlayer(private val context: Context? = null) {
 
         try {
             requestAudioFocusLocked()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // Our prebuffer already controls startup. An underrun must not
+                // strand a short final sentence below AudioTrack's refill threshold.
+                track.setStartThresholdInFrames(1)
+            }
             track.play()
             try { track.setVolume(currentVolume) } catch (_: Exception) { }
         } catch (e: Exception) {

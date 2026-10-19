@@ -3,6 +3,7 @@ package com.hermesandroid.relay.audio
 import android.content.Context
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import io.mockk.Runs
@@ -246,6 +247,20 @@ class VoicePlayerTest {
         listener?.onPlaybackStateChanged(Player.STATE_ENDED)
 
         withTimeout(500) { waiter.await() }
+    }
+
+    @Test
+    fun `decoder failure releases file ownership so the next file can play`() = runTest {
+        val voicePlayer = VoicePlayer(context) { exoPlayer }
+        voicePlayer.play(File("invalid-audio.mp3"))
+        listener?.onPlayerError(PlaybackException("synthetic decoder failure", null,
+            PlaybackException.ERROR_CODE_DECODING_FAILED))
+        assertFalse("a failed item must not hold voice completion", voicePlayer.isPlaying())
+        withTimeout(200) { voicePlayer.awaitCompletion() }
+        voicePlayer.play(File("next-audio.mp3"))
+        assertTrue(voicePlayer.isPlaying())
+        verify(exactly = 2) { exoPlayer.prepare() }
+        voicePlayer.release()
     }
 
     @Test

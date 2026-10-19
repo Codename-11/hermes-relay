@@ -172,6 +172,19 @@ class VoiceOutputFallbackTest {
     }
 
     @Test
+    fun `successful short renderer chunk force starts buffered PCM before completion`() = runTest {
+        coEvery { client.runVoiceOutput(any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
+            arg<(RealtimeVoiceEvent) -> Unit>(8)(
+                RealtimeVoiceEvent(type = "voice.audio.delta", audioBase64 = "AAAAAA==", sampleRate = 24000, raw = "{}"),
+            )
+            Result.success(VoiceOutputSummary("stub", "stub", "stub", 24000, 1, 4, null, null, null))
+        }
+        vm.speakSentenceViaRealtime(takeFirst())
+        verify(exactly = 1) { pcmPlayer.flushBufferedPlayback(any()) }
+        assertTrue(queue("ttsQueue").tryReceive().isFailure)
+    }
+
+    @Test
     fun `partially spoken failed chunk is not replayed`() = runTest {
         coEvery { client.runVoiceOutput(any(), any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
             arg<(RealtimeVoiceEvent) -> Unit>(8)(

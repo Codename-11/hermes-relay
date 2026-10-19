@@ -929,6 +929,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private var streamObserverJob: Job? = null
     private var standardSpeechStreamJob: Job? = null
+    internal var standardSpeechWriteDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.IO
     private var standardSpeechStream: VoiceSpeechStream? = null
     private var standardSpeechStreamGeneration: Long = 0L
     private var standardSpeechStreamState: StandardSpeechStreamState = StandardSpeechStreamState.Idle
@@ -4635,6 +4636,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         standardSpeechStreamJob = viewModelScope.launch {
             var openedSession: VoiceSpeechStream? = null
+            val pcmQueue = Channel<Pair<ByteArray, Int>>(Channel.UNLIMITED)
+            val pcmWriter = launch {
+                for ((pcm, sampleRate) in pcmQueue) {
+                    if (generation != standardSpeechStreamGeneration) break
+                    handleStandardSpeechPcm(pcm, sampleRate, generation)
+                }
+            }
             try {
                 val result = client.openSpeechStream(
                     VoiceSpeechStreamCallbacks(
@@ -4645,15 +4653,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                             )
                         },
                         onPcm = { pcm, sampleRate ->
-                            viewModelScope.launch {
-                                if (generation != standardSpeechStreamGeneration ||
-                                    standardSpeechStreamState == StandardSpeechStreamState.Idle ||
-                                    standardSpeechStreamState == StandardSpeechStreamState.LegacyFallback
-                                ) {
-                                    return@launch
-                                }
-                                handleStandardSpeechPcm(pcm, sampleRate)
-                            }
+                            pcmQueue.trySend(pcm to sampleRate)
                         },
                     ),
                 )
@@ -4677,6 +4677,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 if (standardSpeechStreamFinishRequested) openedSession.finish()
 
                 val outcome = openedSession.awaitOutcome()
+                // Socket completion is not playback completion. Keep ownership
+                // until every delivered frame has reached the PCM sink, in order.
+                pcmQueue.close()
+                pcmWriter.join()
                 if (generation != standardSpeechStreamGeneration) return@launch
                 standardSpeechStream = null
                 if (shouldFallbackStandardSpeech(outcome)) {
@@ -4701,6 +4705,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     activateStandardSpeechFallback(generation, error)
                 }
             } finally {
+                pcmQueue.cancel()
+                pcmWriter.cancel()
                 if (generation != standardSpeechStreamGeneration) openedSession?.stop()
                 if (generation == standardSpeechStreamGeneration) standardSpeechStreamJob = null
             }
@@ -4779,6 +4785,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private fun cancelStandardSpeechStream(reason: String) {
         if (standardSpeechStreamState != StandardSpeechStreamState.Idle) {
             Log.i(TAG, "Stopping Standard speech stream: $reason")
+            // Invalidate and unblock an IO write before a replacement stream can
+            // enqueue audio. Coroutine cancellation alone cannot stop AudioTrack.write.
+            realtimePcmPlayer?.stop()
         }
         standardSpeechStreamGeneration += 1
         standardSpeechStream?.stop()
@@ -4901,13 +4910,23 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             ?: VoiceTurnSessionFence(chatVm.currentSessionId.value).also {
                 voiceTurnSessionFence = it
             }
+        val messagesFlow = chatVm.messages
+        val runActiveFlow = chatVm.isStreaming
+        val sessionIdFlow = chatVm.currentSessionId
         streamObserverJob = viewModelScope.launch {
             combine(
-                chatVm.messages,
-                chatVm.isStreaming,
-                chatVm.currentSessionId,
-            ) { messages, runActive, sessionId -> Triple(messages, runActive, sessionId) }
-                .collect { (messages, runActive, sessionId) ->
+                messagesFlow,
+                runActiveFlow,
+                sessionIdFlow,
+            ) { _, _, _ -> Unit }
+                .collect {
+                    // These chat flows are updated on Main, but combine delivers
+                    // each source independently. Read their current values on Main:
+                    // a cached idle flag paired with a new empty placeholder can
+                    // otherwise retire the observer before the answer arrives.
+                    val messages = messagesFlow.value
+                    val runActive = runActiveFlow.value
+                    val sessionId = sessionIdFlow.value
                     if (!sessionFence.accepts(sessionId, messages)) {
                         // Session id and message history are independent flows.
                         // During session creation/adoption, combine can briefly
@@ -5379,6 +5398,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             if (outputEpoch != voiceOutputEpoch) return
             releasePendingChunk()
             if (!shouldFallbackRelayVoiceOutput(result.isSuccess, audioSeen.get())) {
+                pcmPlayer.flushBufferedPlayback()
                 spokenChunks.add(sentence)
                 val latencyMs = System.currentTimeMillis() - startedAtMs
                 recordTtsChunkFinished(
@@ -5526,17 +5546,23 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun handleStandardSpeechPcm(audio: ByteArray, sampleRate: Int) {
+    private suspend fun handleStandardSpeechPcm(audio: ByteArray, sampleRate: Int, streamGeneration: Long) {
         val pcmPlayer = realtimePcmPlayer ?: return
-        handlePcmAudioChunk(
+        if (audio.isEmpty() || sampleRate <= 0) return
+        val firstAudioChunk = beginPcmAudioChunk(
             audio = audio,
             sampleRate = sampleRate,
             source = "Standard",
-            pcmPlayer = pcmPlayer,
             audioSeen = standardSpeechStreamAudioSeen,
             audioBytes = standardSpeechStreamAudioBytes,
             bargeInStarted = standardSpeechStreamBargeInStarted,
         )
+        val playbackGeneration = pcmPlayer.generation
+        val level = withContext(standardSpeechWriteDispatcher) {
+            pcmPlayer.write(audio, sampleRate, playbackGeneration)
+        }
+        if (streamGeneration != standardSpeechStreamGeneration) return
+        finishPcmAudioChunk(audio, sampleRate, pcmPlayer, firstAudioChunk, level)
     }
 
     private fun handlePcmAudioChunk(
@@ -5549,6 +5575,19 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         bargeInStarted: AtomicBoolean,
     ) {
         if (audio.isEmpty() || sampleRate <= 0) return
+        val firstAudioChunk = beginPcmAudioChunk(audio, sampleRate, source, audioSeen, audioBytes, bargeInStarted)
+        val level = pcmPlayer.write(audio, sampleRate)
+        finishPcmAudioChunk(audio, sampleRate, pcmPlayer, firstAudioChunk, level)
+    }
+
+    private fun beginPcmAudioChunk(
+        audio: ByteArray,
+        sampleRate: Int,
+        source: String,
+        audioSeen: AtomicBoolean,
+        audioBytes: AtomicInteger,
+        bargeInStarted: AtomicBoolean,
+    ): Boolean {
         audioSeen.set(true)
         audioBytes.addAndGet(audio.size)
         lastRealtimeAudioDeltaAtMs = System.currentTimeMillis()
@@ -5572,7 +5611,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             // reach AudioTrack and leak speaker output into the noise floor.
             markBargeInPlaybackStarted(_bargeInPrefs.value.playbackGraceMs)
         }
-        val level = pcmPlayer.write(audio, sampleRate)
+        return firstAudioChunk
+    }
+
+    private fun finishPcmAudioChunk(
+        audio: ByteArray,
+        sampleRate: Int,
+        pcmPlayer: RealtimePcmPlayer,
+        firstAudioChunk: Boolean,
+        level: Float,
+    ) {
         scheduleRealtimeAmplitudeRelease(audio.size, sampleRate, lastRealtimeAudioDeltaAtMs)
         if (firstAudioChunk) {
             startRealtimePlaybackWatchdog()
@@ -5994,6 +6042,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     0
                 },
             hasPendingSynthFiles = pendingTtsFiles.isNotEmpty(),
+            // The play worker drops a file from pendingTtsFiles as soon as
+            // Media3 accepts it, so the file still being heard is visible only
+            // through the file player (`player` above is the PCM player).
+            filePlaybackActive = this.player?.isPlaying() == true,
             realtimePlaybackRemainingMs = effectiveRemaining,
             realtimeTailGuardRemainingMs = continuousResumeTailGuardRemainingMs(),
         )
@@ -7703,11 +7755,12 @@ internal fun decideAgentAudioCompletion(
     hasPendingSynthFiles: Boolean,
     realtimePlaybackRemainingMs: Long,
     realtimeTailGuardRemainingMs: Long,
+    filePlaybackActive: Boolean = false,
 ): AgentAudioCompletionDecision {
     if (!voiceMode || !observerStopped) {
         return AgentAudioCompletionDecision(finishNow = false)
     }
-    if (pendingTtsWork > 0 || hasPendingSynthFiles) {
+    if (pendingTtsWork > 0 || hasPendingSynthFiles || filePlaybackActive) {
         return AgentAudioCompletionDecision(finishNow = false, retryDelayMs = 100L)
     }
     val audioDelayMs = kotlin.math.max(

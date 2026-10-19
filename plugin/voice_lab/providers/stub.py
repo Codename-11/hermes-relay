@@ -38,6 +38,8 @@ class StubToneProvider(VoiceProvider):
         supports_realtime=False,
         supports_interruption=False,
         supports_expression=True,
+        default_model="local-tone",
+        default_voice="sine",
     )
 
     def run_text(

@@ -5,10 +5,14 @@ from __future__ import annotations
 import base64
 import asyncio
 import json
+import io
 import os
 import tempfile
 import time
 import unittest
+from pathlib import Path
+from unittest.mock import patch
+from urllib.request import Request
 
 from aiohttp import WSMsgType, web
 from aiohttp.test_utils import AioHTTPTestCase
@@ -18,6 +22,17 @@ from plugin.relay.config import RelayConfig
 from plugin.relay import provider_options
 from plugin.relay import voice_auth
 from plugin.relay.server import create_app
+from plugin.voice_lab.providers.elevenlabs_tts import (
+    DEFAULT_MODEL,
+    DEFAULT_VOICE_ID,
+    ElevenLabsTTSProvider,
+)
+
+
+class _OfflinePcmResponse(io.BytesIO):
+    def __init__(self, pcm: bytes) -> None:
+        super().__init__(pcm)
+        self.headers: dict[str, str] = {}
 
 
 class VoiceOutputRoutesTests(AioHTTPTestCase):
@@ -69,6 +84,93 @@ class VoiceOutputRoutesTests(AioHTTPTestCase):
     async def test_voice_output_config_requires_auth(self) -> None:
         resp = await self.client.get("/voice/output/config")
         self.assertEqual(resp.status, 401)
+
+    async def _assert_elevenlabs_render_selection(
+        self,
+        profile_options: dict[str, str],
+        session_options: dict[str, str],
+        expected_model: str,
+        expected_voice: str,
+    ) -> None:
+        config = self._server().config
+        config.voice_output_provider = "xai_tts"
+        config.voice_output_model = "xai-tts"
+        config.voice_output_voice = "eve"
+        root = Path(self._tmpdir.name) / "hermes"
+        profile_dir = root / "profiles" / "voice-test"
+        profile_dir.mkdir(parents=True)
+        config.hermes_config_path = str(root / "config.yaml")
+        (root / "config.yaml").write_text("{}\n", encoding="utf-8")
+        profile_path = profile_dir / "config.yaml"
+        profile_path.write_text(yaml.safe_dump({"tts": {
+            "provider": "elevenlabs", "elevenlabs": profile_options,
+        }}), encoding="utf-8")
+        original_profile = profile_path.read_bytes()
+        pcm = b"\x01\x00\xff\xff" * 240
+        requests: list[tuple[str, dict]] = []
+
+        def transport(request: Request, timeout: float) -> _OfflinePcmResponse:
+            requests.append((request.full_url, json.loads(request.data or b"")))
+            return _OfflinePcmResponse(pcm)
+
+        self._server().voice_output.registry.register(
+            ElevenLabsTTSProvider.info,
+            lambda: ElevenLabsTTSProvider(stream_factory=transport),
+        )
+        token = await self._make_session()
+        headers = self._bearer(token)
+        with (
+            patch("plugin.voice_lab.providers.elevenlabs_tts._resolve_api_key", return_value="offline-test-key"),
+            patch("urllib.request.urlopen", side_effect=AssertionError("Unexpected external network request")),
+        ):
+            config_resp = await self.client.get("/voice/output/config?profile=voice-test", headers=headers)
+            self.assertEqual(config_resp.status, 200)
+            displayed = await config_resp.json()
+            resp = await self.client.post("/voice/output/session", headers=headers,
+                                          json={"profile": "voice-test", **session_options})
+            self.assertEqual(resp.status, 200)
+            session = await resp.json()
+            ws = await self.client.ws_connect(session["websocket_path"], headers=headers)
+            try:
+                await self._next_ws_event(ws)
+                await ws.send_json({"type": "response.create", "text": "Offline selection check."})
+                events = []
+                for _ in range(16):
+                    event = await self._next_ws_event(ws)
+                    events.append(event)
+                    if event["type"] in ("voice.response.done", "voice.error"):
+                        break
+            finally:
+                await ws.close()
+
+        self.assertEqual(len(requests), 1)
+        url, payload = requests[0]
+        self.assertEqual(payload["model_id"], expected_model)
+        self.assertIn(f"/v1/text-to-speech/{expected_voice}/stream", url)
+        self.assertEqual(session["model"], expected_model)
+        self.assertEqual(session["voice"], expected_voice)
+        self.assertEqual(displayed["default_model"], profile_options.get("model_id", DEFAULT_MODEL))
+        self.assertEqual(displayed["default_voice"], profile_options.get("voice_id", DEFAULT_VOICE_ID))
+        self.assertEqual(events[-1]["type"], "voice.response.done", events[-1])
+        self.assertEqual(events[-1]["model"], expected_model)
+        self.assertEqual(b"".join(base64.b64decode(e["audio_base64"]) for e in events
+                                  if e["type"] == "voice.audio.delta"), pcm)
+        self.assertEqual(profile_path.read_bytes(), original_profile)
+
+    async def test_elevenlabs_profile_defaults_reach_real_request_builder_offline(self) -> None:
+        await self._assert_elevenlabs_render_selection({}, {}, DEFAULT_MODEL, DEFAULT_VOICE_ID)
+
+    async def test_explicit_elevenlabs_profile_selection_reaches_request_builder_offline(self) -> None:
+        await self._assert_elevenlabs_render_selection(
+            {"model_id": "eleven_multilingual_v2", "voice_id": "profile-voice"}, {},
+            "eleven_multilingual_v2", "profile-voice",
+        )
+
+    async def test_explicit_session_selection_wins_over_elevenlabs_profile_defaults_offline(self) -> None:
+        await self._assert_elevenlabs_render_selection(
+            {}, {"model": "eleven_turbo_v2_5", "voice": "request-voice"},
+            "eleven_turbo_v2_5", "request-voice",
+        )
 
     async def test_voice_output_config_returns_renderer_defaults(self) -> None:
         token = await self._make_session()

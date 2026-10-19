@@ -75,6 +75,8 @@ class OpenAITTSProvider(VoiceProvider):
         supports_realtime=False,
         supports_interruption=False,
         supports_expression=True,
+        default_model=DEFAULT_MODEL,
+        default_voice=DEFAULT_VOICE,
     )
 
     def __init__(self, stream_factory: HttpStreamFactory | None = None) -> None:

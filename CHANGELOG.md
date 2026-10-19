@@ -13,10 +13,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Android prevents a chat-state race from dropping Final answer only speech requests. (#751)
+- Plugin uses the selected speech renderer's model and voice defaults when a profile changes provider, while preserving explicit selections. (#750)
+- Android preserves whole-sentence streaming audio and short replies after tool-call gaps, and drains delivered PCM before ending speech. (#704)
 - Android avoids redundant conversation history in Gateway send/recovery responses and pauses automatic conversation reopening after a recorded out-of-memory crash, preserving saved conversations and drafts. (#700)
 - Android preserves native Dashboard sign-in during reverse-proxy access failures and retries refresh on a later request when the route is reachable again. (#711)
 - Secure Link accepts PEM certificate chains, exports only the leaf certificate for pairing, and reports invalid certificate/key configurations without exposing private file paths. (#712)
 - Android keeps ONNX Runtime on 1.27.0 so sherpa-onnx native libs match the packaged runtime ABI.
+- Android Voice no longer ends a reply while the last synthesized audio file is still playing, so Continuous mode reopens the microphone only after playback has finished.
 - Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
 - Android pauses both wake-word listener modes before voice capture and resumes listening after voice exits, preventing microphone conflicts. (#681)
 - Android Relay sessions distinguish shortening from operator-approved renewal, retain actionable update failures, and expose accessible pairing duration controls. (#659)

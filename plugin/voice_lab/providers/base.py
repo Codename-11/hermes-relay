@@ -37,6 +37,9 @@ class ProviderInfo:
     supports_realtime: bool = False
     supports_interruption: bool = False
     supports_expression: bool = False
+    # Runtime defaults are explicit: catalog ordering is not a default contract.
+    default_model: str = ""
+    default_voice: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {

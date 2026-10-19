@@ -217,6 +217,10 @@ jobs:
             --tests com.hermesandroid.relay.wake.WakeWordRecognitionTest \
             --tests com.hermesandroid.relay.wake.WakeWordServiceHandoffTest \
             --tests com.hermesandroid.relay.voice.VoiceOutputFallbackTest \
+            --tests com.hermesandroid.relay.audio.RealtimePcmPlayerWriteTest \
+            --tests com.hermesandroid.relay.voice.StandardVoiceTurnPlaybackTest \
+            --tests com.hermesandroid.relay.voice.VoiceFilePlaybackCompletionTest \
+            --tests com.hermesandroid.relay.voice.AgentAudioCompletionDecisionTest \
             --tests com.hermesandroid.relay.voice.LegacyTtsTimingTest \
             --tests com.hermesandroid.relay.voice.VoiceViewModelPipelineTest \
             --tests com.hermesandroid.relay.audio.VoicePlayerTest \
