@@ -673,11 +673,12 @@ fun MessageBubble(
                 val messageTextContent: @Composable () -> Unit = {
                     if (isUser || isSystem) {
                         // Plain text for user and system messages
+                        val textScale = LocalChatTextScale.current
                         Text(
                             text = visibleMessageContent,
                             style = MaterialTheme.typography.bodyMedium.copy(
-                                fontSize = 15.sp,
-                                lineHeight = 21.sp,
+                                fontSize = 15.sp * plainMessageTextScale(isUser, isSystem, textScale),
+                                lineHeight = 21.sp * plainMessageTextScale(isUser, isSystem, textScale),
                             ),
                             color = textColor
                         )

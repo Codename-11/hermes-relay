@@ -175,6 +175,10 @@
     <string name="cd_remove">Entfernen</string>
     <string name="cd_cancel_editing">Bearbeitung abbrechen</string>
     <string name="cd_select_model">Modell auswählen</string>
+    <string name="chat_text_scale_description">Chatnachrichten. Zum Ändern der Größe des Unterhaltungstexts zusammenziehen.</string>
+    <string name="chat_text_scale_increase">Größe des Unterhaltungstexts erhöhen</string>
+    <string name="chat_text_scale_decrease">Größe des Unterhaltungstexts verringern</string>
+    <string name="chat_text_scale_reset">Größe des Unterhaltungstexts zurücksetzen</string>
     <string name="chat_camera_perm_needed">Zum Aufnehmen eines Fotos ist die Kameraberechtigung erforderlich</string>
 
     <!-- ConnectionViewModel status -->

@@ -77,6 +77,8 @@ FOCUSED_TESTS = (
     "com.hermesandroid.relay.util.ServerAddressTest",
     "com.hermesandroid.relay.util.IssueReportAndDiagnosticsTest",
     "com.hermesandroid.relay.data.AppLanguageTest",
+    "com.hermesandroid.relay.data.ChatTextScalePreferencesTest",
+    "com.hermesandroid.relay.ui.components.ChatTextScaleTest",
     "com.hermesandroid.relay.viewmodel.ChatStreamRecoveryTest",
     "com.hermesandroid.relay.viewmodel.ChatViewModelRealtimeTurnTest",
     "com.hermesandroid.relay.network.relay.RealtimeVoiceEventParsingTest",

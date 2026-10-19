@@ -90,9 +90,10 @@ private fun ConfiguredMarkdownContent(
         "Exactly one Markdown source must be provided"
     }
     val isDarkTheme = LocalBrand.current.isDark
+    val textScale = LocalChatTextScale.current
     val chatBodyStyle = MaterialTheme.typography.bodyMedium.copy(
-        fontSize = 15.sp,
-        lineHeight = 21.sp,
+        fontSize = 15.sp * textScale,
+        lineHeight = 21.sp * textScale,
         color = textColor,
     )
     val highlightsBuilder = remember(isDarkTheme) {
@@ -108,22 +109,28 @@ private fun ConfiguredMarkdownContent(
     )
     val typography = markdownTypography(
         h1 = MaterialTheme.typography.bodyLarge.copy(
-            fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold, color = textColor,
+            fontSize = 20.sp * textScale, lineHeight = 26.sp * textScale,
+            fontWeight = FontWeight.Bold, color = textColor,
         ),
         h2 = MaterialTheme.typography.bodyLarge.copy(
-            fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.Bold, color = textColor,
+            fontSize = 18.sp * textScale, lineHeight = 24.sp * textScale,
+            fontWeight = FontWeight.Bold, color = textColor,
         ),
         h3 = MaterialTheme.typography.bodyLarge.copy(
-            fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold, color = textColor,
+            fontSize = 16.sp * textScale, lineHeight = 22.sp * textScale,
+            fontWeight = FontWeight.SemiBold, color = textColor,
         ),
         h4 = MaterialTheme.typography.bodyMedium.copy(
-            fontSize = 15.sp, lineHeight = 20.sp, fontWeight = FontWeight.SemiBold, color = textColor,
+            fontSize = 15.sp * textScale, lineHeight = 20.sp * textScale,
+            fontWeight = FontWeight.SemiBold, color = textColor,
         ),
         h5 = MaterialTheme.typography.bodyMedium.copy(
+            fontSize = 14.sp * textScale, lineHeight = 20.sp * textScale,
             fontWeight = FontWeight.Bold, color = textColor,
         ),
         h6 = MaterialTheme.typography.bodyMedium.copy(
-            fontSize = 13.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp,
+            fontSize = 13.sp * textScale, lineHeight = 18.sp * textScale,
+            fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp * textScale,
             color = textColor.copy(alpha = 0.85f),
         ),
         paragraph = chatBodyStyle,
@@ -136,13 +143,15 @@ private fun ConfiguredMarkdownContent(
             color = textColor.copy(alpha = 0.9f),
         ),
         code = MaterialTheme.typography.bodySmall.copy(
-            fontSize = 13.sp,
+            fontSize = 13.sp * textScale,
+            lineHeight = 18.sp * textScale,
             letterSpacing = 0.sp,
             fontFamily = FontFamily.Monospace,
             color = textColor,
         ),
         inlineCode = MaterialTheme.typography.bodyMedium.copy(
-            fontSize = 13.sp,
+            fontSize = 13.sp * textScale,
+            lineHeight = 18.sp * textScale,
             letterSpacing = 0.sp,
             fontFamily = FontFamily.Monospace,
             color = textColor,
