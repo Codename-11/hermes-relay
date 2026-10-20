@@ -1,0 +1,129 @@
+name: Windows Startup Diagnostic Candidate
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [labeled, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-startup-probe-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  diagnostic:
+    if: >-
+      ${{
+        (github.event.action == 'labeled' && github.event.label.name == 'windows-startup-probe') ||
+        (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'windows-startup-probe'))
+      }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact diagnostic builder
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify immutable builder source
+        shell: pwsh
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ((git rev-parse HEAD) -ne $env:EXPECTED_SHA) { throw 'Builder SHA mismatch' }
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Test runner failure and isolation behavior
+        shell: pwsh
+        working-directory: desktop
+        run: |
+          npm ci --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx tsx --test tests/windowsStartupProbe.test.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build pinned runtime comparison
+        shell: pwsh
+        run: |
+          node desktop/scripts/build-windows-startup-probe.mjs diagnostic-work
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify every candidate on the CI host
+        shell: pwsh
+        run: |
+          powershell.exe -NoProfile -File diagnostic-work/test-windows-startup-probe.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $reports = @(Get-ChildItem diagnostic-work/run-*/results.json)
+          if ($reports.Count -ne 1) { throw 'Expected one CI result report' }
+          $report = Get-Content -LiteralPath $reports[0].FullName -Raw | ConvertFrom-Json
+          if ($report.rows.Count -ne 120 -or @($report.rows | Where-Object { -not $_.passed }).Count) {
+            throw 'CI host startup comparison failed; inspect the run before sharing'
+          }
+          "CI Windows build: $($report.windowsBuild); 120/120 probes passed." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Package only inspectable reporter payloads
+        shell: pwsh
+        env:
+          BUILDER_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SOURCE_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          New-Item -ItemType Directory reporter-bundle | Out-Null
+          $checksums = Get-Content diagnostic-work/SHA256SUMS.txt
+          $seen = @{}
+          foreach ($line in $checksums) {
+            if ($line -notmatch '^([a-f0-9]{64})  ([a-zA-Z0-9.-]+)$') { throw 'Invalid manifest entry' }
+            $digest = $Matches[1]
+            $name = $Matches[2]
+            if ($seen.ContainsKey($name)) { throw 'Duplicate manifest entry' }
+            $seen[$name] = $true
+            $path = Join-Path diagnostic-work $name
+            if ((Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() -ne $digest) { throw "Hash mismatch: $name" }
+            Copy-Item -LiteralPath $path -Destination reporter-bundle
+          }
+          if ($seen.Count -ne 18) { throw 'Unexpected reporter payload inventory' }
+          $manifest = Get-Content reporter-bundle/manifest.json -Raw | ConvertFrom-Json
+          if ($manifest.builderCommit -ne $env:BUILDER_SHA) { throw 'Manifest builder mismatch' }
+          $runUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+          [ordered]@{
+            schemaVersion = 1
+            purpose = 'Windows startup diagnostic for issue 496; not a release or confirmed fix'
+            builderCommit = $env:BUILDER_SHA
+            builderRepository = $env:SOURCE_REPOSITORY
+            pullRequest = [int]$env:PR_NUMBER
+            workflowRun = $runUrl
+            runAttempt = [int]$env:GITHUB_RUN_ATTEMPT
+            relaySourceCommit = $manifest.sourceCommit
+          } | ConvertTo-Json | Set-Content reporter-bundle/PROVENANCE.json -Encoding utf8NoBOM
+          Copy-Item diagnostic-work/SHA256SUMS.txt reporter-bundle/SHA256SUMS.txt
+          $provenanceHash = (Get-FileHash reporter-bundle/PROVENANCE.json).Hash.ToLowerInvariant()
+          "$provenanceHash  PROVENANCE.json" | Add-Content reporter-bundle/SHA256SUMS.txt -Encoding utf8NoBOM
+
+      - name: Upload diagnostic candidate
+        id: upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-startup-probe-pr-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+          path: reporter-bundle/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Record download identity
+        shell: pwsh
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          "Download: $env:ARTIFACT_URL" >> $env:GITHUB_STEP_SUMMARY
+          "Archive SHA-256: $env:ARTIFACT_DIGEST" >> $env:GITHUB_STEP_SUMMARY
+          'Retention requested: 7 days. Check artifact metadata for the actual expiry. GitHub sign-in is required to download.' >> $env:GITHUB_STEP_SUMMARY
