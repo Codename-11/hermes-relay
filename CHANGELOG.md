@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Desktop daemons retry transient startup connection failures, preserve desktop tools when the optional chat channel fails, and record terminal status before exiting.
+
 - Android distinguishes phone interruption from host barge-in and explains that Hold mode can still listen for spoken interruption, without changing saved choices or defaults. (#752)
 - Android prevents a chat-state race from dropping Final answer only speech requests. (#751)
 - Plugin uses the selected speech renderer's model and voice defaults when a profile changes provider, while preserving explicit selections. (#750)

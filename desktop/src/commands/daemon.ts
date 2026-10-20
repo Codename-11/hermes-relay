@@ -715,8 +715,10 @@ async function startDetachedDaemonLocked(args: ParsedArgs): Promise<number> {
     process.stderr.write(
       t.err(`daemon did not become ready within ${DETACHED_START_TIMEOUT_MS / 1000} seconds (${state})`) + '\n'
     )
+    process.stderr.write(t.muted(`  daemon is still running (pid ${child.pid}); connection attempts continue in the background`) + '\n')
     process.stderr.write(t.muted(`  logs:   ${logPath}`) + '\n')
     process.stderr.write(t.muted('  status: hermes-relay daemon status') + '\n')
+    process.stderr.write(t.muted('  stop:   hermes-relay daemon stop') + '\n')
     return 1
   }
 
@@ -1045,7 +1047,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     Object.assign(status, partial, { updated_at: nowSec() })
     return writeDaemonStatus(status)
   }
-  void updateStatus({})
+  await updateStatus({})
 
   const relay = new RelayTransport({
     url,
@@ -1053,6 +1055,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     sessionHeader: useSessionHeader,
     broker: brokerRoute,
     autoReconnect: true,
+    attachTui: !args.flags['no-voice'],
     ...desktopRelayIdentity()
   })
 
@@ -1060,13 +1063,13 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // should log. These install before `start()` so we don't race the
   // connect-completes-before-listener-attached window.
   relay.on('reconnecting', (info: unknown) => {
-    const { attempt, delayMs } =
+    const { attempt, delayMs, reason } =
       info && typeof info === 'object'
-        ? (info as { attempt?: number; delayMs?: number })
+        ? (info as { attempt?: number; delayMs?: number; reason?: string })
         : {}
-    log.warn({ event: 'reconnecting', attempt: attempt ?? null, delay_ms: delayMs ?? null })
+    log.warn({ event: 'reconnecting', attempt: attempt ?? null, delay_ms: delayMs ?? null, reason: reason ?? null })
     const retryAt = nowSec() + Math.ceil((delayMs ?? 0) / 1000)
-    updateStatus({ state: 'reconnecting', last_event: 'reconnecting', reconnect_attempt: attempt ?? null, retry_at: retryAt, last_error: 'Relay connection interrupted' })
+    updateStatus({ state: 'reconnecting', last_event: 'reconnecting', reconnect_attempt: attempt ?? null, retry_at: retryAt, last_error: reason || 'Relay connection interrupted' })
     if ((attempt ?? 1) === 1) {
       void appendAudit({
         ts: Date.now(), kind: 'connection.state', tool: 'daemon.reconnecting', category: 'system', ok: false,
@@ -1105,8 +1108,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const outcome = await relay.whenAuthResolved()
   if (!outcome.ok) {
     log.error({ event: 'auth_failed', reason: outcome.reason })
-    updateStatus({ state: 'stopped', last_event: 'auth_failed', last_error: outcome.reason, reconnect_attempt: null, retry_at: null })
-    void appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.auth_failed', category: 'system', ok: false, host_url: configuredUrl, summary: 'Relay authentication failed', error: outcome.reason })
+    await updateStatus({ state: 'stopped', last_event: 'auth_failed', last_error: outcome.reason, reconnect_attempt: null, retry_at: null })
+    await appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.auth_failed', category: 'system', ok: false, host_url: configuredUrl, summary: 'Relay authentication failed', error: outcome.reason })
     try {
       relay.kill()
     } catch {
@@ -1225,6 +1228,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // non-fatal — the tool router is the daemon's primary job, voice is
   // a bonus.
   const noVoice = !!args.flags['no-voice']
+  if (noVoice) relay.drain()
   let voiceServer: VoiceServer | null = null
   let voiceSessionId: string | null = null
 

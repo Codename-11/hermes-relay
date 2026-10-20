@@ -159,8 +159,11 @@ export interface RelayTransportConfig {
   ttlSeconds?: number
   /** Test hook. */
   wsFactory?: WSFactory
-  /** Auto-reconnect on WSS close. Opt in for long-running commands; one-shot
-   * commands (pair, tools list) remain terminal by default. */
+  /** Attach the optional chat/voice TUI channel after authentication. Default: true. */
+  attachTui?: boolean
+  /** Retry WSS closes and transient startup failures with a stored token.
+   * Opt in for long-running commands; one-shot commands (pair, tools list)
+   * remain terminal by default. */
   autoReconnect?: boolean
   /** Max reconnect attempts before giving up and emitting 'exit'. 0 =
    * unlimited. Default: 0. */
@@ -196,9 +199,9 @@ export interface RelayTransportConfig {
  *
  * Reconnect semantics:
  * - First `start()` opens the socket, runs TOFU (if wss://), then auths.
- * - On unexpected close AFTER auth.ok, schedules a reconnect with exponential
- *   backoff (1s, 2s, 4s, 8s, 16s, 30s, 30s, …). Rate-limit closes get 5min.
- * - `'reconnecting'` fires with `{attempt, delayMs}` before each backoff.
+ * - Stored-token connections retry transient startup failures and unexpected
+ *   closes with backoff (1s, 2s, 4s, 8s, 16s, …). Rate-limit closes get 5min.
+ * - `'reconnecting'` fires with `{attempt, delayMs, reason}` before each backoff.
  *   `'reconnected'` fires once auth.ok lands on the new socket.
  * - The original `whenAuthResolved()` promise settles on the FIRST connect
  *   only — subsequent reconnects do not re-resolve it. Callers that care
@@ -248,13 +251,12 @@ export class RelayTransport extends EventEmitter implements Transport {
    * successful auth.ok. */
   private reconnectAttempt = 0
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
-  /** True once a reconnect has succeeded (auth.ok on a new socket). Used to
-   * pick which auth handler path runs — subsequent auth.ok should fire
-   * `'reconnected'`, not settle the initial `whenAuthResolved()` promise. */
-  private reconnectInFlight = false
+  /** Fences asynchronous connection attempts after timeout, replacement, or kill. */
+  private connectionGeneration = 0
+  private tuiError: string | null = null
   /** True after any socket has completed auth. Unlike `authResolved`, this is
-   * not cleared while a replacement socket authenticates, so a failed
-   * reconnect attempt can schedule the next backoff instead of exiting. */
+   * not cleared while a replacement socket authenticates. This distinguishes
+   * the first successful authentication from a restored session. */
   private everAuthenticated = false
 
   constructor(cfg: RelayTransportConfig) {
@@ -340,12 +342,14 @@ export class RelayTransport extends EventEmitter implements Transport {
    * the WS, and wires lifecycle listeners. Any failure tears the transport
    * down; the close handler decides whether to re-schedule. */
   private async connectOnce(): Promise<void> {
+    const generation = ++this.connectionGeneration
+    const isCurrent = () => !this.tornDown && generation === this.connectionGeneration
     // Arm auth timeout per-attempt. Cancelled by auth.ok or by teardown.
     if (this.authTimer) {
       clearTimeout(this.authTimer)
     }
     this.authTimer = setTimeout(() => {
-      if (this.authResolved) {
+      if (!isCurrent() || this.authResolved) {
         return
       }
       const msg = `auth timed out after ${AUTH_TIMEOUT_MS}ms`
@@ -360,8 +364,10 @@ export class RelayTransport extends EventEmitter implements Transport {
     if (this.cfg.broker) {
       try {
         const ws = await openBrokerRelaySocket(this.cfg.broker)
+        if (!isCurrent()) { ws.close(); return }
         this.bindSocket(ws)
       } catch (e) {
+        if (!isCurrent()) return
         const msg = e instanceof Error ? e.message : String(e)
         this.authFailReason = msg; this.teardownSocket(-1, msg)
       }
@@ -373,8 +379,9 @@ export class RelayTransport extends EventEmitter implements Transport {
     if (isSecureUrl(this.cfg.url)) {
       this.pinnedCertificatePem = undefined
       try {
-        await this.verifyOrCapturePin()
+        await this.verifyOrCapturePin(generation)
       } catch (e) {
+        if (!isCurrent()) return
         const msg = e instanceof Error ? e.message : String(e)
         this.pushLog(`[tofu] ${msg}`)
         this.publish({ type: 'gateway.stderr', payload: { line: `[tofu] ${msg}` } })
@@ -387,6 +394,8 @@ export class RelayTransport extends EventEmitter implements Transport {
         return
       }
     }
+
+    if (!isCurrent()) return
 
     let ws: WSLike
 
@@ -411,25 +420,33 @@ export class RelayTransport extends EventEmitter implements Transport {
 
   private bindSocket(ws: WSLike): void {
     this.ws = ws
+    const isCurrent = () => !this.tornDown && this.ws === ws
     ws.addEventListener('open', () => {
+      if (!isCurrent()) return
       this.pushLog(`[ws] open → ${this.cfg.url}`)
       this.sendAuth()
     })
 
     ws.addEventListener('message', ev => {
+      if (!isCurrent()) return
       const raw = typeof ev.data === 'string' ? ev.data : String(ev.data ?? '')
       this.handleFrame(raw)
     })
 
     ws.addEventListener('close', ev => {
+      if (!isCurrent()) return
       this.pushLog(`[ws] close code=${ev.code} reason=${ev.reason || ''}`)
       this.handleClose(ev.code, ev.reason)
     })
 
     ws.addEventListener('error', ev => {
+      if (!isCurrent()) return
       const msg = ev?.message ?? 'WebSocket error'
       this.pushLog(`[ws] error: ${msg}`)
       this.publish({ type: 'gateway.stderr', payload: { line: `[ws] ${msg}` } })
+      // Some runtimes emit error without close after a rejected upgrade.
+      // Retire this socket explicitly so startup and established sessions recover.
+      this.teardownSocket(-1, msg)
     })
   }
 
@@ -442,12 +459,13 @@ export class RelayTransport extends EventEmitter implements Transport {
    * live WS. A throwaway `tls.connect()` to the same host:port runs the
    * exact same TLS handshake (same SNI, same cert selection), costs
    * ~10–30ms once per connect, and surfaces `rawCert` directly. */
-  private async verifyOrCapturePin(): Promise<void> {
+  private async verifyOrCapturePin(generation: number): Promise<void> {
     const u = new URL(this.cfg.url)
     const host = u.hostname
     const port = parseInt(u.port || '443', 10)
     const key = pinKey(this.cfg.url)
     const stored = await getSession(this.cfg.url)
+    if (this.tornDown || generation !== this.connectionGeneration) return
     const expectedPin = stored?.certPinSha256 ?? this.cfg.expectedCertPin ?? null
 
     const verified = await new Promise<{ pin: string; der: Buffer }>((resolve, reject) => {
@@ -496,6 +514,7 @@ export class RelayTransport extends EventEmitter implements Transport {
       })
     })
 
+    if (this.tornDown || generation !== this.connectionGeneration) return
     const actualPin = verified.pin
     if (expectedPin) {
       if (!comparePins(expectedPin, actualPin)) {
@@ -537,16 +556,15 @@ export class RelayTransport extends EventEmitter implements Transport {
 
     const payload: Record<string, unknown> = {}
 
-    if (this.cfg.pairingCode) {
-      payload.pairing_code = this.cfg.pairingCode
-    } else if (this.sessionToken) {
+    if (this.sessionToken) {
       // Prefer the live token over the initial cfg — after a reconnect,
       // the stored token is what we must present.
       payload.session_token = this.sessionToken
-    } else if (this.cfg.sessionToken) {
-      payload.session_token = this.cfg.sessionToken
+    } else if (this.cfg.pairingCode) {
+      payload.pairing_code = this.cfg.pairingCode
     } else {
       const msg = 'RelayTransport: neither pairingCode nor sessionToken provided'
+      this.authFailReason = msg
       this.pushLog(`[auth] ${msg}`)
       this.publish({ type: 'gateway.stderr', payload: { line: msg } })
       this.teardownSocket(-1, msg)
@@ -660,12 +678,13 @@ export class RelayTransport extends EventEmitter implements Transport {
 
   private handleSystem(type: string, payload: Record<string, unknown>) {
     if (type === 'auth.ok') {
-      const isReconnect = this.reconnectInFlight
+      if (this.authResolved) return
+      const isReconnect = this.everAuthenticated
+      this.tuiError = null
       this.authResolved = true
       this.everAuthenticated = true
       this.state = 'connected'
       this.reconnectAttempt = 0
-      this.reconnectInFlight = false
 
       if (this.authTimer) {
         clearTimeout(this.authTimer)
@@ -737,23 +756,20 @@ export class RelayTransport extends EventEmitter implements Transport {
           }
         }
 
-        if (!isReconnect) {
-          // First connect settles the original promise. Reconnects don't —
-          // whenAuthResolved() is documented as first-settlement-only;
-          // callers use the 'reconnected' event to re-attach.
-          this.settleAuth({
-            ok: true,
-            serverVersion: this.serverVersion,
-            token: this.sessionToken,
-            meta: this.authMeta
-          })
-        }
+        this.settleAuth({
+          ok: true,
+          serverVersion: this.serverVersion,
+          token: this.sessionToken,
+          meta: this.authMeta
+        })
       }
 
-      this.sendEnvelope('tui', 'tui.attach', {
-        cols: process.stdout.columns ?? 80,
-        rows: process.stdout.rows ?? 24
-      })
+      if (this.cfg.attachTui !== false) {
+        this.sendEnvelope('tui', 'tui.attach', {
+          cols: process.stdout.columns ?? 80,
+          rows: process.stdout.rows ?? 24
+        })
+      }
 
       // Fire-and-forget: advertise the local workspace to the relay so
       // downstream tooling (agent prompt-hook, session stickiness) can
@@ -815,6 +831,7 @@ export class RelayTransport extends EventEmitter implements Transport {
 
   private handleTui(type: string, payload: Record<string, unknown>) {
     if (type === 'tui.attached') {
+      this.tuiError = null
       this.pushLog(`[tui] attached pid=${payload.pid ?? '?'} server=${payload.server_version ?? '?'}`)
 
       return
@@ -846,9 +863,10 @@ export class RelayTransport extends EventEmitter implements Transport {
       const message = typeof payload.message === 'string' ? payload.message : 'tui channel error'
       this.pushLog(`[tui] error: ${message}`)
       this.publish({ type: 'gateway.stderr', payload: { line: `[tui] ${message}` } })
-      // Channel-level error — socket is probably unusable. Treat like a
-      // drop; reconnect policy decides whether to retry.
-      this.teardownSocket(-1, message)
+      // TUI failure must not disconnect independent desktop/terminal channels.
+      // Reject chat RPCs honestly until the channel is attached again.
+      this.tuiError = message
+      this.rejectPending(new Error(message))
 
       return
     }
@@ -916,7 +934,7 @@ export class RelayTransport extends EventEmitter implements Transport {
   /** Closes the socket, rejects pending, but does NOT emit `'exit'`. Routes
    * the close through `handleClose` so the reconnect policy runs. Used when
    * the transport itself decides the current socket is dead (auth timeout,
-   * tui.error, TOFU failure). */
+   * TOFU failure). */
   private teardownSocket(code: number | null, reason: string): void {
     if (this.authTimer) {
       clearTimeout(this.authTimer)
@@ -942,7 +960,9 @@ export class RelayTransport extends EventEmitter implements Transport {
       return
     }
     this.tornDown = true
+    this.connectionGeneration += 1
     this.state = 'idle'
+    this.authFailReason ??= reason || 'disconnected before auth'
 
     // Stop the editor poller — it's the only interval the transport owns
     // directly, and leaving it running would keep the process alive past
@@ -966,9 +986,8 @@ export class RelayTransport extends EventEmitter implements Transport {
       this.reconnectTimer = null
     }
 
-    if (!this.authResolved) {
-      this.settleAuth({ ok: false, reason: this.authFailReason ?? (reason || 'disconnected before auth') })
-    }
+    this.authResolved = false
+    this.settleAuth({ ok: false, reason: this.authFailReason })
 
     this.rejectPending(new Error(`relay disconnected: ${reason || 'unknown'}`))
     const ws = this.ws
@@ -990,9 +1009,11 @@ export class RelayTransport extends EventEmitter implements Transport {
   /** Routes a socket close through reconnect policy. Either schedules a
    * reconnect or escalates to `teardownFinal`. */
   private handleClose(code: number | null, reason: string): void {
-    if (this.tornDown) {
+    if (this.tornDown || this.state === 'reconnecting') {
       return
     }
+    this.connectionGeneration += 1
+    this.authResolved = false
 
     // Drop in-flight pending — callers see the disconnect immediately.
     // They'll retry their own requests once they hear 'reconnected'.
@@ -1012,7 +1033,7 @@ export class RelayTransport extends EventEmitter implements Transport {
 
     const canReconnect =
       this.cfg.autoReconnect === true &&
-      this.everAuthenticated && // only reconnect sessions that were once healthy
+      !!this.sessionToken && // do not automatically replay a one-time pairing code
       !this.authFailReason && // terminal auth failure blocks reconnect
       (this.cfg.reconnectGate?.() ?? true) &&
       this.withinAttemptLimit()
@@ -1061,7 +1082,8 @@ export class RelayTransport extends EventEmitter implements Transport {
     this.pushLog(
       `[reconnect] attempt ${this.reconnectAttempt} in ${delayMs}ms (reason=${reason || 'unknown'})`
     )
-    this.emit('reconnecting', { attempt: this.reconnectAttempt, delayMs })
+    this.emit('reconnecting', { attempt: this.reconnectAttempt, delayMs, reason })
+    if (this.tornDown) return
 
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -1082,19 +1104,13 @@ export class RelayTransport extends EventEmitter implements Transport {
         return
       }
 
-      if (!this.withinAttemptLimit()) {
-        this.teardownFinal(-1, 'reconnect attempts exhausted')
-
-        return
-      }
-
-      this.reconnectInFlight = true
       this.authResolved = false // gate RPC until the new socket auths
       this.state = 'connecting'
       void this.connectOnce()
     }, delayMs)
 
-    this.reconnectTimer.unref?.()
+    // A daemon waiting for its first successful authentication has no other
+    // live handles. Keep the backoff alive until connected or explicitly killed.
   }
 
   drain() {
@@ -1124,6 +1140,9 @@ export class RelayTransport extends EventEmitter implements Transport {
     params: Record<string, unknown> = {},
     timeoutMs: number = REQUEST_TIMEOUT_MS
   ): Promise<T> {
+    if (this.cfg.attachTui === false || this.tuiError) {
+      return Promise.reject(new Error(this.tuiError ?? 'TUI channel is disabled'))
+    }
     if (!this.ws) {
       return Promise.reject(new Error('relay transport not connected'))
     }
@@ -1199,6 +1218,7 @@ export class RelayTransport extends EventEmitter implements Transport {
       // The poller emits `desktop.active_editor` envelopes via
       // `sendChannel`, which short-circuits when the ws is null — so a
       // transient drop + reconnect just has one wasted tick.
+      if (this.tornDown) return
       this.editorStop = startEditorPoller(this, 5000)
       this.pushLog(`[workspace] active-editor poller started`)
     } catch (e) {

@@ -4,6 +4,26 @@ Open items that don't fit a formal Phase plan but shouldn't be lost. Items move 
 
 For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisions.md`.
 
+## Desktop connectivity and management follow-ups
+
+- Classify Hermes Reach broker setup failures: `openBrokerRelaySocket` errors
+  currently terminate reconnect even for host-match timeouts or temporary
+  broker outages. Keep rejected credentials, protocol violations, and pinned
+  TLS failures terminal; add broker-specific recovery fixtures before changing
+  this policy. Direct Relay startup recovery does not certify broker recovery.
+- Verify client recovery when a network silently blackholes an already-open
+  connection. The direct server has a WebSocket heartbeat, but the desktop
+  transport has no independent receive deadline; a server-side close may not
+  reach a disconnected network path. Measure this with a controlled blackhole
+  before choosing a client watchdog budget.
+- Add localized desktop management strings and a language selection policy.
+  The current tray UI has English literals and no translation catalog.
+- Restore a usable desktop window drag region with explicit Tauri permissions
+  and native Windows interaction coverage; the current UI intentionally has
+  no drag region. Keep interactive controls outside that region.
+
+---
+
 ## Optional Dashboard transport support for CLI+UI
 
 The normal CLI+UI computer-connector flow uses Relay pairing and local per-host
