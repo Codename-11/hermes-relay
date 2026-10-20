@@ -53,9 +53,11 @@ class VoiceOverlayForegroundServiceTest {
     @Test fun oldNotificationCannotStopCurrentSession() {
         service.onStartCommand(command(VoiceOverlayForegroundService.ACTION_START), 0, 1)
         service.onStartCommand(command(VoiceOverlayForegroundService.ACTION_STOP, 6), 0, 2)
+        verify(exactly = 0) { host.stopVoiceSession(any()) }
         verify(exactly = 0) { host.exitVoiceSession(any()) }
         service.onStartCommand(command(VoiceOverlayForegroundService.ACTION_STOP), 0, 3)
-        verify(exactly = 1) { host.exitVoiceSession(7L) }
+        verify(exactly = 1) { host.stopVoiceSession(7L) }
+        verify(exactly = 0) { host.exitVoiceSession(any()) }
     }
     @Test fun windowFailureEndsVoiceInsteadOfLeavingUnprotectedCapture() {
         every { host.onServiceReady(7L) } returns false

@@ -3054,6 +3054,7 @@ class RelayVoiceClient(
                 replayed = (obj["replayed"] as? JsonPrimitive)?.contentOrNull?.toBooleanStrictOrNull() ?: false,
                 sessionId = (obj["session_id"] as? JsonPrimitive)?.contentOrNull,
                 chatSessionId = (obj["chat_session_id"] as? JsonPrimitive)?.contentOrNull,
+                responseId = (obj["response_id"] as? JsonPrimitive)?.contentOrNull,
                 messageId = (obj["message_id"] as? JsonPrimitive)?.contentOrNull,
                 runId = (obj["run_id"] as? JsonPrimitive)?.contentOrNull,
                 confirmationId = (obj["confirmation_id"] as? JsonPrimitive)?.contentOrNull,
@@ -3450,6 +3451,7 @@ data class RealtimeVoiceEvent(
     val replayed: Boolean = false,
     val sessionId: String? = null,
     val chatSessionId: String? = null,
+    val responseId: String? = null,
     val messageId: String? = null,
     val runId: String? = null,
     val confirmationId: String? = null,
@@ -3519,6 +3521,14 @@ class RealtimeAgentSessionControl(
 
     fun cancel(): Boolean =
         webSocket.send("""{"type":"response.cancel"}""")
+
+    /**
+     * Leave the voice client without cancelling the provider response. Relay
+     * keeps the native session alive inside its bounded resume window so
+     * server-side transcript/chat delivery can finish after the UI closes.
+     */
+    fun detach(): Boolean =
+        webSocket.close(1000, "voice client detached")
 
     /** Ask the relay to respeak the last delivered background result
      *  (DONE-chip tap). The relay answers with a hermes-sourced response
