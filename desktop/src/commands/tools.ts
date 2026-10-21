@@ -14,7 +14,7 @@ import { createSpinner } from '../lib/spinner.js'
 import { SYMBOLS, theme as makeTheme } from '../lib/theme.js'
 import { printUsage, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
-import { deleteSession, saveSession } from '../remoteSessions.js'
+import { saveSession } from '../remoteSessions.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 
 const READY_TIMEOUT_MS = 60_000
@@ -131,9 +131,7 @@ export async function toolsCommand(args: ParsedArgs): Promise<number> {
   const outcome = await relay.whenAuthResolved()
 
   if (!outcome.ok) {
-    if (creds.sessionToken) {
-      await deleteSession(url)
-    }
+    // A failed connection must not discard a saved pairing.
     spinner.fail('connection failed')
     process.stderr.write(formatError(outcome.reason, { command: 'tools', url }, t) + '\n')
     try {

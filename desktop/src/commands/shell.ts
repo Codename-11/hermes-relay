@@ -55,7 +55,7 @@ import type { GatewayEvent } from '../gatewayTypes.js'
 import { setupGracefulExit } from '../lib/gracefulExit.js'
 import { rpcErrorMessage } from '../lib/rpc.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
-import { deleteSession, getSession, saveSession } from '../remoteSessions.js'
+import { getSession, saveSession } from '../remoteSessions.js'
 import { stageClipboardImageToInbox } from './paste.js'
 import { fetchRecentSessions, pickSession } from '../sessionPicker.js'
 import {
@@ -136,7 +136,8 @@ export async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
       argCode,
       argToken,
       argPairQr,
-      nonInteractive
+      nonInteractive,
+      skipStoredSession: attempt > 0
     })
 
     const url = (creds.resolvedEndpoint?.relay.url ?? urlFlag)!.trim()
@@ -171,9 +172,7 @@ export async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
     } catch {
       /* ignore */
     }
-    if (creds.sessionToken) {
-      await deleteSession(url)
-    }
+    // A failed connection must not discard a saved pairing.
     if (attempt === 1 || nonInteractive) {
       throw new Error(`relay rejected credentials: ${outcome.reason}`)
     }
