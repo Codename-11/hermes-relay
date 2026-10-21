@@ -4633,4 +4633,20 @@
     <string name="voice_settings_host_barge_in_desc">Hermesホストの音声モードでの割り込みを制御します。このスマートフォンのマイクには影響しません。「Listening」の「スマートフォンでの割り込み」を使用してください。</string>
     <string name="voice_settings_speak_tool_updates">ツールの通知を読み上げる</string>
     <string name="voice_settings_speak_tool_updates_desc">組み込みのツール通知は英語です。これらの通知なしでアシスタントの回答を聞くにはオフにしてください。「最終回答のみ」でも通知は読み上げられません。</string>
+    <string name="edge_auth_title">エッジ認証</string>
+    <string name="edge_auth_description">Cloudflare Access などのゲートがダッシュボードの前にある場合は、そのサービス トークンをここに入力します。このサーバーにのみ送信されます。</string>
+    <string name="edge_auth_status">ゲート認証情報</string>
+    <string name="edge_auth_configured">設定済み</string>
+    <string name="edge_auth_not_configured">未設定</string>
+    <string name="edge_auth_set_up">設定する</string>
+    <string name="edge_auth_replace">置き換える</string>
+    <string name="edge_auth_remove">削除</string>
+    <string name="edge_auth_dialog_title">ゲートのサービス トークン</string>
+    <string name="edge_auth_dialog_body">トークンのクライアント ID とクライアント シークレットを貼り付けます。この端末に暗号化して保存されます。</string>
+    <string name="edge_auth_client_id">クライアント ID</string>
+    <string name="edge_auth_client_secret">クライアント シークレット</string>
+    <string name="edge_auth_save">保存</string>
+    <string name="edge_auth_cancel">キャンセル</string>
+    <string name="edge_auth_save_failed">認証情報を保存できませんでした。</string>
+    <string name="cw_edge_gate_http">接続は可能ですが、アクセスゲートが HTTP %1$d を返しました。この接続を保存し、アクセスのゲートサービストークンを追加してください。</string>
 </resources>

@@ -90,6 +90,7 @@ import com.hermesandroid.relay.diagnostics.DiagnosticsLog
 import com.hermesandroid.relay.util.TailscaleDetector
 import com.hermesandroid.relay.network.relay.ChannelMultiplexer
 import com.hermesandroid.relay.network.shared.ConnectivityObserver
+import com.hermesandroid.relay.network.upstream.DashboardHttpException
 import com.hermesandroid.relay.network.upstream.ChatMode
 import com.hermesandroid.relay.network.relay.ConnectionManager
 import com.hermesandroid.relay.network.relay.ConnectionState
@@ -122,6 +123,10 @@ import com.hermesandroid.relay.network.upstream.HermesApiClient
 import com.hermesandroid.relay.network.shared.RouteProbeOutcome
 import com.hermesandroid.relay.network.shared.ProfileApiUrlResolver
 import com.hermesandroid.relay.network.shared.normalizeCredentialForHeader
+import com.hermesandroid.relay.network.shared.EdgeAuthCredential
+import com.hermesandroid.relay.network.shared.EdgeAuthInterceptor
+import com.hermesandroid.relay.network.shared.EncryptedEdgeAuthStore
+import com.hermesandroid.relay.network.shared.sameEdgeAuthScope
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.network.relay.RelayHttpClient
 import com.hermesandroid.relay.network.relay.RelayUrlDeriver
@@ -144,6 +149,7 @@ import com.hermesandroid.relay.viewmodel.connection.ProfileController
 import com.hermesandroid.relay.viewmodel.connection.UpstreamTransportController
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.net.URI
 import java.util.UUID
@@ -1191,7 +1197,59 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         .readTimeout(2, TimeUnit.SECONDS)
         .writeTimeout(2, TimeUnit.SECONDS)
         .callTimeout(2, TimeUnit.SECONDS)
+        // Route probes hit the same origin the dashboard does, so an edge gate
+        // (Cloudflare Access) answers them with a redirect unless the
+        // connection's service token rides along. Without this the app reports
+        // "no reachable endpoint" for a server it can in fact reach.
+        .addInterceptor(EdgeAuthInterceptor { url -> activeEdgeAuthFor(url) })
         .build()
+
+    // --- Edge gate credential (Cloudflare Access service token) --------------
+
+    /**
+     * Per-connection encrypted credential stores, cached process-wide: each one
+     * rides the connection's existing token keyset (see [EncryptedEdgeAuthStore]).
+     */
+    private val edgeAuthStores =
+        java.util.concurrent.ConcurrentHashMap<String, EncryptedEdgeAuthStore>()
+
+    private fun edgeAuthStoreFor(connectionId: String): EncryptedEdgeAuthStore {
+        val tokenStoreKey = connectionStore.connections.value
+            .firstOrNull { it.id == connectionId }
+            ?.tokenStoreKey
+            ?: Connection.buildTokenStoreKey(connectionId)
+        return edgeAuthStores.getOrPut(connectionId) {
+            EncryptedEdgeAuthStore(ctx, tokenStoreKey)
+        }
+    }
+
+    /**
+     * Credential to present to [url] on behalf of [connectionId], or null when
+     * that connection has none configured or [url] is not its dashboard origin.
+     * The origin check keeps the token off fallback routes and off any redirect
+     * target.
+     */
+    private fun edgeAuthFor(connectionId: String, url: HttpUrl): EdgeAuthCredential? {
+        val connection = connectionStore.connections.value
+            .firstOrNull { it.id == connectionId }
+            ?: return null
+        if (!connection.edgeAuthConfigured) return null
+        // A connection can carry several routes (LAN, VPN, public) and the
+        // resolved one is not always the host the token was entered for, so the
+        // credential follows either the resolved or the configured dashboard
+        // origin — never a third host.
+        val scopes = listOfNotNull(
+            connection.resolvedDashboardUrl.trim().takeIf { it.isNotBlank() }?.toHttpUrlOrNull(),
+            connection.configuredDashboardUrl.trim().takeIf { it.isNotBlank() }?.toHttpUrlOrNull(),
+        )
+        if (scopes.none { sameEdgeAuthScope(url, it) }) return null
+        return edgeAuthStoreFor(connectionId).load()
+    }
+
+    private fun activeEdgeAuthFor(url: HttpUrl): EdgeAuthCredential? {
+        val connectionId = connectionStore.activeConnectionId.value ?: return null
+        return edgeAuthFor(connectionId, url)
+    }
 
     private val endpointResolver = EndpointResolver(
         httpClient = endpointProbeClient,
@@ -1388,6 +1446,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         pinnedClientProvider = { url, base ->
             pluginProxyClientForUrl(url, base, includeRelaySessionHeader = false)
         },
+        edgeAuthProvider = { cid, url -> url.toHttpUrlOrNull()?.let { edgeAuthFor(cid, it) } },
     )
 
     // Agent-profiles collaborator — owns the merged profile list, the
@@ -4354,6 +4413,52 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /**
+     * Saves the edge-gate credential (Cloudflare Access service token) for a
+     * connection: the pair goes to that connection's encrypted store and only a
+     * configured/not-configured flag is written to the serialized record.
+     *
+     * Cached dashboard/gateway clients for the connection are retired so the
+     * next request and the next `/api/ws` upgrade carry the new headers — the
+     * user does not have to restart the app or switch connections.
+     */
+    suspend fun saveEdgeAuthCredential(
+        connectionId: String,
+        clientId: String,
+        clientSecret: String,
+    ): Result<Unit> {
+        val connection = connectionStore.connections.value.firstOrNull { it.id == connectionId }
+            ?: return Result.failure(NoSuchElementException("No connection with id=$connectionId"))
+        val credential = EdgeAuthCredential(clientId.trim(), clientSecret.trim())
+        if (!credential.isComplete) {
+            return Result.failure(IllegalArgumentException("Both the client ID and the client secret are required"))
+        }
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                edgeAuthStoreFor(connectionId).save(credential)
+                if (!connection.edgeAuthConfigured) {
+                    connectionStore.updateConnection(connection.copy(edgeAuthConfigured = true))
+                }
+                upstreamTransport.invalidateEdgeAuthTransports(connectionId)
+            }
+        }
+    }
+
+    /** Removes a connection's edge-gate credential and rebuilds its transports without it. */
+    suspend fun clearEdgeAuthCredential(connectionId: String): Result<Unit> {
+        val connection = connectionStore.connections.value.firstOrNull { it.id == connectionId }
+            ?: return Result.failure(NoSuchElementException("No connection with id=$connectionId"))
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                edgeAuthStoreFor(connectionId).clear()
+                if (connection.edgeAuthConfigured) {
+                    connectionStore.updateConnection(connection.copy(edgeAuthConfigured = false))
+                }
+                upstreamTransport.invalidateEdgeAuthTransports(connectionId)
+            }
+        }
+    }
+
+    /**
      * Revokes the connection's server-side session
      * (`DELETE /sessions/{tokenPrefix}`) and clears the local auth material.
      *
@@ -6619,13 +6724,26 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
+                // An identity gate in front of the dashboard answers the probe with a redirect (Cloudflare
+                // Access sends 302 to its own login page) or a flat 401/403. That is still a Hermes address:
+                // it is the gate, not the server, that refused. Let setup continue so the connection exists
+                // and its Access tab can hold the gate's service token, after which the probe succeeds.
+                val gateCode = (e as? DashboardHttpException)
+                    ?.statusCode
+                    ?.takeIf { it in 300..399 || it == 401 || it == 403 }
                 onResult(
                     DashboardSetupResult(
-                        ok = false,
+                        ok = gateCode != null,
                         dashboardUrl = dashboardUrl,
-                        message = if (e is com.hermesandroid.relay.network.upstream.DashboardLocalAuthenticationRequiredException) {
-                            getApplication<Application>().getString(R.string.dashboard_local_auth_help)
-                        } else e.message ?: "Hermes was not found at this address",
+                        message = when {
+                            gateCode != null ->
+                                getApplication<Application>().getString(R.string.cw_edge_gate_http, gateCode)
+                            e is com.hermesandroid.relay.network.upstream.DashboardLocalAuthenticationRequiredException ->
+                                getApplication<Application>().getString(R.string.dashboard_local_auth_help)
+                            else -> e.message ?: "Hermes was not found at this address"
+                        },
+                        signInRequired = gateCode != null,
+                        httpConsentOrigin = httpConsentOrigin?.takeIf { it == dashboardHttpOrigin(dashboardUrl) },
                     ),
                 )
             } finally {

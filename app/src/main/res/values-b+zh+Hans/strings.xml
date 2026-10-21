@@ -4562,4 +4562,20 @@
     <string name="voice_settings_host_barge_in_desc">控制 Hermes 主机语音模式中的插话，不控制此手机的麦克风。请使用Listening 选项卡中的手机端插话。</string>
     <string name="voice_settings_speak_tool_updates">朗读工具提示</string>
     <string name="voice_settings_speak_tool_updates_desc">内置工具提示为英语。关闭后仍会朗读助手回复，但不会朗读这些提示。仅朗读最终答案也会使这些提示静音。</string>
+    <string name="edge_auth_title">边缘认证</string>
+    <string name="edge_auth_description">如果面板前面有 Cloudflare Access 之类的网关，请在此填写它的服务令牌。应用只会把它发送到这台服务器。</string>
+    <string name="edge_auth_status">网关凭据</string>
+    <string name="edge_auth_configured">已配置</string>
+    <string name="edge_auth_not_configured">未配置</string>
+    <string name="edge_auth_set_up">设置</string>
+    <string name="edge_auth_replace">替换</string>
+    <string name="edge_auth_remove">移除</string>
+    <string name="edge_auth_dialog_title">网关服务令牌</string>
+    <string name="edge_auth_dialog_body">粘贴令牌的 Client ID 和 Client secret，它们会加密保存在此设备上。</string>
+    <string name="edge_auth_client_id">Client ID</string>
+    <string name="edge_auth_client_secret">Client secret</string>
+    <string name="edge_auth_save">保存</string>
+    <string name="edge_auth_cancel">取消</string>
+    <string name="edge_auth_save_failed">无法保存凭据。</string>
+    <string name="cw_edge_gate_http">可访问，但访问网关返回了 HTTP %1$d。请保存此连接，然后在“访问”中添加网关的服务令牌。</string>
 </resources>
