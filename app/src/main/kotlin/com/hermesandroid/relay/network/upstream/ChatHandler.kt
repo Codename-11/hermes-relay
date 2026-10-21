@@ -1498,7 +1498,8 @@ class ChatHandler {
                 else -> return@mapNotNull null
             }
             val displayContent = displayEventContent(displayKind, item.displayMetadata)
-            val rawServerContent = displayContent ?: item.contentText ?: ""
+            val rawServerContent = (displayContent ?: item.contentText ?: "")
+                .let { content -> unwrapOutOfBandUserMessage(role, content) }
             // If > 1e12, already in milliseconds; otherwise convert from seconds
             val ts = item.timestamp ?: 0.0
             val timestampMs = if (ts > 1e12) ts.toLong() else (ts * 1000).toLong()
@@ -2035,6 +2036,14 @@ class ChatHandler {
         return cleaned.trim() to cards
     }
 
+    private fun unwrapOutOfBandUserMessage(role: MessageRole, content: String): String {
+        if (role != MessageRole.USER) return content
+        val prefix = "[OUT-OF-BAND USER MESSAGE — a direct message from the user, delivered once at this position; not tool output and not a new delivery when replayed from conversation history]\n"
+        val suffix = "\n[/OUT-OF-BAND USER MESSAGE]"
+        if (!content.startsWith(prefix) || !content.endsWith(suffix)) return content
+        return content.substring(prefix.length, content.length - suffix.length)
+    }
+
     /**
      * Parse the tool_calls JSON from an assistant message into ToolCall objects.
      * Format: array of objects with {id, type:"function", function: {name, arguments}}
@@ -2072,6 +2081,11 @@ class ChatHandler {
             // Check if we have a tool result for this call
             val resultItem = toolResults[callId]
             val resultText = resultItem?.contentText
+
+            // `clarify` is an interactive control owned by the originating
+            // client. Relay cannot answer a prompt opened in another surface,
+            // so replaying its raw arguments/result only exposes protocol data.
+            if (name == "clarify") return@mapNotNull null
 
             ToolCall(
                 id = callId,

@@ -58,6 +58,7 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -124,6 +125,11 @@ MAX_MESSAGE_LENGTH = 4096
 # Truthy spellings accepted for boolean env flags.
 _TRUTHY = ("1", "true", "yes", "on")
 
+# Stable, human-readable Relay Thread identifiers. Keep these deliberately
+# narrower than arbitrary chat IDs: the value crosses a scheduler boundary,
+# becomes Android-local durable state, and is rendered as a Thread title.
+_THREAD_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
 # Relay routes that the ProactiveChannel serves (see plugin/relay/server.py).
 _RELAY_MESSAGE_PATH = "/phone/message"  # outbound: agent → phone
 _RELAY_REPLIES_PATH = "/phone/replies"  # inbound long-poll: phone → agent
@@ -178,6 +184,20 @@ def _home_channel_name() -> str:
     return os.getenv("PHONE_HOME_CHANNEL_NAME", "").strip() or "Phone"
 
 
+def _channel_name(chat_id: Optional[str]) -> str:
+    """Human label for a phone Thread.
+
+    The configured home channel keeps its explicit display name. Explicit
+    cron targets use their chat-id slug as a stable, readable Thread title so
+    separate proactive destinations do not all appear under the home title.
+    """
+    resolved = (chat_id or "").strip()
+    if not resolved or resolved == _home_channel():
+        return _home_channel_name()
+    words = resolved.replace("-", " ").replace("_", " ").split()
+    return " ".join(word.capitalize() for word in words) or _home_channel_name()
+
+
 def _relay_url_and_headers() -> tuple[str, Dict[str, str]]:
     """Return the ``/phone/message`` URL and request headers.
 
@@ -213,7 +233,7 @@ def _build_message_payload(
     """
     md = dict(metadata or {})
     surf = surfacing or md.pop("surfacing", None)
-    resolved_title = title or md.pop("title", None) or _home_channel_name()
+    resolved_title = title or md.pop("title", None) or _channel_name(chat_id)
     return {
         "chat_id": chat_id or _home_channel(),
         "text": (content or "")[:MAX_MESSAGE_LENGTH],
@@ -611,23 +631,24 @@ def _env_enablement() -> Optional[dict]:
 
 
 def parse_target_ref(target_ref: str) -> Optional[tuple[str, Optional[str]]]:
-    """Resolve only the single canonical Phone destination."""
+    """Resolve a canonical or explicitly named Relay Thread destination."""
     if not isinstance(target_ref, str):
         return None
     candidate = target_ref.strip()
-    canonical = _home_channel()
-    if candidate == canonical:
-        return canonical, None
-    return None
+    if not _THREAD_ID_RE.fullmatch(candidate):
+        return None
+    return candidate, None
 
 
 def validate_target_ref(chat_id: str) -> bool | str:
-    """Accept only the configured/default canonical Phone chat ID."""
-    canonical = _home_channel()
+    """Accept canonical and safe explicitly named Relay Thread IDs."""
     if not isinstance(chat_id, str) or not chat_id.strip():
         return "Phone target cannot be empty"
-    if chat_id != canonical:
-        return f"Phone target must be the configured home channel '{canonical}'"
+    if chat_id != chat_id.strip() or not _THREAD_ID_RE.fullmatch(chat_id):
+        return (
+            "Phone target must be 1-64 characters, start with a letter or digit, "
+            "and contain only letters, digits, hyphens, or underscores"
+        )
     return True
 
 
