@@ -474,6 +474,7 @@ fun DashboardSignInScreen(
                         providerDisplayName = provider.displayName ?: provider.name,
                     ).signIn(
                         provider = authorizationProvider,
+                        discoveryProvider = provider.name,
                         onDiagnostic = { stage ->
                             recordNativeDashboardAuthDiagnostic(
                                 stage = stage,

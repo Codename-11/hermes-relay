@@ -157,6 +157,7 @@ class NativeDashboardSignInCoordinator(
 ) {
     suspend fun signIn(
         provider: String?,
+        discoveryProvider: String? = provider,
         onAuthorizationPrepared: (usesAlternateOrigin: Boolean) -> Unit = {},
         onCallbackValidated: () -> Unit = {},
         onDiagnostic: (String) -> Unit = {},
@@ -182,7 +183,11 @@ class NativeDashboardSignInCoordinator(
 
                         diagnostic("listener_bound")
                         val redirectUri = "http://127.0.0.1:${server.localPort}$CALLBACK_PATH"
-                        val authorization = authClient.beginAuthorization(redirectUri, provider)
+                        val authorization = authClient.beginAuthorization(
+                            redirectUri = redirectUri,
+                            provider = provider,
+                            discoveryProvider = discoveryProvider,
+                        )
                         val attemptContext = currentCoroutineContext()
                         var completed = false
                         try {

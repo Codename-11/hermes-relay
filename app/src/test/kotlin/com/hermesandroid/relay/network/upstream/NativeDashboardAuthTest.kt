@@ -162,6 +162,76 @@ class NativeDashboardAuthTest {
         )
     }
 
+    @Test
+    fun canonicalProviderCallback_unwrapsPortalLoginCallbackUrl() {
+        val nestedAuthorization = java.net.URLEncoder.encode(
+            "/oauth/authorize?response_type=code&" +
+                "redirect_uri=https%3A%2F%2Fmizu.example.test%2Fauth%2Fcallback",
+            Charsets.UTF_8,
+        )
+        val location = "https://portal.nousresearch.com/login?callbackUrl=$nestedAuthorization"
+
+        assertEquals(
+            "https://mizu.example.test",
+            canonicalDashboardBaseFromProviderRedirect(
+                "http://192.168.1.2:9119",
+                location,
+            ),
+        )
+    }
+
+    @Test
+    fun canonicalProviderCallback_rejectsForeignNestedAuthorizationOrigin() {
+        val nestedAuthorization = java.net.URLEncoder.encode(
+            "https://attacker.example/oauth/authorize?" +
+                "redirect_uri=https%3A%2F%2Fmizu.example.test%2Fauth%2Fcallback",
+            Charsets.UTF_8,
+        )
+        val location = "https://portal.nousresearch.com/login?callbackUrl=$nestedAuthorization"
+
+        assertEquals(
+            "http://192.168.1.2:9119",
+            canonicalDashboardBaseFromProviderRedirect(
+                "http://192.168.1.2:9119",
+                location,
+            ),
+        )
+    }
+
+    @Test
+    fun beginAuthorization_discoversCanonicalOriginWithoutSendingHostedProviderSelector() {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(302)
+                .setHeader(
+                    "Location",
+                    "https://portal.nousresearch.com/oauth/authorize?" +
+                        "redirect_uri=https%3A%2F%2Fmizu.example.test%2Fauth%2Fcallback",
+                )
+        )
+        val privateRouteClient = OkHttpClient.Builder()
+            .dns(Dns { listOf(InetAddress.getByName("127.0.0.1")) })
+            .build()
+        val client = NativeDashboardAuthClient(
+            baseUrl = "http://gateway.test:${server.port}",
+            tokenStore = store,
+            client = privateRouteClient,
+        )
+
+        val authorization = client.beginAuthorization(
+            redirectUri = "http://127.0.0.1:43123/callback",
+            provider = null,
+            discoveryProvider = "nous",
+        )
+
+        assertTrue(authorization.authorizationUrl.startsWith("https://mizu.example.test/auth/native/authorize?"))
+        assertFalse(authorization.authorizationUrl.contains("provider="))
+        assertEquals(
+            "/auth/login?provider=nous&next=%2F",
+            server.takeRequest().path,
+        )
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun beginAuthorization_rejectsHostnameLoopback() {
         NativeDashboardAuthClient(server.url("/").toString(), store)
