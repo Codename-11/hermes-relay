@@ -360,7 +360,9 @@ export async function shellCommand(args: ParsedArgs): Promise<number> {
       url,
       serverVersion: relay.serverVersion,
       meta: relay.authMeta,
-      endpointRole: bannerRole
+      endpointRole: bannerRole,
+      noColor: !!args.flags['no-color'],
+      stream: process.stderr
     }) + '\n'
   )
   const storedTerminalSession = sessionNameArg ? null : await getActiveTerminalSession(url)

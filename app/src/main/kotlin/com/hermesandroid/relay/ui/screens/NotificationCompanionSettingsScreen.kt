@@ -50,7 +50,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -65,6 +64,7 @@ import com.hermesandroid.relay.notifications.NotificationTriggerSettings
 import com.hermesandroid.relay.notifications.NotificationTriggerStore
 import com.hermesandroid.relay.notifications.notificationTriggerDataStore
 import com.hermesandroid.relay.notifications.summary
+import com.hermesandroid.relay.ui.theme.LocalBrand
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -184,7 +184,7 @@ private fun NotificationAccessCard(
                     .size(12.dp)
                     .clip(CircleShape)
                     .background(
-                        if (granted) Color(0xFF43A047) else MaterialTheme.colorScheme.outline,
+                        if (granted) LocalBrand.current.green else MaterialTheme.colorScheme.outline,
                     ),
             )
             Column(modifier = Modifier.weight(1f)) {
