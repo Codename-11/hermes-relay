@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import http.client
 import json
 import logging
 import os
 import re
 import socket
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import yaml
 
@@ -1155,11 +1158,99 @@ def _format_url(scheme: str, host: str, port: int) -> str:
     return f"{scheme}://{netloc}:{port}"
 
 
+# A profile-scoped ``/p/<profile>`` route is only advertised when the shared
+# gateway actually serves that profile. The probe result is cached because
+# profile discovery re-runs on a short interval.
+_PROFILE_PREFIX_PROBE_TTL_SECONDS = 300.0
+_profile_prefix_cache: dict[tuple[str, str], tuple[float, bool]] = {}
+
+
+def _api_server_key_fingerprint(platform: dict[str, Any], dotenv: dict[str, str]) -> str | None:
+    """Internal fingerprint of a profile's API-server credential.
+
+    The fingerprint only decides whether the phone's connection credential can
+    also authenticate a profile-scoped ``/p/<profile>`` route. It never leaves
+    this module and is never part of the wire shape.
+    """
+    key = _coerce_string(platform.get("key")) or _coerce_string(dotenv.get("API_SERVER_KEY"))
+    if not key:
+        return None
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def _same_api_origin(url_a: str, url_b: str) -> bool:
+    """True when both URLs address the same scheme/host/port."""
+
+    def origin(url: str) -> tuple[str, str, int]:
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "http").lower()
+        host = (parsed.hostname or "").lower()
+        port = parsed.port or (443 if scheme == "https" else 80)
+        return (scheme, host, port)
+
+    return origin(url_a) == origin(url_b)
+
+
+def _probe_profile_prefix(base_api_url: str, profile: str, *, timeout: float = 1.5) -> bool | None:
+    """Ask the shared gateway whether it serves ``profile`` under ``/p/``.
+
+    Upstream's multiplexed API server mirrors every native route under
+    ``/p/<profile>/...`` for each profile it serves; a profile it does not
+    serve answers ``404``. Returns ``None`` when the gateway could not be
+    reached — the caller then keeps the last known answer.
+    """
+    parsed = urlparse(base_api_url)
+    host = parsed.hostname
+    if not host:
+        return None
+    scheme = (parsed.scheme or "http").lower()
+    port = parsed.port or (443 if scheme == "https" else 80)
+    path = f"/p/{quote(profile, safe='')}/health"
+    connection_cls = http.client.HTTPSConnection if scheme == "https" else http.client.HTTPConnection
+    connection = connection_cls(host, port, timeout=timeout)
+    try:
+        connection.request("GET", path, headers={"Accept": "application/json"})
+        response = connection.getresponse()
+        response.read()
+        if response.status == 200:
+            return True
+        if response.status == 404:
+            return False
+        return None
+    except (OSError, http.client.HTTPException):
+        return None
+    finally:
+        try:
+            connection.close()
+        except Exception:  # pragma: no cover — defensive
+            pass
+
+
+def _profile_prefix_served(base_api_url: str, profile: str) -> bool:
+    """Cached wrapper around :func:`_probe_profile_prefix`."""
+    key = (base_api_url, profile)
+    now = time.monotonic()
+    cached = _profile_prefix_cache.get(key)
+    if cached is not None and (now - cached[0]) < _PROFILE_PREFIX_PROBE_TTL_SECONDS:
+        return cached[1]
+    served = _probe_profile_prefix(base_api_url, profile)
+    if served is None:
+        # Gateway unreachable — keep the last known answer so the advertised
+        # route does not flap on a transient outage.
+        if cached is not None:
+            return cached[1]
+        return False
+    _profile_prefix_cache[key] = (now, served)
+    return served
+
+
 def _profile_api_server_metadata(
     data: dict[str, Any],
     profile_home: Path,
     *,
     base_api_url: str | None = None,
+    profile_name: str | None = None,
+    key_fingerprints: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Expose profile API-server routing metadata without exposing secrets.
 
@@ -1168,6 +1259,13 @@ def _profile_api_server_metadata(
     chat traffic to that server. API keys stay local; clients reuse the
     connection's stored key or pair the profile API as a separate connection
     when operators intentionally use distinct keys.
+
+    A profile that shares the gateway with the connection (same host and
+    port) is served by upstream's multiplexed API server under
+    ``/p/<profile>``. Such a profile gets a profile-scoped URL so the client
+    addresses that profile instead of the gateway's default profile. The
+    scope is only advertised when the gateway really serves the profile and
+    when the connection credential also authenticates the profile route.
     """
     dotenv = _profile_dotenv_values(profile_home)
     platform = _api_server_platform_config(data)
@@ -1191,6 +1289,10 @@ def _profile_api_server_metadata(
     explicit_enabled = _coerce_bool(enabled_value)
     enabled = explicit_enabled if explicit_enabled is not None else key_present
 
+    fingerprint = _api_server_key_fingerprint(platform, dotenv)
+    if key_fingerprints is not None and fingerprint:
+        key_fingerprints[profile_name or ""] = fingerprint
+
     api_server_url: str | None = None
     if enabled and port is not None:
         route_scheme = "http"
@@ -1200,6 +1302,41 @@ def _profile_api_server_metadata(
             route_scheme = parsed.scheme or route_scheme
             route_host = parsed.hostname or route_host
         api_server_url = _format_url(route_scheme, route_host, port)
+
+    if (
+        api_server_url
+        and base_api_url
+        and profile_name
+        and profile_name.lower() != "default"
+        and _same_api_origin(api_server_url, base_api_url)
+    ):
+        base_fingerprint = (key_fingerprints or {}).get("default")
+        if fingerprint and base_fingerprint and fingerprint == base_fingerprint:
+            if _profile_prefix_served(base_api_url, profile_name):
+                api_server_url = f"{api_server_url.rstrip('/')}/p/{quote(profile_name, safe='')}"
+                logger.info(
+                    "Profile %r shares the gateway at %s — advertising the profile-scoped API route %s",
+                    profile_name,
+                    base_api_url,
+                    api_server_url,
+                )
+            else:
+                logger.info(
+                    "Profile %r shares the gateway at %s but the gateway does not serve it under "
+                    "/p/%s — advertising the gateway root",
+                    profile_name,
+                    base_api_url,
+                    profile_name,
+                )
+        else:
+            logger.info(
+                "Profile %r shares the gateway at %s but its API credential differs from the "
+                "default profile's — advertising the gateway root (a /p/%s route would reject "
+                "the connection credential)",
+                profile_name,
+                base_api_url,
+                profile_name,
+            )
 
     return {
         "api_server_enabled": enabled,
@@ -1217,6 +1354,7 @@ def _read_profile_entry(
     *,
     profile_home: Path,
     base_api_url: str | None = None,
+    key_fingerprints: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """Read a single profile directory into the wire-shape dict.
 
@@ -1290,6 +1428,8 @@ def _read_profile_entry(
         data,
         profile_home,
         base_api_url=base_api_url,
+        profile_name=name,
+        key_fingerprints=key_fingerprints,
     )
 
     gateway_running = _probe_gateway_running(profile_home) or _probe_api_server_running(
@@ -1389,6 +1529,12 @@ def _load_profiles(
 
     results: list[dict[str, Any]] = []
 
+    # Credential fingerprints of the discovered profiles, keyed by profile
+    # name. Only the "default" entry is used to decide whether a profile may
+    # be addressed through the shared gateway's profile-scoped route; the
+    # fingerprints never leave this module.
+    key_fingerprints: dict[str, str] = {}
+
     # Synthetic "default" entry mapped to Hermes' effective default home.
     # A valid active_profile marker means bare Hermes commands and gateways
     # start from that named profile, so Relay must advertise matching metadata.
@@ -1401,6 +1547,7 @@ def _load_profiles(
             soul_md=default_home / "SOUL.md",
             profile_home=default_home,
             base_api_url=base_api_url,
+            key_fingerprints=key_fingerprints,
         )
         if default_entry is not None:
             results.append(default_entry)
@@ -1422,6 +1569,7 @@ def _load_profiles(
                 soul_md=child / "SOUL.md",
                 profile_home=child,
                 base_api_url=base_api_url,
+                key_fingerprints=key_fingerprints,
             )
             if entry is not None:
                 results.append(entry)
