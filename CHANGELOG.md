@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Android can reach a dashboard behind an HTTP edge gate (a Cloudflare Access application, for example) by saving that gate's service token per connection; the pair is stored encrypted and sent only to that connection's exact dashboard origin, including the gateway socket.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added

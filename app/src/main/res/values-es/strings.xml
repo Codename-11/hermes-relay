@@ -4329,4 +4329,20 @@
     <string name="voice_settings_host_barge_in_desc">Controla las interrupciones en el modo de voz del host Hermes, no el micrófono de este teléfono. Usa Interrupción en el teléfono en Listening.</string>
     <string name="voice_settings_speak_tool_updates">Leer avisos de herramientas</string>
     <string name="voice_settings_speak_tool_updates_desc">Los avisos predefinidos de herramientas están en inglés. Desactiva esta opción para oír las respuestas sin estos avisos. Solo la respuesta final también los silencia.</string>
+    <string name="edge_auth_title">Autenticación del perímetro</string>
+    <string name="edge_auth_description">Si un control como Cloudflare Access está delante de tu panel, añade aquí su token de servicio. La app solo lo envía a este servidor.</string>
+    <string name="edge_auth_status">Credencial del perímetro</string>
+    <string name="edge_auth_configured">Configurada</string>
+    <string name="edge_auth_not_configured">Sin configurar</string>
+    <string name="edge_auth_set_up">Configurar</string>
+    <string name="edge_auth_replace">Reemplazar</string>
+    <string name="edge_auth_remove">Quitar</string>
+    <string name="edge_auth_dialog_title">Token de servicio del perímetro</string>
+    <string name="edge_auth_dialog_body">Pega el Client ID y el Client secret del token. Se guardan cifrados en este dispositivo.</string>
+    <string name="edge_auth_client_id">Client ID</string>
+    <string name="edge_auth_client_secret">Client secret</string>
+    <string name="edge_auth_save">Guardar</string>
+    <string name="edge_auth_cancel">Cancelar</string>
+    <string name="edge_auth_save_failed">No se pudo guardar la credencial.</string>
+    <string name="cw_edge_gate_http">Se alcanza, pero una puerta de acceso respondió HTTP %1$d. Guarda esta conexión y luego añade el token de servicio de la puerta en Acceso.</string>
 </resources>

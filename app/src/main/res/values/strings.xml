@@ -4696,4 +4696,20 @@
     <string name="voice_settings_host_barge_in_desc">Controls interruption in Hermes host voice mode. It does not control this phone\'s microphone. Use Phone interruption on Listening.</string>
     <string name="voice_settings_speak_tool_updates">Speak tool updates</string>
     <string name="voice_settings_speak_tool_updates_desc">Built-in tool updates are English. Turn off to hear assistant replies without these updates. Final answer only also keeps them silent.</string>
+    <string name="edge_auth_title">Edge authentication</string>
+    <string name="edge_auth_description">If a gate such as Cloudflare Access sits in front of your dashboard, add its service token here. The app sends it only to this server.</string>
+    <string name="edge_auth_status">Gate credential</string>
+    <string name="edge_auth_configured">Configured</string>
+    <string name="edge_auth_not_configured">Not configured</string>
+    <string name="edge_auth_set_up">Set up</string>
+    <string name="edge_auth_replace">Replace</string>
+    <string name="edge_auth_remove">Remove</string>
+    <string name="edge_auth_dialog_title">Gate service token</string>
+    <string name="edge_auth_dialog_body">Paste the token’s Client ID and Client secret. They are stored encrypted on this device.</string>
+    <string name="edge_auth_client_id">Client ID</string>
+    <string name="edge_auth_client_secret">Client secret</string>
+    <string name="edge_auth_save">Save</string>
+    <string name="edge_auth_cancel">Cancel</string>
+    <string name="edge_auth_save_failed">Could not save the credential.</string>
+    <string name="cw_edge_gate_http">Reachable, but an access gate answered HTTP %1$d. Save this connection, then add the gate’s service token under Access.</string>
 </resources>

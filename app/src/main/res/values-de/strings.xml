@@ -4638,4 +4638,20 @@
     <string name="voice_settings_host_barge_in_desc">Steuert Unterbrechungen im Sprachmodus des Hermes-Hosts, nicht das Mikrofon dieses Telefons. Nutze dafür Unterbrechung am Telefon unter Listening.</string>
     <string name="voice_settings_speak_tool_updates">Tool-Meldungen vorlesen</string>
     <string name="voice_settings_speak_tool_updates_desc">Integrierte Tool-Meldungen sind auf Englisch. Deaktiviere diese Option, um Antworten ohne diese Meldungen zu hören. Die Option „Nur endgültige Antwort“ schaltet sie ebenfalls stumm.</string>
+    <string name="edge_auth_title">Edge-Authentifizierung</string>
+    <string name="edge_auth_description">Wenn ein Gate wie Cloudflare Access vor deinem Dashboard steht, trage hier dessen Service-Token ein. Die App sendet ihn nur an diesen Server.</string>
+    <string name="edge_auth_status">Gate-Anmeldedaten</string>
+    <string name="edge_auth_configured">Konfiguriert</string>
+    <string name="edge_auth_not_configured">Nicht konfiguriert</string>
+    <string name="edge_auth_set_up">Einrichten</string>
+    <string name="edge_auth_replace">Ersetzen</string>
+    <string name="edge_auth_remove">Entfernen</string>
+    <string name="edge_auth_dialog_title">Service-Token des Gates</string>
+    <string name="edge_auth_dialog_body">Füge Client-ID und Client-Secret des Tokens ein. Sie werden verschlüsselt auf diesem Gerät gespeichert.</string>
+    <string name="edge_auth_client_id">Client-ID</string>
+    <string name="edge_auth_client_secret">Client-Secret</string>
+    <string name="edge_auth_save">Speichern</string>
+    <string name="edge_auth_cancel">Abbrechen</string>
+    <string name="edge_auth_save_failed">Anmeldedaten konnten nicht gespeichert werden.</string>
+    <string name="cw_edge_gate_http">Erreichbar, aber ein Zugangsgateway antwortete mit HTTP %1$d. Speichere diese Verbindung und trage danach den Service-Token des Gateways unter Zugriff ein.</string>
 </resources>
