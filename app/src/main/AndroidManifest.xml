@@ -96,6 +96,24 @@
             </intent-filter>
         </activity>
 
+        <!-- Public Bluetooth voice-command entry. Do not point an unprotected
+             alias at the STATUS_BAR_SERVICE-protected WEB_SEARCH trampoline:
+             a distinct component keeps screenshot requests inaccessible from
+             arbitrary external VOICE_COMMAND callers. -->
+        <activity
+            android:name=".assistant.BluetoothVoiceCommandActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VOICE_COMMAND" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- AppCompat persists in-app language choices on Android 12 and lower.
              Android 13+ stores the same selection in the platform LocaleManager. -->
         <service

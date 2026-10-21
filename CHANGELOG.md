@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Bluetooth headset voice-assistant gestures can launch the selected Hermes assistant without exposing screen context.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
