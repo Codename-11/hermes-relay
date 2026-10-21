@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android demotes a preferred Relay route that stays unreachable after the network-loss grace window and falls through to the next healthy candidate (for example Tailscale when home Secure Link is offline), instead of sticking on the dead preferred endpoint.
+- Android allows plain `ws://` Relay sockets to trusted overlay hosts (loopback, private LAN, Tailscale CGNAT / MagicDNS) without requiring insecure mode; public cleartext WebSocket URLs remain blocked.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added

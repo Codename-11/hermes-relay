@@ -27,6 +27,16 @@ class ConnectionManagerUrlGuardTest {
     }
 
     @Test
+    fun `trusted overlay plain ws hosts do not require insecure mode toggle`() {
+        assertEquals(true, ConnectionManager.isTrustedOverlayPlainWebSocketUrl("ws://100.64.1.2:8767"))
+        assertEquals(true, ConnectionManager.isTrustedOverlayPlainWebSocketUrl("ws://192.168.1.100:8767/ws"))
+        assertEquals(true, ConnectionManager.isTrustedOverlayPlainWebSocketUrl("ws://host.tailnet.ts.net:8767"))
+        assertEquals(true, ConnectionManager.isTrustedOverlayPlainWebSocketUrl("ws://127.0.0.1:8767"))
+        assertEquals(false, ConnectionManager.isTrustedOverlayPlainWebSocketUrl("ws://relay.example.com:8767"))
+        assertEquals(false, ConnectionManager.isTrustedOverlayPlainWebSocketUrl("ws://8.8.8.8:8767"))
+    }
+
+    @Test
     fun `malformed relay urls return null instead of throwing`() {
         // Each makes OkHttp's Request.Builder.url() throw IllegalArgumentException
         // ("Invalid URL host"): empty host, and a space inside the host.
