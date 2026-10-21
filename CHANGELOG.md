@@ -19,6 +19,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - Relay session controls distinguish shortening from operator-approved renewal, retain actionable update failures, and make duration controls accessible.
 - Settings distinguish phone interruption from host barge-in and explain that Hold mode can still listen for spoken interruption. Saved choices and defaults remain unchanged.
 
+### Changed
+
+- Android Voice barge-in ("Interrupt when I speak") is now off until enabled, because on a phone speaker the app could treat the reply's own audio as an interruption and cut the reply short. An existing explicit choice is kept; turn it on again under Voice settings → Barge-in.
+
 ### Fixed
 
 - Long tools and provider waits stay active. Missing completion events recover from server state, including work started by another client, without sending Stop.
