@@ -200,6 +200,7 @@ def _build_message_payload(
     surfacing: Optional[str] = None,
     reply_to: Optional[str] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    message_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build the JSON body POSTed to the relay's ``/phone/message`` route.
 
@@ -210,16 +211,25 @@ def _build_message_payload(
     also be supplied inside
     ``metadata["surfacing"]`` — send_message callers pass arbitrary
     metadata, so we lift it out if present.
+
+    ``message_id`` is the shared delivery id (pre-assigned when omitted). The
+    relay honors a client-supplied id; gateway stamps the same value onto
+    ``messages.platform_message_id`` after a successful final send so Android
+    can merge live ``proactive-<id>`` with history by id.
     """
     md = dict(metadata or {})
     surf = surfacing or md.pop("surfacing", None)
     resolved_title = title or md.pop("title", None) or _home_channel_name()
+    # Prefer explicit arg, then metadata, then mint — one id for POST + SendResult.
+    raw_mid = message_id if message_id is not None else md.pop("message_id", None)
+    mid = str(raw_mid).strip() if raw_mid not in (None, "") else uuid.uuid4().hex[:12]
     return {
         "chat_id": chat_id or _home_channel(),
         "text": (content or "")[:MAX_MESSAGE_LENGTH],
         "title": resolved_title,
         "surfacing": surf,
         "reply_to": reply_to,
+        "message_id": mid,
         "metadata": md,
     }
 
@@ -528,10 +538,10 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
             logger.warning("[%s] send failed HTTP %d: %s", self.name, resp.status_code, body)
             return SendResult(success=False, error=f"relay HTTP {resp.status_code}: {body}")
 
-        message_id = None
+        message_id = payload.get("message_id")
         try:
             data = resp.json()
-            if isinstance(data, dict):
+            if isinstance(data, dict) and data.get("message_id"):
                 message_id = data.get("message_id")
         except Exception:
             pass
@@ -696,10 +706,10 @@ async def _standalone_send(
     if resp.status_code >= 300:
         return {"error": f"phone HTTP {resp.status_code}: {resp.text[:200]}"}
 
-    message_id = None
+    message_id = payload.get("message_id")
     try:
         data = resp.json()
-        if isinstance(data, dict):
+        if isinstance(data, dict) and data.get("message_id"):
             message_id = data.get("message_id")
     except Exception:
         pass

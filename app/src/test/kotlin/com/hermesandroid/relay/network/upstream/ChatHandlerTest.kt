@@ -2544,6 +2544,171 @@ class ChatHandlerTest {
         assertFalse(orphan.realtimeTurn!!.syncedToServer)
     }
 
+    // --- loadMessageHistory: proactive Thread finals vs gateway history ---
+
+    @Test
+    fun loadMessageHistory_adoptsServerIdForProactiveThreadFinal_carriesBadgesAndUiKey() {
+        // Live Thread path: proactive push lands as clientOnly proactive-<id>.
+        // Post-turn history must adopt the gateway id in place (same uiKey,
+        // badges kept, clientOnly cleared) — not drop-and-reinsert a second bubble.
+        handler.addAgentThreadMessage(
+            text = "Ship the fix tonight.",
+            messageId = "b94439d755b3",
+            agentName = "Hermes",
+            arrivedWhileAway = true,
+        )
+        assertTrue(handler.messages.value.any { it.id == "proactive-b94439d755b3" })
+
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "u1", role = "user", content = JsonPrimitive("status?"), timestamp = 1.0),
+                MessageItem(
+                    id = "a1",
+                    role = "assistant",
+                    content = JsonPrimitive("Ship the fix tonight."),
+                    timestamp = 2.0,
+                ),
+            ),
+        )
+
+        val msgs = handler.messages.value
+        assertEquals(2, msgs.size)
+        assertTrue(msgs.none { it.id.startsWith("proactive-") })
+        val assistant = msgs.single { it.role == MessageRole.ASSISTANT }
+        assertEquals("a1", assistant.id)
+        assertEquals("proactive-b94439d755b3", assistant.uiKey)
+        assertEquals("Ship the fix tonight.", assistant.content)
+        assertFalse(assistant.clientOnly)
+        assertTrue("While away" in assistant.badges)
+    }
+
+    @Test
+    fun loadMessageHistory_preservesProactiveThreadOrphanWhenNoServerMatch() {
+        // Interim / not-yet-persisted proactive must survive reload.
+        handler.addAgentThreadMessage(
+            text = "Still working…",
+            messageId = "interim-1",
+            agentName = null,
+        )
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "u1", role = "user", content = JsonPrimitive("go"), timestamp = 1.0),
+                MessageItem(id = "a1", role = "assistant", content = JsonPrimitive("Done."), timestamp = 2.0),
+            ),
+        )
+        val msgs = handler.messages.value
+        assertTrue(msgs.any { it.id == "proactive-interim-1" && it.content == "Still working…" })
+        assertTrue(msgs.any { it.id == "a1" && it.content == "Done." })
+    }
+
+    @Test
+    fun loadMessageHistory_preservesNonProactiveClientOnlyDespiteMatchingAssistantContent() {
+        // Generic clientOnly (system notice) must NOT be dropped by the proactive rule.
+        handler.addSystemNotice("Ship the fix tonight.")
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "a1",
+                    role = "assistant",
+                    content = JsonPrimitive("Ship the fix tonight."),
+                ),
+            ),
+        )
+        val msgs = handler.messages.value
+        assertTrue(
+            msgs.any {
+                it.role == MessageRole.SYSTEM && it.clientOnly && it.content == "Ship the fix tonight."
+            },
+        )
+        assertTrue(msgs.any { it.id == "a1" })
+    }
+
+    @Test
+    fun loadMessageHistory_adoptsOnlyOneProactiveOrphanPerMatchingServerAssistant() {
+        // Two live bubbles, one server row with same text → adopt once, keep one orphan.
+        handler.addAgentThreadMessage("Same text", messageId = "m1", agentName = null)
+        handler.addAgentThreadMessage("Same text", messageId = "m2", agentName = null)
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(id = "a1", role = "assistant", content = JsonPrimitive("Same text")),
+            ),
+        )
+        val msgs = handler.messages.value
+        val proactiveLeft = msgs.filter { it.id.startsWith("proactive-") }
+        assertEquals(1, proactiveLeft.size)
+        assertTrue(proactiveLeft.single().clientOnly)
+        val adopted = msgs.single { it.id == "a1" }
+        assertFalse(adopted.clientOnly)
+        assertTrue(adopted.uiKey.startsWith("proactive-"))
+    }
+
+    @Test
+    fun loadMessageHistory_doesNotDropEmptyProactiveAgainstEmptyServerAssistant() {
+        handler.addAgentThreadMessage(text = "   ", messageId = "empty", agentName = null)
+        handler.loadMessageHistory(
+            listOf(MessageItem(id = "a1", role = "assistant", content = JsonPrimitive("   "))),
+        )
+        // Empty keys must not participate in multiset matching.
+        assertTrue(handler.messages.value.any { it.id == "proactive-empty" })
+    }
+
+    @Test
+    fun loadMessageHistory_adoptsBySharedPlatformMessageId_withoutContentMatch() {
+        // Live delivery id matches history platform_message_id even when text differs
+        // (stamped shared id is authoritative; content path is fallback only).
+        handler.addAgentThreadMessage(
+            text = "live wording",
+            messageId = "deadbeefcafe",
+            agentName = "Hermes",
+            arrivedWhileAway = true,
+        )
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "19952",
+                    role = "assistant",
+                    content = JsonPrimitive("history wording"),
+                    platformMessageId = "deadbeefcafe",
+                    timestamp = 2.0,
+                ),
+            ),
+        )
+        val msgs = handler.messages.value
+        assertEquals(1, msgs.size)
+        val assistant = msgs.single()
+        assertEquals("19952", assistant.id)
+        assertEquals("proactive-deadbeefcafe", assistant.uiKey)
+        assertFalse(assistant.clientOnly)
+        assertTrue("While away" in assistant.badges)
+        assertTrue(msgs.none { it.id.startsWith("proactive-") })
+    }
+
+    @Test
+    fun loadMessageHistory_prefersSharedPlatformIdOverContentWhenBothCouldMatch() {
+        handler.addAgentThreadMessage(text = "Same text", messageId = "id-primary", agentName = null)
+        handler.addAgentThreadMessage(text = "Same text", messageId = "id-other", agentName = null)
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "a-primary",
+                    role = "assistant",
+                    content = JsonPrimitive("Same text"),
+                    platformMessageId = "id-primary",
+                ),
+                MessageItem(
+                    id = "a-content",
+                    role = "assistant",
+                    content = JsonPrimitive("Same text"),
+                ),
+            ),
+        )
+        val msgs = handler.messages.value
+        assertEquals("a-primary", msgs.single { it.uiKey == "proactive-id-primary" }.id)
+        // Second live bubble content-adopts the remaining server row.
+        assertEquals("a-content", msgs.single { it.uiKey == "proactive-id-other" }.id)
+        assertTrue(msgs.none { it.id.startsWith("proactive-") })
+    }
+
     @Test
     fun restoreInFlightTurn_restoresThinkingAndToolState_withoutDuplicatingPersistedUser() {
         handler.addUserMessage(createUserMessage("old-user", "Earlier"))
