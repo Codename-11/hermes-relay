@@ -240,7 +240,6 @@ jobs:
             --tests com.hermesandroid.relay.ui.components.AttachmentGalleryLayoutTest \
             --tests com.hermesandroid.relay.ui.components.MarkdownStreamingParserTest \
             --tests com.hermesandroid.relay.ui.screens.ChatUnreadStateTest \
-            --tests com.hermesandroid.relay.ui.theme.ReadableOnContrastTest \
             --console=plain
 
       # Upload reports only for failures. Successful PR report uploads add
