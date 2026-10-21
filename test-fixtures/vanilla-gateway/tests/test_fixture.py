@@ -18,6 +18,16 @@ from vanilla_gateway.evidence import EvidenceLog  # noqa: E402
 
 
 class FixtureTestCase(unittest.IsolatedAsyncioTestCase):
+    async def test_history_latest_pages_backwards_in_chronological_order(self) -> None:
+        fixture, base_url = await self.start("initial_history_bind")
+        path = f"{base_url}/api/sessions/{fixture.scenario.stored_session_id}/messages"
+        for order, offset, expected_id in (("latest", 0, 2), ("latest", 1, 1), ("oldest", 0, 1)):
+            async with self.session.get(path, params={
+                "limit": "1", "offset": str(offset), "order": order, "include_compacted": "true",
+            }) as response:
+                history = await response.json()
+            self.assertEqual([expected_id], [row["id"] for row in history["messages"]])
+
     async def test_metadata_only_bind_preserves_http_history(self) -> None:
         fixture, base_url = await self.start("initial_history_bind")
         ws, _ = await self.connect(base_url)
@@ -716,7 +726,7 @@ class ScenarioTestCase(unittest.TestCase):
 
     def test_contract_manifests_select_upstream_contracts(self) -> None:
         self.assertEqual(
-            ("gateway.session_resume_durable",),
+            ("gateway.session_resume_durable", "gateway.session_activate_live"),
             load_scenario("initial_history_bind").contract_requirements,
         )
         self.assertEqual(

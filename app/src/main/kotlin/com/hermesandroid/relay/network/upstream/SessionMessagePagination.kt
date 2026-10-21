@@ -6,7 +6,7 @@ import kotlinx.coroutines.CancellationException
 
 /** Explicit transcript read intent for Hermes' bounded messages endpoint. */
 enum class SessionMessageLoadMode {
-    /** One bounded newest-first window, returned in chronological order. */
+    /** Up to 500 newest messages, returned in chronological order. */
     LATEST,
 
     /** Every page, oldest first, subject to Android memory safety bounds. */
@@ -41,10 +41,27 @@ internal suspend fun loadSessionMessages(
         val collected = ArrayList<MessageItem>()
         var offset = 0
         var payloadChars = 0L
+        var pageSize = SESSION_MESSAGE_PAGE_SIZE
 
         while (true) {
-            val request = SessionMessagePageRequest(offset = offset, order = order)
-            val page = fetchPage(request).getOrThrow()
+            val limit = if (mode == SessionMessageLoadMode.LATEST) {
+                minOf(pageSize, SESSION_MESSAGE_PAGE_SIZE - collected.size)
+            } else pageSize
+            val request = SessionMessagePageRequest(limit = limit, offset = offset, order = order)
+            val page = try {
+                fetchPage(request).getOrThrow()
+            } catch (error: JsonResponseTooLargeException) {
+                if (limit == 1) {
+                    throw SessionTranscriptTooLargeException(
+                        "History exceeds Android's 8 MiB safe-load limit even with one-message pages. " +
+                            "Open this conversation in Dashboard; no messages were skipped.",
+                    )
+                }
+                // Only byte-limit failures shrink the window. Preserve its offset,
+                // profile and display-history flags, and retain the smaller size.
+                pageSize = maxOf(1, limit / 2)
+                continue
+            }
             payloadChars += page.payloadChars
             if (payloadChars > MAX_COMPLETE_TRANSCRIPT_PAYLOAD_CHARS) {
                 throw SessionTranscriptTooLargeException(
@@ -56,9 +73,14 @@ internal suspend fun loadSessionMessages(
                     "Session transcript exceeds Android's 50,000-message safe-load limit",
                 )
             }
-            collected += page.messages
+            if (mode == SessionMessageLoadMode.LATEST) {
+                // Upstream pages backwards from the tail, but each page is chronological.
+                collected.addAll(0, page.messages)
+            } else {
+                collected += page.messages
+            }
 
-            if (mode == SessionMessageLoadMode.LATEST) break
+            if (mode == SessionMessageLoadMode.LATEST && collected.size >= SESSION_MESSAGE_PAGE_SIZE) break
             // Older Hermes returned one unpaginated complete envelope. Never issue
             // a speculative second request against that contract.
             val pagination = page.pagination ?: break

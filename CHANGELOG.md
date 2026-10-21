@@ -6,33 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [Android 1.19.0] - 2026-10-20
+
 ### Added
 
-- Android marks unread completed conversations in the session drawer and shows unread conversation counts on profiles and the chat header.
-- Reply notifications show the owning agent's official profile name and cached avatar, plus the conversation title.
+- Unread markers in the session drawer and counts on profiles and the chat header make background completions easier to find.
+- Built-in English tool updates can be muted independently of assistant readback on Standard and Relay voice output.
+
+### Changed
+
+- Reply alerts show the owning agent display name, cached avatar, and conversation title.
+- Relay session controls distinguish shortening from operator-approved renewal, retain actionable update failures, and make duration controls accessible.
+- Settings distinguish phone interruption from host barge-in and explain that Hold mode can still listen for spoken interruption. Saved choices and defaults remain unchanged.
 
 ### Fixed
 
-- Android prevents a chat-state race from dropping Final answer only speech requests. (#751)
-- Plugin uses the selected speech renderer's model and voice defaults when a profile changes provider, while preserving explicit selections. (#750)
-- Android preserves whole-sentence streaming audio and short replies after tool-call gaps, and drains delivered PCM before ending speech. (#704)
-- Android avoids redundant conversation history in Gateway send/recovery responses and pauses automatic conversation reopening after a recorded out-of-memory crash, preserving saved conversations and drafts. (#700)
-- Android preserves native Dashboard sign-in during reverse-proxy access failures and retries refresh on a later request when the route is reachable again. (#711)
-- Secure Link accepts PEM certificate chains, exports only the leaf certificate for pairing, and reports invalid certificate/key configurations without exposing private file paths. (#712)
-- Android keeps ONNX Runtime on 1.27.0 so sherpa-onnx native libs match the packaged runtime ABI.
-- Android Voice no longer ends a reply while the last synthesized audio file is still playing, so Continuous mode reopens the microphone only after playback has finished.
-- Secure Link supports paired-device listing, session shortening, and revocation with the existing Relay authorization rules.
-- Android pauses both wake-word listener modes before voice capture and resumes listening after voice exits, preventing microphone conflicts. (#681)
-- Android Relay sessions distinguish shortening from operator-approved renewal, retain actionable update failures, and expose accessible pairing duration controls. (#659)
+- Long tools and provider waits stay active. Missing completion events recover from server state, including work started by another client, without sending Stop.
+- Oversized history responses retry with smaller pages while keeping the latest 500 messages in order. Individual messages above the safety limit show an explicit error.
+- Reopening a conversation includes messages archived by context compaction instead of showing only its summary and recent tail.
+- Gateway responses avoid duplicate history transfers. After a recorded out-of-memory crash, automatic reopening pauses while saved conversations and drafts remain intact.
+- Temporary reverse-proxy access failures preserve the native Dashboard session and allow a later refresh when the route is reachable again.
+- Notification permission defaults refresh after onboarding, and background alerts retain their original connection, profile, and conversation across navigation.
+- Replies from different running conversations have separate notification slots. Opening one preserves alerts from the others.
+- Chat progress remains above the current composer and clears when the turn finishes or waits for input.
+- Both wake-word modes pause before voice capture and resume after voice exits, preventing microphone conflicts.
+- Assistant activation waits for microphone startup to finish instead of reporting activation before capture is ready.
+- Profile state arriving during connection setup no longer races initialization.
+- The selected palette stays applied after the startup loading screen instead of leaving parts of the interface dark.
+- Streaming playback retains whole sentences and short replies after tool-call gaps, and drains delivered audio before ending speech.
+- Voice waits for the last synthesized audio file to finish before reopening the microphone in Continuous mode, and settles failed playback.
+- Final answer only speech no longer disappears during a chat-state race.
+- The packaged voice runtime remains aligned with the speech engine native libraries.
 
-- Android avoids a startup crash when profile state arrives during connection setup.
-- Android refreshes background-alert permission defaults after onboarding and keeps notification delivery tied to the original connection, profile, and conversation across navigation.
-- Replies from conversations left running get separate notification slots; opening one conversation preserves alerts from others.
-- Chat progress stays above the composer while scrolling and disappears when the turn finishes or waits for input.
-- Android keeps the selected Appearance palette after the startup loading screen instead of leaving parts of the UI dark. (#678)
+## [Plugin 1.13.1] - 2026-10-20
 
-- Android keeps user-started Dashboard browser sign-in connected through its callback and session verification, then ends the foreground service. Callback pages identify the selected sign-in provider.
-- Android keeps quiet tools and provider waits alive, including turns submitted by another client, and recovers missing completion events from authoritative Gateway state without sending Stop.
+### Fixed
+
+- Use the selected speech renderer's model and voice defaults when a profile changes provider, while preserving explicit selections.
+- Accept Secure Link PEM certificate chains, export only the leaf certificate for pairing, and report invalid certificate/key configurations without exposing private file paths.
+- Support paired-device listing, session shortening, and revocation over Secure Link with the existing Relay authorization rules.
+- Route desktop operations addressed with device_id only to the exact authenticated device. Missing, duplicate, or conflicting targets fail without name matching or fallback to another computer.
 
 ## [0.4.0-beta.10] - 2026-10-08
 

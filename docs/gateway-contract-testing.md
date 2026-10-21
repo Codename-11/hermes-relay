@@ -53,6 +53,21 @@ Android state tests for this boundary must prove that:
 - a connection/profile switch or newer refresh generation rejects the old
   completion before it can publish rows.
 
+Oversized transcript pages retry the same offset with successively smaller
+windows, down to one message. The 8 MiB response cap remains enforced for both
+declared and streamed bodies. Latest reads assemble up to the same 500 newest
+messages in chronological order; complete reads continue oldest-first under
+the existing 32-million-character and 50,000-message aggregate limits.
+Every request retains `include_compacted=true` and the owning profile. A single
+oversized message or aggregate-limit failure is explicit, never a successful
+partial/empty transcript. Open an individually oversized conversation in the
+Dashboard; reopening on Android retries after its server-side content changes.
+
+`DashboardApiClientTest` exercises replay-heavy synthetic pages over 9 MiB
+through real HTTP and the production reader; `SessionMessagePaginationTest`
+checks retry offsets, ordering, termination and unchanged memory guards.
+The `initial_history_bind` fixture also checks latest-page offset direction.
+
 Gateway startup/reconnect tests must also keep Dashboard availability separate
 from socket truth: Chat is Ready only after `gateway.ready` from the current
 connection and route. Timeout/DNS/reset/5xx/429 failures may retry within the

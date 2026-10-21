@@ -182,6 +182,9 @@ jobs:
         run: |
           ./gradlew :app:testSideloadDebugUnitTest \
             --tests com.hermesandroid.relay.network.ArchitectureBoundaryTest \
+            --tests com.hermesandroid.relay.network.upstream.DashboardApiClientTest \
+            --tests com.hermesandroid.relay.network.upstream.HermesApiClientTest \
+            --tests com.hermesandroid.relay.network.upstream.SessionMessagePaginationTest \
             --tests com.hermesandroid.relay.network.relay.RelayUrlDeriverTest \
             --tests com.hermesandroid.relay.data.RelayEndpointContractTest \
             --tests com.hermesandroid.relay.network.relay.RelayHttpClientSessionPolicyTest \
@@ -225,6 +228,9 @@ jobs:
             --tests com.hermesandroid.relay.voice.VoiceViewModelPipelineTest \
             --tests com.hermesandroid.relay.audio.VoicePlayerTest \
             --tests com.hermesandroid.relay.screenshots.VoiceFallbackPresentationTest \
+            --tests com.hermesandroid.relay.screenshots.VoiceInterruptionSettingsTest \
+            --tests com.hermesandroid.relay.data.BargeInPreferencesTest \
+            --tests com.hermesandroid.relay.data.VoicePreferencesRepositoryTest \
             --tests com.hermesandroid.relay.viewmodel.ChatViewModelRealtimeTurnTest \
             --tests com.hermesandroid.relay.network.relay.RealtimeVoiceEventParsingTest \
             --tests com.hermesandroid.relay.voice.VoiceCommandInterpreterTest \

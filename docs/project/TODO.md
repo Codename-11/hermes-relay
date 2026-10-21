@@ -64,11 +64,18 @@ the focused playback matrix in [voice diagnosis](../standard-voice-fallback.md#m
   default-selection fix in [#750](https://github.com/Codename-11/hermes-relay/issues/750).
   Offline configuration and request-builder tests do not certify provider
   acceptance, account/voice availability, or heard playback.
-- Decide how phone-local interruption should interact with Hold mode and how to
-  distinguish it from host barge-in controls. PR #702 changes the default; it does
-  not fix PCM truncation. PR #684's playback-only Stop policy is separate work.
-- Localize or explicitly control brokered tool-status speech. Hard-coded English
-  narration is not appropriate for every configured TTS language.
+- Confirm the clarified interruption controls in [#752](https://github.com/Codename-11/hermes-relay/issues/752)
+  on a coordinated device check: Hold, Tap, and Continuous with phone interruption
+  on/off, including Standard without Relay. Offline tests preserve the existing
+  all-mode listener policy and stored choices; they do not certify microphone or
+  speaker behavior. PR #702's default change and PR #684's Stop policy remain
+  separate decisions.
+- Confirm [#753](https://github.com/Codename-11/hermes-relay/issues/753) with a
+  non-English voice: disable Speak tool updates, retain intermediate and final
+  assistant readback, and check audible output. Offline regressions verify
+  that English stock updates can be muted independently; they do not establish
+  pronunciation quality or physical playback. Automatic translation would
+  require an explicit speech-language source rather than inferring app locale.
 
 ---
 

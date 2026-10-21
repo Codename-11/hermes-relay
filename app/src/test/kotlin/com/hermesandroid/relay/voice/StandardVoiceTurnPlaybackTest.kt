@@ -8,6 +8,7 @@ import com.hermesandroid.relay.audio.VoicePlayer
 import com.hermesandroid.relay.data.ChatMessage
 import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.VoiceAudioRoute
+import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.network.shared.VoiceAudioClient
 import com.hermesandroid.relay.network.shared.VoiceSpeechStream
 import com.hermesandroid.relay.network.shared.VoiceSpeechStreamCallbacks
@@ -68,6 +69,7 @@ class StandardVoiceTurnPlaybackTest {
     private val synthesized = mutableListOf<String>()
     private val files = mutableListOf<File>()
     private var streamAvailable = true
+    private var audioRoute = VoiceAudioRoute.Standard
     private var opens = 0
     private var finishes = 0
     private var stops = 0
@@ -96,7 +98,7 @@ class StandardVoiceTurnPlaybackTest {
         field("realtimePcmPlayer", pcm)
         field("player", mockk<VoicePlayer>(relaxed = true))
         field("voiceAudioClient", object : VoiceAudioClient {
-            override val route = VoiceAudioRoute.Standard
+            override val route get() = audioRoute
             override suspend fun transcribe(audioFile: File) = Result.success("")
             override suspend fun synthesize(text: String): Result<File> {
                 synthesized += text
@@ -173,6 +175,98 @@ class StandardVoiceTurnPlaybackTest {
         advanceTimeBy(3_000)
         runCurrent()
         assertEquals(VoiceState.Idle, vm.uiState.value.state)
+    }
+
+    @Test
+    fun mutedToolUpdatesRemainVisibleAndAreNotReplayedWhenEnabled() = runTest(dispatcher) {
+        VoiceViewModel::class.java.getDeclaredMethod("applyVoiceSettingsSnapshot", VoiceSettings::class.java)
+            .apply { isAccessible = true }.invoke(vm, VoiceSettings(speakToolUpdates = false))
+        val handler = ChatHandler().also { it.setSessionId("voice-test") }
+        observe(messageFlow = handler.messages, activeFlow = handler.isStreaming, sessionFlow = handler.currentSessionId)
+        runCurrent()
+        handler.addPlaceholderMessage(message("tool", "").copy(isStreaming = true))
+        handler.onToolCallStart("tool", "tool-1", "terminal")
+        runCurrent()
+        assertEquals("I'll run a quick check.", vm.uiState.value.responseText)
+        assertEquals(VoiceState.Thinking, vm.uiState.value.state)
+        assertFalse(vm.uiState.value.outputAudioActive)
+        assertTrue(appended.isEmpty())
+        assertTrue(synthesized.isEmpty())
+        assertFalse(handler.messages.value.first().toolCalls.single().isComplete)
+        VoiceViewModel::class.java.getDeclaredMethod("applyVoiceSettingsSnapshot", VoiceSettings::class.java)
+            .apply { isAccessible = true }.invoke(vm, VoiceSettings(speakToolUpdates = true))
+        handler.onThinkingDelta("tool", "Still working.")
+        runCurrent()
+        assertTrue(appended.isEmpty())
+        assertEquals(1, opens)
+        assertEquals(0, stops)
+        handler.onToolCallStart("tool", "tool-2", "web_search")
+        runCurrent()
+        assertEquals(listOf("I'm checking one more thing. "), appended)
+    }
+
+    @Test
+    fun mutedToolUpdatesKeepPolishIntermediateAndFinalSpeech() = toolSpeechPolicy(enabled = false)
+
+    @Test
+    fun mutedToolUpdatesKeepStandardFileFallbackSpeech() = toolSpeechPolicy(enabled = false, fileFallback = true)
+
+    @Test
+    fun mutedToolUpdatesKeepRelayFileSpeech() = toolSpeechPolicy(enabled = false, fileFallback = true, relay = true)
+
+    @Test
+    fun enabledToolUpdatesRetainEnglishStatusAndDedupe() = toolSpeechPolicy(enabled = true)
+
+    @Test
+    fun finalOnlyOverridesEnabledToolUpdates() = toolSpeechPolicy(enabled = true, finalOnly = true)
+
+    @Test
+    fun finalOnlyStillSpeaksWithToolUpdatesMuted() = toolSpeechPolicy(enabled = false, finalOnly = true)
+
+    private fun toolSpeechPolicy(
+        enabled: Boolean,
+        fileFallback: Boolean = false,
+        finalOnly: Boolean = false,
+        relay: Boolean = false,
+    ) = runTest(dispatcher) {
+        streamAvailable = !fileFallback
+        audioRoute = if (relay) VoiceAudioRoute.Relay else VoiceAudioRoute.Standard
+        if (fileFallback) invoke("startTtsConsumer")
+        val settings = VoiceSettings(speakToolUpdates = enabled, finalAnswerOnly = finalOnly)
+        VoiceViewModel::class.java.getDeclaredMethod("applyVoiceSettingsSnapshot", VoiceSettings::class.java)
+            .apply { isAccessible = true }.invoke(vm, settings)
+        val handler = ChatHandler().also { it.setSessionId("voice-test") }
+        observe(finalOnly, handler.messages, handler.isStreaming, handler.currentSessionId)
+        runCurrent()
+        handler.addPlaceholderMessage(message("interim", "").copy(isStreaming = true))
+        handler.onTextDelta("interim", "Sprawdzę wynik.")
+        handler.onToolCallStart("interim", "tool-1", "terminal")
+        runCurrent()
+        assertFalse(handler.messages.value.first().toolCalls.single().isComplete)
+        assertEquals("terminal", handler.messages.value.first().toolCalls.single().name)
+        handler.onThinkingDelta("interim", "Rozważanie.")
+        runCurrent()
+        handler.onToolCallComplete("interim", "tool-1", "done")
+        handler.onTurnComplete("interim")
+        handler.addPlaceholderMessage(message("final", "").copy(isStreaming = true))
+        handler.onTextDelta("final", "Gotowe, wynik to 42.")
+        handler.onStreamComplete("final")
+        runCurrent()
+        assertTrue(handler.messages.value.first().toolCalls.single().isComplete)
+        assertEquals("Gotowe, wynik to 42.", handler.messages.value.last().content)
+        val spoken = (if (fileFallback) synthesized.joinToString(" ") else appended.joinToString(""))
+            .replace(Regex("\\s+"), " ").trim()
+        if (finalOnly) {
+            assertEquals("Gotowe, wynik to 42.", spoken)
+        } else if (!enabled) {
+            assertEquals("Sprawdzę wynik. Gotowe, wynik to 42.", spoken)
+        } else {
+            assertTrue(spoken.startsWith("Sprawdzę wynik."))
+            assertTrue(spoken.endsWith("Gotowe, wynik to 42."))
+            assertEquals(1, Regex(Regex.escape("I'll run a quick check.")).findAll(spoken).count())
+        }
+        assertEquals(if (relay) 0 else 1, opens)
+        if (!fileFallback) assertEquals(1, finishes)
     }
 
     @Test

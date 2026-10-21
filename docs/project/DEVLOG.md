@@ -1,5 +1,25 @@
 # Hermes-Relay — Dev Log
 
+## 2026-10-20 — Android 1.19.0 and Plugin 1.13.1 published and verified
+
+Published [Hermes-Relay Android 1.19.0](https://github.com/Codename-11/hermes-relay/releases/tag/android-v1.19.0) and [Hermes-Relay Plugin 1.13.1](https://github.com/Codename-11/hermes-relay/releases/tag/server-v1.13.1) from immutable commit `da782a8d74eb6631ea2f097b3cc69c6452ec33de`. The release tree `bcc5c92def7db7d0ec9cc46167935f1133c02bff` matches the signed Android preflight exactly. CLI+UI remains 0.4.0-beta.10.
+
+Protected release preparation and promotion passed. Signed preflight passed capability, final DEX and native-package checks and uploaded Android versionCode 60 as a Production draft. The release workflow promoted that same version code to `completed` and committed the Play edit before publishing the GitHub artifacts. This records Play submission, not review completion or storefront propagation.
+
+Downloaded public APK, AAB, wheel and source-archive hashes match their release checksums; Android bytes also match the immutable preflight manifest. APK/AAB metadata report code 60 and the expected 1.19.0 flavor versions, share the release certificate, and the APK signature verifies. Wheel and source metadata report Plugin 1.13.1. R8 mappings remain retained in Actions artifacts.
+
+The production Relay runs the exact `server-v1.13.1` source and reports healthy version 1.13.1. Existing-session REST reads passed over loopback and pinned Secure Link TLS; missing authentication and missing exact desktop targets are rejected. The existing Desktop client reconnected with zero pending commands. Configuration, paired sessions, and certificate identity were preserved with rollback available. The Gateway continued running, and no new Relay errors or tracebacks were observed. Profile-specific Plugin overrides remain unchanged.
+
+The release retained its tested dependency set. The concurrent markdown-renderer update is restored on `dev` after publication and does not change either immutable release. Physical listening verification remains incomplete for recent voice changes; screenshot reports #745 and #743 remain separate. Public reporter follow-ups are not part of this verification record.
+
+## 2026-10-20 — Android 1.19.0 and Plugin 1.13.1 release preparation
+
+Prepared Android 1.19.0 (versionCode 60) and Plugin 1.13.1 from integrated reliability work, including oversized-history recovery in #767. CLI+UI remains 0.4.0-beta.10. Android copy includes 21 typed changes and four highlights; Plugin copy covers certificate chains, Secure Link session routes, speech renderer defaults, and strict authenticated desktop routing.
+
+History recovery passed 156 focused JVM tests, 40 shared Gateway fixture tests, current-upstream scenario conformance, and a Standard Phone API 36 rendered failure/reopen test. Hosted lint, debug builds, and focused tests passed for #767; the test lane required a retry after Maven HTTP 429 responses. Plugin source checks passed 78 tests and 58 subtests locally with nine platform/tool skips. Physical listening validation of recent voice changes remains incomplete. Screenshot reports #745 and #743 remain separate.
+
+Publication and deployment require the release-prepared tree's CI, signed Play preflight, protected promotion, immutable-tag workflows, and live verification.
+
 ## 2026-10-08 — CLI+UI beta.10 released and verified
 
 Published [Hermes-Relay CLI+UI 0.4.0-beta.10](https://github.com/Codename-11/hermes-relay/releases/tag/desktop-v0.4.0-beta.10) from immutable commit `95b74c91e5503fdb607ab793d74c2d99fef96ecc`. Structured CUA element actions accept current handles, including hexadecimal snapshot generations, and Activity distinguishes recorded CUA, system capture, compatibility, and missing backend metadata. Android and Plugin versions and the Bun 1.3.14 pin are unchanged.

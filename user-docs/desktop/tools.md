@@ -94,6 +94,14 @@ unambiguous computer name shown by `desktop_health`. It is optional with one
 connected PC and required when several desktop daemons are online. An
 untargeted call fails closed rather than choosing the latest heartbeat.
 
+For an exact machine binding, pass `device_id` using a client's
+`authenticated_device_id` from `desktop_health`. This compares the authenticated
+identity exactly: it never matches a computer name, normalizes an ID, or falls
+back to another machine when the selected client goes offline. Missing or
+duplicate identities are refused. Legacy clients without an authenticated ID
+show `authenticated_device_id: null` and cannot use this strict mode. If both
+`device` and `device_id` are supplied, they must identify the same connection.
+
 Prefer the typed file, process, job, transfer, screen, clipboard, and connected-
 device tools for ordinary work. `desktop_terminal`, `desktop_powershell`,
 detached commands, and command jobs are intentionally labeled `system.execute`:

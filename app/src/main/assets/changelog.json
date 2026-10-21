@@ -2,6 +2,151 @@
  "schema": 3,
  "versions": [
   {
+   "version": "1.19.0",
+   "title": "Reliable chats, alerts, and voice",
+   "date": "2026-10-20",
+   "summary": "Larger conversations open more reliably, background replies are easier to find, and voice playback preserves complete answers. Sign-in, microphone handoff, pairing controls, and startup appearance are more dependable.",
+   "changes": [
+    {
+     "id": "quiet-turn-recovery",
+     "kind": "fixed",
+     "title": "Keep quiet conversations running",
+     "summary": "Long tools and provider waits stay active. Missing completion events recover from server state, including work started by another client, without sending Stop.",
+     "highlight": true
+    },
+    {
+     "id": "bounded-history-recovery",
+     "kind": "fixed",
+     "title": "Open larger conversations",
+     "summary": "Oversized history responses retry with smaller pages while keeping the latest 500 messages in order. Individual messages above the safety limit show an explicit error.",
+     "highlight": true
+    },
+    {
+     "id": "compacted-history",
+     "kind": "fixed",
+     "title": "Keep compacted scrollback",
+     "summary": "Reopening a conversation includes messages archived by context compaction instead of showing only its summary and recent tail."
+    },
+    {
+     "id": "conversation-memory-recovery",
+     "kind": "fixed",
+     "title": "Recover safely after memory pressure",
+     "summary": "Gateway responses avoid duplicate history transfers. After a recorded out-of-memory crash, automatic reopening pauses while saved conversations and drafts remain intact."
+    },
+    {
+     "id": "dashboard-signin-preservation",
+     "kind": "fixed",
+     "title": "Keep sign-in during proxy failures",
+     "summary": "Temporary reverse-proxy access failures preserve the native Dashboard session and allow a later refresh when the route is reachable again."
+    },
+    {
+     "id": "unread-conversations",
+     "kind": "added",
+     "title": "Find completed replies you have not read",
+     "summary": "Unread markers in the session drawer and counts on profiles and the chat header make background completions easier to find.",
+     "highlight": true
+    },
+    {
+     "id": "reply-notification-identity",
+     "kind": "improved",
+     "title": "Recognize reply notifications",
+     "summary": "Reply alerts show the owning agent display name, cached avatar, and conversation title."
+    },
+    {
+     "id": "background-alert-reliability",
+     "kind": "fixed",
+     "title": "Keep alerts with their conversation",
+     "summary": "Notification permission defaults refresh after onboarding, and background alerts retain their original connection, profile, and conversation across navigation."
+    },
+    {
+     "id": "conversation-notification-slots",
+     "kind": "fixed",
+     "title": "Keep separate conversation alerts",
+     "summary": "Replies from different running conversations have separate notification slots. Opening one preserves alerts from the others."
+    },
+    {
+     "id": "chat-progress-position",
+     "kind": "fixed",
+     "title": "Keep progress visible while scrolling",
+     "summary": "Chat progress remains above the current composer and clears when the turn finishes or waits for input."
+    },
+    {
+     "id": "wake-microphone-handoff",
+     "kind": "fixed",
+     "title": "Hand the microphone to voice reliably",
+     "summary": "Both wake-word modes pause before voice capture and resume after voice exits, preventing microphone conflicts."
+    },
+    {
+     "id": "assistant-microphone-startup",
+     "kind": "fixed",
+     "title": "Wait for assistant microphone startup",
+     "summary": "Assistant activation waits for microphone startup to finish instead of reporting activation before capture is ready."
+    },
+    {
+     "id": "relay-session-lifetime",
+     "kind": "improved",
+     "title": "Manage pairing lifetime clearly",
+     "summary": "Relay session controls distinguish shortening from operator-approved renewal, retain actionable update failures, and make duration controls accessible."
+    },
+    {
+     "id": "profile-startup-race",
+     "kind": "fixed",
+     "title": "Avoid a connection startup crash",
+     "summary": "Profile state arriving during connection setup no longer races initialization."
+    },
+    {
+     "id": "appearance-startup-handoff",
+     "kind": "fixed",
+     "title": "Keep the selected Appearance palette",
+     "summary": "The selected palette stays applied after the startup loading screen instead of leaving parts of the interface dark."
+    },
+    {
+     "id": "streaming-voice-playback",
+     "kind": "fixed",
+     "title": "Preserve complete streaming replies",
+     "summary": "Streaming playback retains whole sentences and short replies after tool-call gaps, and drains delivered audio before ending speech.",
+     "highlight": true
+    },
+    {
+     "id": "voice-playback-completion",
+     "kind": "fixed",
+     "title": "Finish playback before listening again",
+     "summary": "Voice waits for the last synthesized audio file to finish before reopening the microphone in Continuous mode, and settles failed playback."
+    },
+    {
+     "id": "final-answer-speech",
+     "kind": "fixed",
+     "title": "Read final answers reliably",
+     "summary": "Final answer only speech no longer disappears during a chat-state race."
+    },
+    {
+     "id": "voice-runtime-compatibility",
+     "kind": "fixed",
+     "title": "Keep native voice components compatible",
+     "summary": "The packaged voice runtime remains aligned with the speech engine native libraries."
+    },
+    {
+     "id": "voice-interruption-guidance",
+     "kind": "improved",
+     "title": "Understand interruption controls",
+     "summary": "Settings distinguish phone interruption from host barge-in and explain that Hold mode can still listen for spoken interruption. Saved choices and defaults remain unchanged."
+    },
+    {
+     "id": "voice-tool-announcements",
+     "kind": "added",
+     "title": "Mute English tool announcements",
+     "summary": "Built-in English tool updates can be muted independently of assistant readback on Standard and Relay voice output."
+    }
+   ],
+   "compatibility": [
+    "Standard Chat, history, Manage, and Standard Voice continue to use upstream Hermes without requiring the optional Hermes-Relay Plugin.",
+    "Relay pairing and extension features use the optional Plugin. Plugin 1.13.1 adds Secure Link session-management routes and host reliability fixes.",
+    "History remains bounded on Android: up to 500 recent messages, an 8 MiB page limit, and aggregate limits for complete reads. Oversized individual messages require Dashboard access."
+   ],
+   "playNotes": "Open larger conversations with safer history loading and keep compacted scrollback. Find unread background replies with clearer alerts and counts. Voice preserves complete replies, hands off the microphone reliably, and offers optional muting of English tool announcements. Sign-in survives temporary proxy failures, pairing lifetime controls are clearer, and your selected appearance stays applied after startup.",
+   "sections": []
+  },
+  {
    "version": "1.18.1",
    "title": "Reliable browser sign-in",
    "date": "2026-09-29",

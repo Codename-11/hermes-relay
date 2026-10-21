@@ -47,6 +47,8 @@ from aiohttp import web
 
 logger = logging.getLogger(__name__)
 
+_DEVICE_ID_UNSET = object()
+
 
 RESPONSE_TIMEOUT = 30.0  # seconds — matches bridge.RESPONSE_TIMEOUT
 COMPUTER_USE_RESPONSE_TIMEOUT = 180.0  # seconds — allows human approval prompts
@@ -140,6 +142,9 @@ class DesktopSession:
 
     def __init__(self) -> None:
         self.device_id: str = ""
+        # Legacy device_id may fall back to a heartbeat claim. Strict addressing
+        # uses only the identity attached by authenticated Relay session lookup.
+        self.authenticated_device_id: str | None = None
         self.device_name: str = ""
         # Latest ``desktop.workspace`` payload as-sent. Opaque dict — we
         # don't parse fields here because the wire schema is owned by
@@ -367,7 +372,16 @@ class DesktopHandler:
             session = DesktopSession()
             self._sessions[ws] = session
         if auth_session is not None:
-            auth_device_id = str(getattr(auth_session, "device_id", "") or "").strip()
+            raw_device_id = getattr(auth_session, "device_id", None)
+            session.authenticated_device_id = (
+                raw_device_id
+                if isinstance(raw_device_id, str) and raw_device_id
+                and len(raw_device_id) <= 256 and raw_device_id.isprintable()
+                and raw_device_id == raw_device_id.strip()
+                and raw_device_id.casefold() not in {"unknown", "none", "null"}
+                else None
+            )
+            auth_device_id = str(raw_device_id or "").strip()
             if auth_device_id.casefold() not in {"", "unknown", "none", "null"}:
                 session.device_id = auth_device_id
             session.device_name = str(getattr(auth_session, "device_name", "") or "").strip()
@@ -447,8 +461,26 @@ class DesktopHandler:
     def _resolve_target(
         self,
         selector: str | None,
+        *,
+        device_id: Any = _DEVICE_ID_UNSET,
     ) -> tuple[web.WebSocketResponse, DesktopSession | None]:
         targets = self._connected_targets()
+        if device_id is not _DEVICE_ID_UNSET:
+            if (not isinstance(device_id, str) or not device_id or len(device_id) > 256
+                    or device_id != device_id.strip() or not device_id.isprintable()):
+                raise DesktopError("Invalid desktop device_id; expected an exact nonempty identity")
+            matches = [(ws, session) for ws, session in targets
+                       if session.authenticated_device_id == device_id]
+            if not matches:
+                raise DesktopError(f"No connected desktop with authenticated device_id {device_id!r}")
+            if len(matches) != 1:
+                raise DesktopError(f"Duplicate authenticated desktop device_id {device_id!r}")
+            if selector is not None:
+                if not isinstance(selector, str):
+                    raise DesktopError("Invalid desktop device selector")
+                if selector.strip() and self._resolve_target(selector)[0] is not matches[0][0]:
+                    raise DesktopError("Conflicting desktop device and device_id selectors")
+            return matches[0]
         if selector and selector.strip():
             raw = selector.strip()
             normalized = self._normalized_selector(raw)
@@ -516,6 +548,8 @@ class DesktopHandler:
         args: dict[str, Any] | None = None,
         device: str | None = None,
         requester: DesktopRequesterContext | None = None,
+        *,
+        device_id: Any = _DEVICE_ID_UNSET,
     ) -> dict[str, Any]:
         """Dispatch a ``desktop_*`` tool call to the connected client.
 
@@ -523,8 +557,12 @@ class DesktopHandler:
         ``{request_id, status, result}``. Raises :class:`DesktopError` if
         no client is connected, the send fails, or the client doesn't
         respond within the tool-specific response timeout.
+
+        ``device`` retains human-friendly matching. An explicitly supplied
+        ``device_id`` must exactly match one authenticated connection; heartbeat
+        claims, names and the sole-client fallback cannot satisfy it.
         """
-        ws, target_session = self._resolve_target(device)
+        ws, target_session = self._resolve_target(device, device_id=device_id)
         target_tools = (
             target_session.advertised_tools
             if target_session is not None
@@ -794,6 +832,7 @@ class DesktopHandler:
             "clients": [
                 {
                     "device_id": session.device_id or session.client_status.get("device_id"),
+                    "authenticated_device_id": session.authenticated_device_id,
                     "device_name": (
                         session.device_name
                         or session.client_status.get("device_name")

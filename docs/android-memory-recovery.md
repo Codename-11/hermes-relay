@@ -28,6 +28,13 @@ does not measure their contribution or demonstrate a retained-state leak.
 
 ## Binding without duplicate display history
 
+Both HTTP transcript readers request `include_compacted=true` so reopening a
+conversation retains turns archived by compaction. This remains independent of
+Gateway `omit_messages`: HTTP reads still use 500-row pages, latest-only recovery
+still makes one request, and complete reads fail at the existing 50,000-message
+or 32-million-character payload limit. These are load bounds, not proof that any
+transcript below them fits every device heap.
+
 Android's visible Gateway transcript is loaded by the profile-scoped Dashboard
 HTTP history reader. Gateway resume and activation still supply live identity,
 model/profile information, in-flight output, queued work and open requests.

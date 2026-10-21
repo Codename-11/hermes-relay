@@ -1752,9 +1752,9 @@
     <string name="voice_settings_interaction_continuous">Непрерывный</string>
     <string name="voice_settings_silence_threshold">Порог тишины: %1$s</string>
     <string name="voice_settings_silence_threshold_desc">Конец речи: автоостановка после такого количества тишины после того, как вы заговорили (по умолчанию для настольного компьютера 1,25 с).</string>
-    <string name="voice_settings_barge_in_title">Вмешательство</string>
+    <string name="voice_settings_barge_in_title">Прерывание на телефоне</string>
     <string name="voice_settings_barge_in_master">Прерывать, когда я говорю</string>
-    <string name="voice_settings_barge_in_master_desc">Экспериментально: может слышать выходной сигнал динамика и ложно прерывать или записывать себя. Лучше всего с наушниками.</string>
+    <string name="voice_settings_barge_in_master_desc">Использует микрофон этого телефона, пока Hermes думает или говорит, во всех режимах, включая удержание кнопки. Экспериментально: звук динамика может вызвать прерывание. Рекомендуются наушники.</string>
     <string name="voice_settings_barge_in_aec_warning">Ваше устройство может иметь ограниченную эхоподавление. Качество вмешательства будет варьироваться.</string>
     <string name="voice_settings_sensitivity">Чувствительность</string>
     <string name="voice_settings_sensitivity_desc">Выключено отключает обнаружение без переключения переключателя выше.</string>
@@ -3794,7 +3794,7 @@
     <string name="assistant_session_screen_context_ready">Контекст экрана готов</string>
     <string name="assistant_session_screen_thumbnail">Миниатюра текущего экрана</string>
     <string name="voice_settings_stop_phrases">Фразы остановки</string>
-    <string name="voice_settings_stop_phrases_desc">Точные фразы через запятую, завершающие активный голосовой чат. Чтобы слышать их, пока Hermes размышляет или говорит, прерывание должно быть включено. Оставьте поле пустым, чтобы отключить.</string>
+    <string name="voice_settings_stop_phrases_desc">Точные фразы через запятую для завершения активного голосового чата. Чтобы распознавать их, пока Hermes думает или говорит, включите Прерывание на телефоне. Оставьте поле пустым для отключения.</string>
     <string name="voice_settings_barge_in_rms_multiplier">Порог RMS: %1$.1f×</string>
     <string name="voice_settings_barge_in_rms_multiplier_desc">Более высокие значения требуют, чтобы речь была громче относительно откалиброванной тишины. Стандартное значение upstream: 3×.</string>
     <string name="voice_settings_barge_in_playback_grace">Задержка воспроизведения: %1$.2f с</string>
@@ -4372,4 +4372,9 @@
     <string name="paired_devices_updating">Обновление сеанса…</string>
     <string name="paired_devices_no_shorter_duration">Более коротких готовых вариантов нет. Можно отозвать этот сеанс или выполнить сопряжение заново для обновления доступа.</string>
     <string name="crash_memory_recovery_body">Приложению не хватило памяти. Автоматическое открытие последнего разговора приостановлено на этот запуск. Закройте этот отчёт, затем выберите разговор в разделе «Сессии» или начните новый чат. Сохранённые разговоры и черновики не удалены. Задачи в Hermes могут ещё выполняться.</string>
+    <string name="voice_settings_interaction_interruption_hint">В режиме удержания запись идёт, пока нажата кнопка. Чтобы телефон не слушал голосовые прерывания во время ответов, отключите ниже Прерывание на телефоне.</string>
+    <string name="voice_settings_host_barge_in">Прерывание на хосте</string>
+    <string name="voice_settings_host_barge_in_desc">Управляет прерываниями в голосовом режиме хоста Hermes, но не микрофоном этого телефона. Используйте Прерывание на телефоне на вкладке Listening.</string>
+    <string name="voice_settings_speak_tool_updates">Озвучивать уведомления инструментов</string>
+    <string name="voice_settings_speak_tool_updates_desc">Встроенные уведомления инструментов звучат на английском. Отключите их, чтобы слышать ответы ассистента без этих уведомлений. Режим «Только финальный ответ» также отключает их озвучивание.</string>
 </resources>

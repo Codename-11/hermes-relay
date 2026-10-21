@@ -49,6 +49,8 @@ data class VoiceSettings(
      * assistant commentary are not narrated.
      */
     val finalAnswerOnly: Boolean = false,
+    /** Client-generated English tool updates for Standard/Relay voice output, independent of answer speech. */
+    val speakToolUpdates: Boolean = true,
     /** Presentation only; changing this never restarts or interrupts voice. */
     val presentationMode: String = VoicePresentationMode.Focus.storageValue,
     val realtimeTraceDetails: Boolean = false,
@@ -209,6 +211,7 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         private val KEY_SILENCE_THRESHOLD_MS = longPreferencesKey("voice_silence_threshold_ms")
         private val KEY_STOP_PHRASES = stringPreferencesKey("voice_stop_phrases")
         private val KEY_FINAL_ANSWER_ONLY = booleanPreferencesKey("voice_final_answer_only")
+        private val KEY_SPEAK_TOOL_UPDATES = booleanPreferencesKey("voice_speak_tool_updates")
         private val KEY_PRESENTATION_MODE = stringPreferencesKey("voice_presentation_mode")
         private val KEY_REALTIME_TRACE_DETAILS = booleanPreferencesKey("voice_realtime_trace_details")
         private val KEY_REALTIME_PERSISTENT_SESSION =
@@ -220,6 +223,7 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
         // 1250 ms matches hermes-desktop voice_mode `silenceMs` end-of-speech.
         const val DEFAULT_SILENCE_THRESHOLD_MS = 1250L
         const val DEFAULT_FINAL_ANSWER_ONLY = false
+        const val DEFAULT_SPEAK_TOOL_UPDATES = true
         const val DEFAULT_PRESENTATION_MODE = "focus"
         const val DEFAULT_REALTIME_TRACE_DETAILS = false
         const val DEFAULT_REALTIME_PERSISTENT_SESSION = true
@@ -294,6 +298,7 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
             silenceThresholdMs = prefs[KEY_SILENCE_THRESHOLD_MS] ?: DEFAULT_SILENCE_THRESHOLD_MS,
             stopPhrases = decodeStopPhrases(prefs[KEY_STOP_PHRASES]),
             finalAnswerOnly = prefs[KEY_FINAL_ANSWER_ONLY] ?: DEFAULT_FINAL_ANSWER_ONLY,
+            speakToolUpdates = prefs[KEY_SPEAK_TOOL_UPDATES] ?: DEFAULT_SPEAK_TOOL_UPDATES,
             presentationMode = VoicePresentationMode.fromStorage(
                 prefs[KEY_PRESENTATION_MODE] ?: DEFAULT_PRESENTATION_MODE,
             ).storageValue,
@@ -457,6 +462,10 @@ class VoicePreferencesRepository(private val dataStore: DataStore<Preferences>) 
 
     suspend fun setFinalAnswerOnly(enabled: Boolean) {
         dataStore.edit { it[KEY_FINAL_ANSWER_ONLY] = enabled }
+    }
+
+    suspend fun setSpeakToolUpdates(enabled: Boolean) {
+        dataStore.edit { it[KEY_SPEAK_TOOL_UPDATES] = enabled }
     }
 
     suspend fun setPresentationMode(mode: VoicePresentationMode) {

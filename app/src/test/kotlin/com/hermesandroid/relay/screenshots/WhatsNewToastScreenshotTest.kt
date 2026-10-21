@@ -128,7 +128,7 @@ class WhatsNewToastScreenshotTest {
     private fun com.hermesandroid.relay.ui.components.ChangelogToastDigest.countText(): String =
         buildList {
             if (additionalFeatureCount > 0) {
-                add("$additionalFeatureCount additional ${if (additionalFeatureCount == 1) "feature" else "features"}")
+                add("$additionalFeatureCount ${if (additionalFeatureCount == 1) "feature" else "features"}")
             }
             if (improvementCount > 0) {
                 add("$improvementCount ${if (improvementCount == 1) "improvement" else "improvements"}")

@@ -22,6 +22,29 @@ import org.junit.Test
 class HermesApiClientTest {
 
     @Test
+    fun oversizedHistoryNeverBecomesAnEmptyApiTranscript() = runTest {
+        MockWebServer().use { server ->
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest) =
+                    MockResponse().setBody("{}").setHeader("Content-Length", 9 * 1024 * 1024)
+                        .setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AT_END)
+            }
+            try {
+                HermesApiClient(server.url("/").toString(), "test-key").getMessages("sess-a")
+                throw AssertionError("expected explicit history size failure")
+            } catch (error: SessionTranscriptTooLargeException) {
+                assertTrue(error.message!!.contains("no messages were skipped"))
+            }
+            assertEquals(9, server.requestCount)
+            repeat(server.requestCount) {
+                val request = server.takeRequest().requestUrl!!
+                assertEquals("0", request.queryParameter("offset"))
+                assertEquals("true", request.queryParameter("include_compacted"))
+            }
+        }
+    }
+
+    @Test
     fun getMessages_pagesApiFallbackOldestFirst() = runTest {
         val server = MockWebServer()
         server.start()
@@ -36,9 +59,29 @@ class HermesApiClientTest {
             val second = server.takeRequest().requestUrl!!
             assertEquals(listOf("0", "500"), listOf(first, second).map { it.queryParameter("offset") })
             assertEquals(listOf("oldest", "oldest"), listOf(first, second).map { it.queryParameter("order") })
+            assertEquals(listOf("true", "true"), listOf(first, second).map { it.queryParameter("include_compacted") })
+            assertEquals(listOf("500", "500"), listOf(first, second).map { it.queryParameter("limit") })
             assertEquals((0..500).map(Int::toString), messages.map { it.id })
         } finally {
             server.shutdown()
+        }
+    }
+
+    @Test
+    fun getMessages_latestIncludesCompactedHistoryInOneBoundedPage() = runTest {
+        MockWebServer().use { server ->
+            server.enqueue(apiMessagePageResponse(start = 500, count = 500, returned = 500))
+
+            val messages = HermesApiClient(server.url("/").toString(), "test-key")
+                .getMessages("sess-a", SessionMessageLoadMode.LATEST)
+
+            val url = server.takeRequest().requestUrl!!
+            assertEquals("true", url.queryParameter("include_compacted"))
+            assertEquals("500", url.queryParameter("limit"))
+            assertEquals("0", url.queryParameter("offset"))
+            assertEquals("latest", url.queryParameter("order"))
+            assertEquals(500, messages.size)
+            assertEquals(1, server.requestCount)
         }
     }
 

@@ -1,13 +1,38 @@
-v1.18.1 - Reliable browser sign-in
+v1.19.0 - Reliable chats, alerts, and voice
 
 Summary
-* Dashboard browser sign-in stays connected while you complete the provider flow and return to Hermes-Relay. Callback pages show which provider handled the attempt.
+* Larger conversations open more reliably, background replies are easier to find, and voice playback preserves complete answers. Sign-in, microphone handoff, pairing controls, and startup appearance are more dependable.
 
 Highlights
-* Finish browser sign-in — The app keeps the sign-in callback and session check connected while the browser is open, then ends the sign-in notification when the attempt finishes or is canceled.
+* Keep quiet conversations running — Long tools and provider waits stay active. Missing completion events recover from server state, including work started by another client, without sending Stop.
+* Open larger conversations — Oversized history responses retry with smaller pages while keeping the latest 500 messages in order. Individual messages above the safety limit show an explicit error.
+* Find completed replies you have not read — Unread markers in the session drawer and counts on profiles and the chat header make background completions easier to find.
+* Preserve complete streaming replies — Streaming playback retains whole sentences and short replies after tool-call gaps, and drains delivered audio before ending speech.
+
+Added
+* Mute English tool announcements — Built-in English tool updates can be muted independently of assistant readback on Standard and Relay voice output.
 
 Improved
-* Recognize the sign-in provider — Browser callback success and error pages identify the selected provider and use guidance that applies to self-hosted and hosted Hermes.
+* Recognize reply notifications — Reply alerts show the owning agent display name, cached avatar, and conversation title.
+* Manage pairing lifetime clearly — Relay session controls distinguish shortening from operator-approved renewal, retain actionable update failures, and make duration controls accessible.
+* Understand interruption controls — Settings distinguish phone interruption from host barge-in and explain that Hold mode can still listen for spoken interruption. Saved choices and defaults remain unchanged.
+
+Fixed
+* Keep compacted scrollback — Reopening a conversation includes messages archived by context compaction instead of showing only its summary and recent tail.
+* Recover safely after memory pressure — Gateway responses avoid duplicate history transfers. After a recorded out-of-memory crash, automatic reopening pauses while saved conversations and drafts remain intact.
+* Keep sign-in during proxy failures — Temporary reverse-proxy access failures preserve the native Dashboard session and allow a later refresh when the route is reachable again.
+* Keep alerts with their conversation — Notification permission defaults refresh after onboarding, and background alerts retain their original connection, profile, and conversation across navigation.
+* Keep separate conversation alerts — Replies from different running conversations have separate notification slots. Opening one preserves alerts from the others.
+* Keep progress visible while scrolling — Chat progress remains above the current composer and clears when the turn finishes or waits for input.
+* Hand the microphone to voice reliably — Both wake-word modes pause before voice capture and resume after voice exits, preventing microphone conflicts.
+* Wait for assistant microphone startup — Assistant activation waits for microphone startup to finish instead of reporting activation before capture is ready.
+* Avoid a connection startup crash — Profile state arriving during connection setup no longer races initialization.
+* Keep the selected Appearance palette — The selected palette stays applied after the startup loading screen instead of leaving parts of the interface dark.
+* Finish playback before listening again — Voice waits for the last synthesized audio file to finish before reopening the microphone in Continuous mode, and settles failed playback.
+* Read final answers reliably — Final answer only speech no longer disappears during a chat-state race.
+* Keep native voice components compatible — The packaged voice runtime remains aligned with the speech engine native libraries.
 
 Compatibility
-* Browser sign-in continues to use upstream Hermes Dashboard; no Hermes-Relay Plugin update is required.
+* Standard Chat, history, Manage, and Standard Voice continue to use upstream Hermes without requiring the optional Hermes-Relay Plugin.
+* Relay pairing and extension features use the optional Plugin. Plugin 1.13.1 adds Secure Link session-management routes and host reliability fixes.
+* History remains bounded on Android: up to 500 recent messages, an 8 MiB page limit, and aggregate limits for complete reads. Oversized individual messages require Dashboard access.

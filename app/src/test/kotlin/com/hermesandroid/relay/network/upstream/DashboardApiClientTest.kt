@@ -35,6 +35,51 @@ import java.util.concurrent.TimeUnit
 class DashboardApiClientTest {
 
     @Test
+    fun oversizedChunkedLatestHistoryRecoversAll500Rows() = runBlocking {
+        assertOversizedHistoryRecovery(SessionMessageLoadMode.LATEST, chunked = true)
+    }
+
+    @Test
+    fun oversizedDeclaredCompleteHistoryRecoversEveryPage() = runBlocking {
+        assertOversizedHistoryRecovery(SessionMessageLoadMode.COMPLETE, chunked = false)
+    }
+
+    private suspend fun assertOversizedHistoryRecovery(mode: SessionMessageLoadMode, chunked: Boolean) {
+        // 500 rows are over 9 MiB, like replay-heavy upstream history. Each
+        // recovered page must still pass the production 8 MiB bounded reader.
+        val sidecar = "x".repeat(20_000)
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): MockResponse {
+                val url = request.requestUrl!!
+                val limit = url.queryParameter("limit")!!.toInt()
+                val offset = url.queryParameter("offset")!!.toInt()
+                val indices = if (url.queryParameter("order") == "latest") {
+                    (0 until 751).reversed().drop(offset).take(limit).reversed()
+                } else (0 until 751).drop(offset).take(limit)
+                val rows = indices.joinToString(",") { index ->
+                    """{"id":"$index","role":"assistant","content":"message $index","compacted":true,"codex_reasoning_items":"$sidecar"}"""
+                }
+                val body = """{"messages":[$rows],"pagination":{"limit":$limit,"offset":$offset,"returned":${indices.size}}}"""
+                return MockResponse().setHeader("Content-Type", "application/json").let {
+                    if (chunked) it.setChunkedBody(body, 8192) else it.setBody(body)
+                }
+            }
+        }
+        val messages = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getSessionMessages("sess-a", profile = "research", mode = mode).getOrThrow()
+        val expected = if (mode == SessionMessageLoadMode.LATEST) 251 until 751 else 0 until 751
+        assertEquals(expected.map(Int::toString), messages.map { it.id })
+        val requests = List(server.requestCount) { server.takeRequest().requestUrl!! }
+        assertEquals(listOf("500", "250"), requests.take(2).map { it.queryParameter("limit") })
+        assertEquals(listOf("0", "0"), requests.take(2).map { it.queryParameter("offset") })
+        requests.forEach { url ->
+            assertEquals("research", url.queryParameter("profile"))
+            assertEquals("true", url.queryParameter("include_compacted"))
+            assertEquals("/api/sessions/sess-a/messages", url.encodedPath)
+        }
+    }
+
+    @Test
     fun boundedJsonReaderRejectsDeclaredAndObservedOverflow() {
         val declared = "{}".toResponseBody("application/json".toMediaType())
         assertThrows(IOException::class.java) {
@@ -1533,6 +1578,7 @@ class DashboardApiClientTest {
         assertEquals("500", url.queryParameter("limit"))
         assertEquals("0", url.queryParameter("offset"))
         assertEquals("latest", url.queryParameter("order"))
+        assertEquals("true", url.queryParameter("include_compacted"))
         assertEquals(2, messages.size)
         assertEquals("user", messages[0].role)
         assertEquals("assistant", messages[1].role)
@@ -1555,6 +1601,9 @@ class DashboardApiClientTest {
         val second = server.takeRequest().requestUrl!!
         assertEquals(listOf("0", "500"), listOf(first, second).map { it.queryParameter("offset") })
         assertEquals(listOf("mizu", "mizu"), listOf(first, second).map { it.queryParameter("profile") })
+        assertEquals(listOf("true", "true"), listOf(first, second).map { it.queryParameter("include_compacted") })
+        assertEquals(listOf("500", "500"), listOf(first, second).map { it.queryParameter("limit") })
+        assertEquals(listOf("oldest", "oldest"), listOf(first, second).map { it.queryParameter("order") })
         assertEquals((0..500).map(Int::toString), messages.map { it.id })
     }
 
@@ -1568,6 +1617,8 @@ class DashboardApiClientTest {
 
         val request = server.takeRequest().requestUrl!!
         assertEquals("latest", request.queryParameter("order"))
+        assertEquals("true", request.queryParameter("include_compacted"))
+        assertEquals("500", request.queryParameter("limit"))
         assertEquals("0", request.queryParameter("offset"))
         assertEquals(500, messages.size)
         assertEquals(1, server.requestCount)

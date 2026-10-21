@@ -1743,9 +1743,9 @@
     <string name="voice_settings_interaction_continuous">継続的</string>
     <string name="voice_settings_silence_threshold">沈黙のしきい値: %1$s</string>
     <string name="voice_settings_silence_threshold_desc">スピーチの終了: 話し終えると、このくらいの沈黙の後に自動的に停止します (デスクトップのデフォルトは 1.25 秒)。</string>
-    <string name="voice_settings_barge_in_title">割り込み</string>
+    <string name="voice_settings_barge_in_title">スマートフォンでの割り込み</string>
     <string name="voice_settings_barge_in_master">私が話しているときに中断する</string>
-    <string name="voice_settings_barge_in_master_desc">実験的: スピーカー出力が聞こえ、誤って中断または録音自体が行われる可能性があります。ヘッドフォンを使用するのが最適です。</string>
+    <string name="voice_settings_barge_in_master_desc">Hermesの思考中や発話中に、このスマートフォンのマイクを使用します。「押し続けて話す」を含むすべてのモードに適用されます。実験的機能：スピーカーの音で割り込みが起こる場合があります。ヘッドホンを推奨します。</string>
     <string name="voice_settings_barge_in_aec_warning">お使いのデバイスのエコー キャンセルが制限されている可能性があります。バージインの品質は異なります。</string>
     <string name="voice_settings_sensitivity">感度</string>
     <string name="voice_settings_sensitivity_desc">オフにすると、上のトグルを切り替えずに検出が無効になります。</string>
@@ -4057,7 +4057,7 @@
     <string name="assistant_session_screen_context_ready">画面コンテキストの準備完了</string>
     <string name="assistant_session_screen_thumbnail">現在の画面のサムネイル</string>
     <string name="voice_settings_stop_phrases">停止フレーズ</string>
-    <string name="voice_settings_stop_phrases_desc">音声チャットを終了する完全一致のフレーズをカンマ区切りで指定します。Hermes が考えたり話したりしている間に認識するには、バージインを有効にする必要があります。空欄にすると無効になります。</string>
+    <string name="voice_settings_stop_phrases_desc">音声チャットを終了する完全一致のフレーズをカンマで区切って入力します。Hermesの思考中や発話中に聞き取るには「スマートフォンでの割り込み」を有効にしてください。空欄にすると無効になります。</string>
     <string name="voice_settings_barge_in_rms_multiplier">RMS しきい値: %1$.1f×</string>
     <string name="voice_settings_barge_in_rms_multiplier_desc">値を高くすると、較正した静かな環境に対してより大きな声が必要です。Upstream の既定値: 3×。</string>
     <string name="voice_settings_barge_in_playback_grace">再生猶予: %1$.2f 秒</string>
@@ -4628,4 +4628,9 @@
     <string name="paired_devices_updating">セッションを更新中…</string>
     <string name="paired_devices_no_shorter_duration">これより短い選択肢はありません。このセッションを取り消すか、再度ペアリングしてアクセスを更新できます。</string>
     <string name="crash_memory_recovery_body">アプリのメモリが不足しました。今回は会話を自動で開き直しません。このレポートを閉じてから、セッションで会話を選ぶか、新しいチャットを開始してください。保存済みの会話と下書きは削除されていません。Hermes では処理が続いている可能性があります。</string>
+    <string name="voice_settings_interaction_interruption_hint">「押し続けて話す」では、ボタンを押している間に録音します。応答中に音声による割り込みを聞き取らないようにするには、下の「スマートフォンでの割り込み」をオフにしてください。</string>
+    <string name="voice_settings_host_barge_in">ホストでの割り込み</string>
+    <string name="voice_settings_host_barge_in_desc">Hermesホストの音声モードでの割り込みを制御します。このスマートフォンのマイクには影響しません。「Listening」の「スマートフォンでの割り込み」を使用してください。</string>
+    <string name="voice_settings_speak_tool_updates">ツールの通知を読み上げる</string>
+    <string name="voice_settings_speak_tool_updates_desc">組み込みのツール通知は英語です。これらの通知なしでアシスタントの回答を聞くにはオフにしてください。「最終回答のみ」でも通知は読み上げられません。</string>
 </resources>

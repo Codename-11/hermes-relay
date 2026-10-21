@@ -1,23 +1,23 @@
 # Hermes-Relay Plugin v__VERSION__
 
-**Release Date:** October 7, 2026
+**Release Date:** October 20, 2026
 
 ## Summary
 
-Dashboard pairing provides separate Android and CLI+UI choices, clearer connection addresses, and more reliable QR invites.
-
-## Added
-
-- CLI+UI pairing invites include route candidates and Secure Link certificate trust.
+Secure Link handles certificate chains and paired-session management more reliably. Profile voice output uses the selected renderer's defaults, and exact desktop targets cannot fall back to another computer.
 
 ## Fixed
 
-- Connection guidance shows protocols and ports, includes direct Tailscale Relay routes, and avoids assuming a public Relay listener from a Dashboard address.
-- Expired and oversized invites show actionable errors. QR codes remain fully visible, and setup distinguishes Plugin activation from discovery.
+- Use the selected speech renderer's model and voice defaults when a profile changes provider, while preserving explicit selections.
+- Accept Secure Link PEM certificate chains, export only the leaf certificate for pairing, and report invalid certificate/key configurations without exposing private file paths.
+- Support paired-device listing, session shortening, and revocation over Secure Link with the existing Relay authorization rules.
+- Route desktop operations addressed with device_id only to the exact authenticated device. Missing, duplicate, or conflicting targets fail without name matching or fallback to another computer.
 
 ## Compatibility
 
-Full-invite CLI import requires a compatible CLI build newer than the currently published 0.4.0-beta.8. This Plugin release does not publish that companion. Existing Android pairing and legacy CLI connection settings remain supported.
+Standard Android Chat and Voice remain upstream-only. This release updates the optional Plugin and does not publish a CLI+UI companion. Friendly desktop names remain supported through the `device` field; `device_id` requires the authenticated identity and fails when that exact target is unavailable or ambiguous.
+
+Screenshot failure-result masking remains tracked separately in [#743](https://github.com/Codename-11/hermes-relay/issues/743); this release does not claim to resolve every screenshot failure.
 
 ## Install / update
 
@@ -29,7 +29,7 @@ Full-invite CLI import requires a compatible CLI build newer than the currently 
     # or, if already installed:
     hermes-relay-update
 
-Restart or reload the Hermes Dashboard and Relay after updating so the new manifest and provider context are active.
+Reload the Plugin and restart Relay after updating so the new server code and tool registrations are active. Existing agent sessions may retain their current tool catalog until the next session.
 
 ## Verify
 

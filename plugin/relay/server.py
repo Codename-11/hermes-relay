@@ -1445,8 +1445,11 @@ async def handle_desktop_dispatch(request: web.Request) -> web.Response:
             args = {}
     except Exception:  # noqa: BLE001
         args = {}
-    device = args.pop("device", None) or args.pop("device_id", None)
+    selectors = {"device_id": args.pop("device_id")} if "device_id" in args else {}
+    device = args.pop("device", None)
     if not isinstance(device, str):
+        if device is not None and selectors:
+            return web.json_response({"ok": False, "error": "Invalid desktop device selector"}, status=400)
         device = None
     # These headers are emitted by the in-process Hermes tool wrapper and are
     # not part of the model-facing schema. The route is loopback-only; the
@@ -1480,7 +1483,7 @@ async def handle_desktop_dispatch(request: web.Request) -> web.Response:
     )
     try:
         result = await server.desktop.handle_command(
-            tool_name, args, device=device, requester=requester
+            tool_name, args, device=device, requester=requester, **selectors
         )
         return web.json_response(result)
     except Exception as exc:  # DesktopError or asyncio.TimeoutError

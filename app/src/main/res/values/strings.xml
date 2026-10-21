@@ -2025,9 +2025,9 @@
     <string name="voice_settings_interaction_continuous">Continuous</string>
     <string name="voice_settings_silence_threshold">Silence threshold: %1$s</string>
     <string name="voice_settings_silence_threshold_desc">End-of-speech: auto-stop after this much silence once you\'ve spoken (desktop default 1.25s).</string>
-    <string name="voice_settings_barge_in_title">Barge-in</string>
+    <string name="voice_settings_barge_in_title">Phone interruption</string>
     <string name="voice_settings_barge_in_master">Interrupt when I speak</string>
-    <string name="voice_settings_barge_in_master_desc">Experimental: may hear speaker output and falsely interrupt or record itself. Best with headphones.</string>
+    <string name="voice_settings_barge_in_master_desc">Uses this phone\'s microphone while Hermes thinks or speaks, in all modes including Hold. Experimental: speaker audio can trigger interruption. Headphones recommended.</string>
     <string name="voice_settings_barge_in_aec_warning">Your device may have limited echo cancellation. Barge-in quality will vary.</string>
     <string name="voice_settings_sensitivity">Sensitivity</string>
     <string name="voice_settings_sensitivity_desc">Off disables detection without flipping the toggle above.</string>
@@ -4380,7 +4380,7 @@
     <string name="assistant_session_screen_context_ready">Screen context ready</string>
     <string name="assistant_session_screen_thumbnail">Current screen thumbnail</string>
     <string name="voice_settings_stop_phrases">Stop phrases</string>
-    <string name="voice_settings_stop_phrases_desc">Exact comma-separated phrases that end an active voice chat. Barge-in must be enabled to hear them while Hermes is Thinking or Speaking. Leave empty to disable.</string>
+    <string name="voice_settings_stop_phrases_desc">Exact comma-separated phrases that end an active voice chat. Phone interruption must be enabled to hear them while Hermes is thinking or speaking. Leave empty to disable.</string>
     <string name="voice_settings_barge_in_rms_multiplier">RMS threshold: %1$.1f×</string>
     <string name="voice_settings_barge_in_rms_multiplier_desc">Higher values require speech to be louder relative to the calibrated quiet room. Upstream default: 3×.</string>
     <string name="voice_settings_barge_in_playback_grace">Playback grace: %1$.2f s</string>
@@ -4691,4 +4691,9 @@
     <string name="paired_devices_policy_failed">Could not shorten the session. Refresh Relay sessions and try a shorter duration, or pair again with a fresh operator-approved code to renew access.</string>
     <string name="paired_devices_updating">Updating session…</string>
     <string name="paired_devices_no_shorter_duration">No shorter preset remains. You can revoke this session, or pair again to renew access.</string>
+    <string name="voice_settings_interaction_interruption_hint">Hold records while pressed. To stop the phone listening for spoken interruption during replies, turn off Phone interruption below.</string>
+    <string name="voice_settings_host_barge_in">Host barge-in</string>
+    <string name="voice_settings_host_barge_in_desc">Controls interruption in Hermes host voice mode. It does not control this phone\'s microphone. Use Phone interruption on Listening.</string>
+    <string name="voice_settings_speak_tool_updates">Speak tool updates</string>
+    <string name="voice_settings_speak_tool_updates_desc">Built-in tool updates are English. Turn off to hear assistant replies without these updates. Final answer only also keeps them silent.</string>
 </resources>

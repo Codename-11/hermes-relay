@@ -91,9 +91,9 @@ This app is a community project and is not affiliated with or endorsed by NousRe
 Paste into Play Console → **What's new** (≤500 characters):
 
 ```
-v1.18.1 - Reliable browser sign-in
+v1.19.0 - Reliable chats, alerts, and voice
 
-Browser sign-in stays connected while you complete your provider's flow and return to Hermes-Relay. The sign-in notification ends when the attempt finishes or is canceled, and callback pages identify the selected provider.
+Open larger conversations with safer history loading and keep compacted scrollback. Find unread background replies with clearer alerts and counts. Voice preserves complete replies, hands off the microphone reliably, and offers optional muting of English tool announcements. Sign-in survives temporary proxy failures, pairing lifetime controls are clearer, and your selected appearance stays applied after startup.
 ```
 ## Category
 

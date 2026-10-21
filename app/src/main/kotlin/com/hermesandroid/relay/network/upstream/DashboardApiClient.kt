@@ -1361,10 +1361,13 @@ class DashboardApiClient(
     ): Result<List<MessageItem>> = withContext(Dispatchers.IO) {
         val name = profile?.trim().orEmpty()
         loadSessionMessages(mode) { page ->
+            // include_compacted: same display contract as desktop/web — keep
+            // compaction-archived turns so reopen is not summary+tail only.
             val query = buildList {
                 add("limit=${page.limit}")
                 add("offset=${page.offset}")
                 add("order=${page.order}")
+                add("include_compacted=true")
                 if (name.isNotBlank()) add("profile=${pathSegment(name)}")
             }.joinToString(prefix = "?", separator = "&")
             getJson(
@@ -2506,11 +2509,15 @@ private fun Response.readJsonElement(json: Json): JsonElement {
     return json.parseToJsonElement(raw)
 }
 
+internal class JsonResponseTooLargeException : IOException(
+    "Dashboard response exceeds Android's bounded JSON limit",
+)
+
 internal fun okhttp3.ResponseBody.readUtf8Bounded(maxBytes: Long): String {
     require(maxBytes in 1..Int.MAX_VALUE.toLong()) { "Invalid response byte limit" }
     val declaredLength = contentLength()
     if (declaredLength > maxBytes) {
-        throw IOException("Dashboard response exceeds Android's bounded JSON limit")
+        throw JsonResponseTooLargeException()
     }
     val initialSize = when {
         declaredLength in 1..maxBytes -> declaredLength.toInt()
@@ -2525,7 +2532,7 @@ internal fun okhttp3.ResponseBody.readUtf8Bounded(maxBytes: Long): String {
             if (read < 0) break
             total += read
             if (total > maxBytes) {
-                throw IOException("Dashboard response exceeds Android's bounded JSON limit")
+                throw JsonResponseTooLargeException()
             }
             output.write(buffer, 0, read)
         }

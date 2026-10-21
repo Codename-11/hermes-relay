@@ -1669,9 +1669,9 @@
     <string name="voice_settings_interaction_continuous">Contínuo</string>
     <string name="voice_settings_silence_threshold">Limite de silêncio: %1$s</string>
     <string name="voice_settings_silence_threshold_desc">Fim da fala: pare automaticamente após esse tempo de silêncio depois que você falar (padrão do desktop: 1,25 s).</string>
-    <string name="voice_settings_barge_in_title">Interrupção por voz</string>
+    <string name="voice_settings_barge_in_title">Interrupção no telefone</string>
     <string name="voice_settings_barge_in_master">Interromper quando eu falar</string>
-    <string name="voice_settings_barge_in_master_desc">Experimental: pode ouvir a saída do alto-falante e interromper ou gravar a si mesmo por engano. Funciona melhor com fones de ouvido.</string>
+    <string name="voice_settings_barge_in_master_desc">Usa o microfone deste telefone enquanto o Hermes pensa ou fala, em todos os modos, inclusive manter pressionado para falar. Experimental: o áudio do alto-falante pode causar interrupções. Fones de ouvido são recomendados.</string>
     <string name="voice_settings_barge_in_aec_warning">Seu dispositivo pode ter cancelamento de eco limitado. A qualidade da interrupção por voz poderá variar.</string>
     <string name="voice_settings_sensitivity">Sensibilidade</string>
     <string name="voice_settings_sensitivity_desc">Desativado desliga a detecção sem mudar a chave acima.</string>
@@ -3904,7 +3904,7 @@
     <string name="assistant_session_screen_context_ready">Contexto da tela pronto</string>
     <string name="assistant_session_screen_thumbnail">Miniatura da tela atual</string>
     <string name="voice_settings_stop_phrases">Frases de parada</string>
-    <string name="voice_settings_stop_phrases_desc">Frases exatas separadas por vírgulas que encerram um chat de voz ativo. O Barge-in deve estar ativado para ouvi-las enquanto Hermes pensa ou fala. Deixe vazio para desativar.</string>
+    <string name="voice_settings_stop_phrases_desc">Frases exatas, separadas por vírgulas, que encerram uma conversa de voz ativa. Interrupção no telefone deve estar ativada para ouvi-las enquanto o Hermes pensa ou fala. Deixe vazio para desativar.</string>
     <string name="voice_settings_barge_in_rms_multiplier">Limite RMS: %1$.1f×</string>
     <string name="voice_settings_barge_in_rms_multiplier_desc">Valores maiores exigem fala mais alta em relação ao ambiente silencioso calibrado. Padrão upstream: 3×.</string>
     <string name="voice_settings_barge_in_playback_grace">Carência da reprodução: %1$.2f s</string>
@@ -4476,4 +4476,9 @@
     <string name="paired_devices_updating">Atualizando sessão…</string>
     <string name="paired_devices_no_shorter_duration">Não há uma duração predefinida mais curta. Você pode revogar esta sessão ou parear novamente para renovar o acesso.</string>
     <string name="crash_memory_recovery_body">O aplicativo ficou sem memória. A reabertura automática de conversas está pausada nesta inicialização. Feche este relatório e escolha uma conversa em Sessões ou inicie um novo chat. As conversas e os rascunhos salvos não foram excluídos. O Hermes pode continuar trabalhando.</string>
+    <string name="voice_settings_interaction_interruption_hint">O modo de manter pressionado grava enquanto o botão está pressionado. Para o telefone não escutar interrupções por voz durante as respostas, desative Interrupção no telefone abaixo.</string>
+    <string name="voice_settings_host_barge_in">Interrupção no host</string>
+    <string name="voice_settings_host_barge_in_desc">Controla interrupções no modo de voz do host Hermes, não o microfone deste telefone. Use Interrupção no telefone na aba Listening.</string>
+    <string name="voice_settings_speak_tool_updates">Ler avisos de ferramentas</string>
+    <string name="voice_settings_speak_tool_updates_desc">Os avisos predefinidos de ferramentas estão em inglês. Desative para ouvir as respostas sem esses avisos. Somente a resposta final também os silencia.</string>
 </resources>

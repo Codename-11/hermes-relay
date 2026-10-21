@@ -21,6 +21,9 @@ import sys
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 FOCUSED_TESTS = (
+    "com.hermesandroid.relay.network.upstream.DashboardApiClientTest",
+    "com.hermesandroid.relay.network.upstream.HermesApiClientTest",
+    "com.hermesandroid.relay.network.upstream.SessionMessagePaginationTest",
     "com.hermesandroid.relay.network.upstream.GatewayPayloadMemoryTest",
     "com.hermesandroid.relay.viewmodel.ChatMemoryRecoveryTest",
     "com.hermesandroid.relay.reliability.ReliabilityReportTest",
@@ -66,6 +69,9 @@ FOCUSED_TESTS = (
     "com.hermesandroid.relay.voice.VoiceViewModelPipelineTest",
     "com.hermesandroid.relay.audio.VoicePlayerTest",
     "com.hermesandroid.relay.screenshots.VoiceFallbackPresentationTest",
+    "com.hermesandroid.relay.screenshots.VoiceInterruptionSettingsTest",
+    "com.hermesandroid.relay.data.BargeInPreferencesTest",
+    "com.hermesandroid.relay.data.VoicePreferencesRepositoryTest",
     "com.hermesandroid.relay.voice.VoiceOverlayLifecycleTest",
     "com.hermesandroid.relay.voice.VoiceOverlayForegroundServiceTest",
     "com.hermesandroid.relay.voice.VoiceOverlayPresentationTest",

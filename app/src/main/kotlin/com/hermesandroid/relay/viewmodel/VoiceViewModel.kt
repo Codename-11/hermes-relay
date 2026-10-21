@@ -779,6 +779,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private var supervisedModePolicy: SupervisedModePolicy = SupervisedModePolicy()
     private var voiceStopPhrases: List<String> = DEFAULT_VOICE_STOP_PHRASES
     private var finalAnswerOnly: Boolean = false
+    private var speakToolUpdates: Boolean = true
     private var realtimeTraceDetails: Boolean = false
     private var realtimePersistentSession: Boolean = true
     private var realtimeModel: String = ""
@@ -1601,6 +1602,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         }
         voiceStopPhrases = settings.stopPhrases
         finalAnswerOnly = settings.finalAnswerOnly
+        speakToolUpdates = settings.speakToolUpdates
         realtimeTraceDetails = settings.realtimeTraceDetails
         realtimePersistentSession = settings.realtimePersistentSession
         realtimeModel = settings.realtimeModel
@@ -5077,6 +5079,12 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun enqueueBrokeredToolStatus(status: String) {
         if (status.isBlank()) return
+        if (!speakToolUpdates) {
+            // Muting stock narration must retain visual progress without
+            // claiming audio playback or changing the assistant's speech queue.
+            _uiState.update { it.copy(responseText = it.responseText.ifBlank { status }) }
+            return
+        }
         val offeredToStandardStream = offerStandardSpeechText("$status ")
         if (offeredToStandardStream || enqueueSentenceForTts(status, immediate = true)) {
             _uiState.update { state ->

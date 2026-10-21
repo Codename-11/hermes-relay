@@ -2,6 +2,7 @@ package com.hermesandroid.relay.voice
 
 import android.app.Application
 import android.util.Log
+import androidx.lifecycle.viewModelScope
 import com.hermesandroid.relay.wake.MicrophoneOwnershipCoordinator
 import com.hermesandroid.relay.wake.MicrophoneOwner
 import com.hermesandroid.relay.audio.BargeInListener
@@ -19,6 +20,7 @@ import com.hermesandroid.relay.viewmodel.InteractionMode
 import com.hermesandroid.relay.viewmodel.VoiceState
 import com.hermesandroid.relay.viewmodel.VoiceViewModel
 import io.mockk.every
+import io.mockk.clearMocks
 import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkStatic
@@ -26,6 +28,7 @@ import io.mockk.runs
 import io.mockk.unmockkStatic
 import io.mockk.verify
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -305,6 +308,32 @@ class VoiceViewModelBargeInTest {
     // -------------------------------------------------------------------
     // Full-turn ownership — Thinking -> Speaking uses one listener
     // -------------------------------------------------------------------
+
+    @Test
+    fun `phone interruption setting applies to Thinking and Speaking in all interaction modes`() = runTest {
+        for (mode in InteractionMode.entries) {
+            for (enabled in listOf(false, true)) {
+                clearMocks(bargeInListener, recorder, answers = false)
+                val vm = buildViewModel(BargeInPreferences(enabled = enabled))
+                try {
+                    vm.setInteractionMode(mode)
+                    vm.beginBargeInTurnForTest()
+                    runCurrent()
+                    verify(exactly = if (enabled) 1 else 0) { bargeInListener.start(any()) }
+                    vm.markBargeInPlaybackStartedForTest()
+                    runCurrent()
+                    verify(exactly = if (enabled) 1 else 0) { bargeInListener.start(any()) }
+                    // Starting the optional detector is distinct from recording a submitted utterance.
+                    verify(exactly = 0) { recorder.startRecording() }
+                    assertEquals(mode, vm.uiState.value.interactionMode)
+                    assertEquals(enabled, prefsFlow.value.enabled)
+                } finally {
+                    vm.exitVoiceMode()
+                    vm.viewModelScope.cancel()
+                }
+            }
+        }
+    }
 
     @Test
     fun `one listener spans Thinking into Speaking without rearm`() = runTest {

@@ -22,6 +22,51 @@ class VoicePreferencesRepositoryTest {
     }
 
     @Test
+    fun toolSpeechDefaultsPreserveExistingNarration() = runTest {
+        assertTrue(VoiceSettings().speakToolUpdates)
+        assertTrue(repository.settings.first().speakToolUpdates)
+    }
+
+    @Test
+    fun toolSpeechChoiceIsGlobalAndIndependentOfFinalOnlyAndPresets() = runTest {
+        val store = InMemoryVoicePreferencesDataStore()
+        repository = VoicePreferencesRepository(store)
+        for (enabled in listOf(false, true)) {
+            repository.setSpeakToolUpdates(enabled)
+            for (scope in listOf("coder", "writer")) {
+                repository.setActiveScope("connection-$scope", scope)
+                for (finalOnly in listOf(true, false)) {
+                    repository.setFinalAnswerOnly(finalOnly)
+                    for (preset in VoiceModePreset.entries) {
+                        repository.applyModePreset(preset)
+                        assertEquals(enabled, repository.settings.first().speakToolUpdates)
+                        assertEquals(finalOnly, repository.settings.first().finalAnswerOnly)
+                    }
+                }
+            }
+            assertEquals(enabled, VoicePreferencesRepository(store).settings.first().speakToolUpdates)
+        }
+    }
+
+    @Test
+    fun interactionModeAndAudioRouteChangesPreserveExplicitPhoneInterruptionChoice() = runTest {
+        val store = InMemoryVoicePreferencesDataStore()
+        val voice = VoicePreferencesRepository(store)
+        val interruption = BargeInPreferencesRepository(store)
+        for (enabled in listOf(false, true)) {
+            interruption.setEnabled(enabled)
+            for (mode in listOf("hold", "tap", "continuous")) {
+                voice.setInteractionMode(mode)
+                for (route in listOf(VoiceAudioRoute.Standard, VoiceAudioRoute.Relay)) {
+                    voice.setAudioRoute(route)
+                    assertEquals(enabled, interruption.flow.first().enabled)
+                    assertEquals(mode, voice.settings.first().interactionMode)
+                }
+            }
+        }
+    }
+
+    @Test
     fun realtimeSelectionPersistsPerConnectionAndProfile() = runTest {
         repository.setActiveScope("connection-a", "coder")
         repository.setRealtimeSelection(

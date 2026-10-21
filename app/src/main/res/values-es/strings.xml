@@ -1608,9 +1608,9 @@
     <string name="voice_settings_interaction_continuous">Continuo</string>
     <string name="voice_settings_silence_threshold">Umbral de silencio: %1$s</string>
     <string name="voice_settings_silence_threshold_desc">Fin de la conversación: parada automática después de tanto silencio una vez que hayas hablado (valor predeterminado de escritorio 1,25s).</string>
-    <string name="voice_settings_barge_in_title">irrumpir</string>
+    <string name="voice_settings_barge_in_title">Interrupción en el teléfono</string>
     <string name="voice_settings_barge_in_master">Interrumpe cuando hablo</string>
-    <string name="voice_settings_barge_in_master_desc">Experimental: puede escuchar la salida del altavoz e interrumpirse o grabarse falsamente. Mejor con auriculares.</string>
+    <string name="voice_settings_barge_in_master_desc">Usa el micrófono de este teléfono mientras Hermes piensa o habla, en todos los modos, incluido mantener pulsado para hablar. Experimental: el audio del altavoz puede provocar interrupciones. Se recomiendan auriculares.</string>
     <string name="voice_settings_barge_in_aec_warning">Es posible que su dispositivo tenga cancelación de eco limitada. La calidad de la irrupción variará.</string>
     <string name="voice_settings_sensitivity">Sensibilidad</string>
     <string name="voice_settings_sensitivity_desc">Apagado desactiva la detección sin girar el interruptor de arriba.</string>
@@ -3752,7 +3752,7 @@
     <string name="assistant_session_screen_context_ready">Contexto de pantalla listo</string>
     <string name="assistant_session_screen_thumbnail">Miniatura de la pantalla actual</string>
     <string name="voice_settings_stop_phrases">Frases de parada</string>
-    <string name="voice_settings_stop_phrases_desc">Frases exactas separadas por comas que finalizan un chat de voz activo. Barge-in debe estar activado para oírlas mientras Hermes piensa o habla. Déjalo vacío para desactivarlas.</string>
+    <string name="voice_settings_stop_phrases_desc">Frases exactas, separadas por comas, que finalizan un chat de voz activo. Interrupción en el teléfono debe estar activada para escucharlas mientras Hermes piensa o habla. Déjalo vacío para desactivar.</string>
     <string name="voice_settings_barge_in_rms_multiplier">Umbral RMS: %1$.1f×</string>
     <string name="voice_settings_barge_in_rms_multiplier_desc">Los valores más altos requieren voz más fuerte respecto a la sala silenciosa calibrada. Valor predeterminado de upstream: 3×.</string>
     <string name="voice_settings_barge_in_playback_grace">Gracia de reproducción: %1$.2f s</string>
@@ -4324,4 +4324,9 @@
     <string name="paired_devices_updating">Actualizando sesión…</string>
     <string name="paired_devices_no_shorter_duration">No queda ninguna duración predefinida más corta. Puedes revocar esta sesión o volver a emparejar para renovar el acceso.</string>
     <string name="crash_memory_recovery_body">La aplicación se quedó sin memoria. La reapertura automática de conversaciones está pausada durante este inicio. Cierra este informe y elige una conversación en Sesiones o inicia un chat nuevo. No se han eliminado las conversaciones ni los borradores guardados. Hermes podría seguir trabajando.</string>
+    <string name="voice_settings_interaction_interruption_hint">El modo de mantener pulsado graba mientras se pulsa el botón. Para que el teléfono no escuche interrupciones de voz durante las respuestas, desactiva Interrupción en el teléfono abajo.</string>
+    <string name="voice_settings_host_barge_in">Interrupción en el host</string>
+    <string name="voice_settings_host_barge_in_desc">Controla las interrupciones en el modo de voz del host Hermes, no el micrófono de este teléfono. Usa Interrupción en el teléfono en Listening.</string>
+    <string name="voice_settings_speak_tool_updates">Leer avisos de herramientas</string>
+    <string name="voice_settings_speak_tool_updates_desc">Los avisos predefinidos de herramientas están en inglés. Desactiva esta opción para oír las respuestas sin estos avisos. Solo la respuesta final también los silencia.</string>
 </resources>

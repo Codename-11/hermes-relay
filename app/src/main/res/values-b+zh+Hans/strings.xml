@@ -1727,9 +1727,9 @@
     <string name="voice_settings_interaction_continuous">连续</string>
     <string name="voice_settings_silence_threshold">静音阈值：%1$s</string>
     <string name="voice_settings_silence_threshold_desc">结束语音：在您说话后，超过此静音时长即自动停止（桌面默认 1.25 秒）。</string>
-    <string name="voice_settings_barge_in_title">插话</string>
+    <string name="voice_settings_barge_in_title">手机端插话</string>
     <string name="voice_settings_barge_in_master">我说话时打断</string>
-    <string name="voice_settings_barge_in_master_desc">实验性：可能听到扬声器输出并误打断或录到自身。建议佩戴耳机使用。</string>
+    <string name="voice_settings_barge_in_master_desc">在 Hermes 思考或说话时使用此手机的麦克风，适用于所有模式，包括按住说话。实验性功能：扬声器声音可能触发插话。建议使用耳机。</string>
     <string name="voice_settings_barge_in_aec_warning">您的设备可能回声消除能力有限。插话质量会有差异。</string>
     <string name="voice_settings_sensitivity">灵敏度</string>
     <string name="voice_settings_sensitivity_desc">关闭可在不翻转上方开关的情况下禁用检测。</string>
@@ -3988,7 +3988,7 @@
     <string name="assistant_session_screen_context_ready">屏幕上下文已就绪</string>
     <string name="assistant_session_screen_thumbnail">当前屏幕缩略图</string>
     <string name="voice_settings_stop_phrases">停止短语</string>
-    <string name="voice_settings_stop_phrases_desc">用逗号分隔可结束当前语音聊天的精确短语。要在 Hermes 思考或说话时识别这些短语，必须开启插话功能。留空可禁用。</string>
+    <string name="voice_settings_stop_phrases_desc">用逗号分隔的精确短语，用于结束当前语音聊天。要在 Hermes 思考或说话时识别这些短语，必须启用手机端插话。留空可禁用。</string>
     <string name="voice_settings_barge_in_rms_multiplier">RMS 阈值：%1$.1f×</string>
     <string name="voice_settings_barge_in_rms_multiplier_desc">数值越高，语音相对于校准后的安静环境需要越响。上游默认值：3×。</string>
     <string name="voice_settings_barge_in_playback_grace">播放宽限：%1$.2f 秒</string>
@@ -4557,4 +4557,9 @@
     <string name="paired_devices_updating">正在更新会话…</string>
     <string name="paired_devices_no_shorter_duration">没有更短的预设时长。你可以撤销此会话，或重新配对以续期访问权限。</string>
     <string name="crash_memory_recovery_body">应用内存不足。本次启动已暂停自动重新打开对话。关闭此报告后，请从“会话”中选择一个对话或开始新聊天。已保存的对话和草稿未被删除。Hermes 上的任务可能仍在运行。</string>
+    <string name="voice_settings_interaction_interruption_hint">按住说话会在按住按钮时录音。若不希望手机在回复期间监听语音插话，请关闭下方的手机端插话。</string>
+    <string name="voice_settings_host_barge_in">主机端插话</string>
+    <string name="voice_settings_host_barge_in_desc">控制 Hermes 主机语音模式中的插话，不控制此手机的麦克风。请使用Listening 选项卡中的手机端插话。</string>
+    <string name="voice_settings_speak_tool_updates">朗读工具提示</string>
+    <string name="voice_settings_speak_tool_updates_desc">内置工具提示为英语。关闭后仍会朗读助手回复，但不会朗读这些提示。仅朗读最终答案也会使这些提示静音。</string>
 </resources>
