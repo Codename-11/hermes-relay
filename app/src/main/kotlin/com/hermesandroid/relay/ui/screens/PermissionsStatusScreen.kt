@@ -69,6 +69,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.ui.theme.LocalBrand
 import com.hermesandroid.relay.ui.theme.appearanceRoundedCornerShape
+import com.hermesandroid.relay.ui.theme.readableOn
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.permissions.AppPermissionStatus
 import com.hermesandroid.relay.permissions.AppPermissionStatusProbe
@@ -549,7 +550,9 @@ private fun StatusBadge(label: String, granted: Boolean) {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = tint,
+            // Small text on the section card: keep the status token but
+            // guarantee 4.5:1 on light palettes (the icon keeps the raw token).
+            color = tint.readableOn(MaterialTheme.colorScheme.surfaceVariant),
             maxLines = 1,
         )
     }

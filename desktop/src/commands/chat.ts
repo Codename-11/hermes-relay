@@ -647,7 +647,8 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
         serverVersion: relay.serverVersion,
         meta: relay.authMeta,
         endpointRole: bannerRole,
-        noColor: !!args.flags['no-color']
+        noColor: !!args.flags['no-color'],
+        stream: process.stderr
       }) + '\n'
     )
     return runRelayChatMode(args, relay, renderer, tearDown)
@@ -674,7 +675,8 @@ export async function chatCommand(args: ParsedArgs): Promise<number> {
       serverVersion: relay.serverVersion,
       meta: relay.authMeta,
       endpointRole: bannerRole,
-      noColor: !!args.flags['no-color']
+      noColor: !!args.flags['no-color'],
+      stream: process.stderr
     }) + '\n'
   )
 

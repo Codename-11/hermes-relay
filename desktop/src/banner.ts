@@ -13,10 +13,12 @@
 // or just the server version.
 //
 // Build (plain text) — callers pass `noColor` when the user ran `--no-color`
-// so the strip degrades exactly like the rest of the CLI; piped stderr is
-// never colorized.
+// so the strip degrades exactly like the rest of the CLI. The strip is written
+// to stderr (chat + shell both do), so colour is decided by *that* stream:
+// `chat 2>relay.log` stays escape-free even when stdout is a terminal, and
+// piping stdout does not strip colour from a terminal stderr.
 
-import { SYMBOLS, theme as makeTheme } from './lib/theme.js'
+import { SYMBOLS, theme as makeTheme, type ColorStream } from './lib/theme.js'
 import type { AuthMeta } from './transport/RelayTransport.js'
 
 export type EndpointRole = 'lan' | 'tailscale' | 'public' | 'custom'
@@ -89,6 +91,9 @@ export interface ConnectBannerOpts {
   endpointRole?: string | null
   /** Force-disable color regardless of env/TTY (the `--no-color` flag). */
   noColor?: boolean
+  /** Stream the strip is written to; its TTY status decides colour.
+   * Defaults to stderr, which is where chat/shell write it. */
+  stream?: ColorStream
 }
 
 /**
@@ -99,12 +104,14 @@ export interface ConnectBannerOpts {
  *   "▸ relay: connected · plain ws:// · server 0.6.0"    [no role — degrade]
  *
  * Does NOT print itself — returns the string so the caller can route it
- * (stderr vs stdout) and the tests can assert on the shape. The `·`
- * separators keep it parseable at a glance; secure is green, plain is amber
- * (no TLS on the wire is worth noticing), the route is relay periwinkle.
+ * (stderr vs stdout) and the tests can assert on the shape. Pass `stream` when
+ * the caller writes somewhere other than stderr, so colour follows the stream
+ * the bytes actually land on. The `·` separators keep it parseable at a
+ * glance; secure is green, plain is amber (no TLS on the wire is worth
+ * noticing), the route is relay periwinkle.
  */
 export function buildConnectBanner(opts: ConnectBannerOpts): string {
-  const t = makeTheme({ noColor: opts.noColor })
+  const t = makeTheme({ noColor: opts.noColor, stream: opts.stream ?? process.stderr })
   const role = parseRole(opts.endpointRole)
   const transport = transportLabel(opts.url, opts.meta?.transportHint ?? null)
   const v = opts.serverVersion ?? '?'

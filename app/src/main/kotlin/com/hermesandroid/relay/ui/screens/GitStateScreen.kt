@@ -81,6 +81,7 @@ import com.hermesandroid.relay.data.GitBranch
 import com.hermesandroid.relay.data.GitRepo
 import com.hermesandroid.relay.data.GitStatus
 import com.hermesandroid.relay.ui.theme.LocalBrand
+import com.hermesandroid.relay.ui.theme.readableOn
 import com.hermesandroid.relay.viewmodel.GitConfirmationStrings
 import com.hermesandroid.relay.viewmodel.GitContentViewState
 import com.hermesandroid.relay.viewmodel.GitMessageGenerationState
@@ -466,7 +467,11 @@ private fun SummaryRail(repo: GitRepo, detail: GitRepoDetailState.Ready) {
         Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("$count changes", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
             VerticalDivider()
-            Text("+${detail.status.counts.additions}", color = LocalBrand.current.green, style = MaterialTheme.typography.labelLarge)
+            Text(
+                "+${detail.status.counts.additions}",
+                color = LocalBrand.current.green.readableOn(MaterialTheme.colorScheme.surfaceContainer),
+                style = MaterialTheme.typography.labelLarge,
+            )
             VerticalDivider()
             Text("−${detail.status.counts.deletions}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
             Spacer(Modifier.weight(1f))
@@ -590,7 +595,11 @@ private fun FileRow(
                 }
             }
             file.additions?.let { additions ->
-                Text("+$additions", color = LocalBrand.current.green, style = MaterialTheme.typography.labelSmall)
+                Text(
+                    "+$additions",
+                    color = LocalBrand.current.green.readableOn(MaterialTheme.colorScheme.background),
+                    style = MaterialTheme.typography.labelSmall,
+                )
                 Spacer(Modifier.width(5.dp))
             }
             file.deletions?.let { deletions ->
@@ -659,7 +668,11 @@ private fun SelectionRail(count: Int, canWrite: Boolean, allStaged: Boolean, onS
             TextButton(onClick = onStage, enabled = canWrite) {
                 Text(
                     if (allStaged) "Unstage" else "Stage",
-                    color = if (canWrite) LocalBrand.current.green else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (canWrite) {
+                        LocalBrand.current.green.readableOn(MaterialTheme.colorScheme.surfaceContainerHigh)
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                 )
             }
             TextButton(onClick = onDiscard, enabled = canDiscard) {
