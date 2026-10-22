@@ -1019,6 +1019,70 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_ordersByRowIdWhenTimestampsInvertAfterCompaction() {
+        // Compaction rewrites older assistant rows with a later timestamp while the
+        // following user reply keeps its original earlier timestamp. The merge path
+        // that interleaves clientOnly orphans used to sort by timestamp only, which
+        // puts "Yes" before the question it answered.
+        // Seed a clientOnly orphan so loadMessageHistory takes the merge+sort path
+        // (cold loads keep API order and would hide the bug).
+        handler.addSystemNotice("local-orphan")
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "assistant-q",
+                    rowId = 24461L,
+                    role = "assistant",
+                    content = JsonPrimitive("Suppress when chat is open?"),
+                    timestamp = 1_792_692_440.0837698,
+                ),
+                MessageItem(
+                    id = "user-yes",
+                    rowId = 24462L,
+                    role = "user",
+                    content = JsonPrimitive("Yes"),
+                    timestamp = 1_792_692_338.015632,
+                ),
+            ),
+        )
+
+        val transcript = handler.messages.value.filter { it.id in setOf("assistant-q", "user-yes") }
+        assertEquals(
+            listOf("assistant-q", "user-yes"),
+            transcript.map { it.id },
+        )
+        assertEquals(
+            listOf("Suppress when chat is open?", "Yes"),
+            transcript.map { it.content },
+        )
+    }
+
+    @Test
+    fun loadMessageHistory_ordersByNumericIdWhenRowIdMissingAndTimestampsInvert() {
+        // History payload arrives out of durable order (and timestamps invert).
+        // resolvedRowId from numeric id must restore transcript order even on a
+        // cold load that previously trusted payload order alone.
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "24462",
+                    role = "user",
+                    content = JsonPrimitive("Yes"),
+                    timestamp = 100.0,
+                ),
+                MessageItem(
+                    id = "24461",
+                    role = "assistant",
+                    content = JsonPrimitive("Question"),
+                    timestamp = 200.0,
+                ),
+            ),
+        )
+
+        assertEquals(listOf("24461", "24462"), handler.messages.value.map { it.id })
+    }
+
+    @Test
     fun loadMessageHistory_hydratesPersistedReactionsAndLetsServerWin() {
         fun metadata(emoji: String) = buildJsonObject {
             put("reactions", buildJsonArray {
