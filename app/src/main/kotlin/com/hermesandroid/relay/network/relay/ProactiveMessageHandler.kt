@@ -36,11 +36,12 @@ import kotlinx.serialization.json.jsonPrimitive
  *
  * The inbox is the **always-present** durable log — every received message is
  * recorded there. The `surfacing` hint then selects the *additional* surface:
- *  - `null` / `"default"` / `"notification"` → also raise a system notification
- *  - `"inbox"`                               → inbox only (silent)
- *  - `"session"`                             → also inject into the active chat
- *      session ([toSession]); falls back to a notification when no session sink
- *      is wired
+ *  - `null` / `"default"` → system notification unless the matching Thread is
+ *      already open and accepted the message ([injectIntoThread] returned true)
+ *  - `"notification"` → always raise a system notification (explicit force)
+ *  - `"inbox"`        → inbox only (silent)
+ *  - `"session"`      → also inject into the active chat session ([toSession]);
+ *      falls back to a notification when no destination accepts
  *
  * The [toInbox] / [toSession] sinks are injected by [ConnectionViewModel] so
  * the handler stays free of ViewModel/DataStore dependencies and unit-testable.
@@ -62,10 +63,11 @@ class ProactiveMessageHandler(
     var onReplyAck: ((String, String) -> Unit)? = null,
     /**
      * Show an inbound message inline in the Chat **Thread** it belongs to, when
-     * that Thread is currently open. Returns true if it was shown there — in
-     * which case the message is persisted but not also notified (you're already
-     * looking at the conversation). The unified-Threads counterpart of
-     * [toSession]; wired after construction.
+     * that Thread is currently open. Returns true if it was shown on-screen —
+     * in which case default/session surfacing skips the OS notification (you're
+     * already looking at the conversation). Explicit `surfacing=notification`
+     * still notifies. The unified-Threads counterpart of [toSession]; wired
+     * after construction.
      */
     var injectIntoThread: ((ProactiveMessage) -> Boolean)? = null,
     /** One callback per completed queued-message flush, never per message. */
@@ -102,9 +104,9 @@ class ProactiveMessageHandler(
     /** Route a parsed message: into the open Thread if it belongs there, else
      *  the durable inbox log + the surface its hint selects. */
     private fun dispatch(msg: ProactiveMessage) {
-        // The surfacing hint selects the additional surface. Thread injection
-        // is best-effort presentation of the persisted row, not itself a reason
-        // to suppress an explicitly requested notification.
+        // Surfacing selects the additional surface. Explicit "notification"
+        // always posts; default/null suppress when the open Thread already
+        // accepted the message (you're reading it — no tray flash).
         val notificationId = when (msg.surfacing?.lowercase()) {
             "inbox" -> {
                 injectIntoThread?.invoke(msg)
@@ -115,10 +117,14 @@ class ProactiveMessageHandler(
                     toSession?.invoke(msg) == true
                 if (delivered) null else notify(msg)
             }
-            // null / "default" / "notification" / anything unrecognized.
-            else -> {
+            "notification" -> {
                 injectIntoThread?.invoke(msg)
                 notify(msg)
+            }
+            // null / "default" / anything unrecognized.
+            else -> {
+                val delivered = injectIntoThread?.invoke(msg) == true
+                if (delivered) null else notify(msg)
             }
         }
         // Every message remains in the bounded local cache. Persist the exact
