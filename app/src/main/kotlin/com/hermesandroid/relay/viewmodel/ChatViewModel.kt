@@ -4631,6 +4631,7 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return false
         if (handler.currentSessionId.value == null) return false
         handler.addProactiveMessage(text)
+        updateCurrentSessionActivity(isStreaming = false, needsInput = false)
         return true
     }
 
@@ -4648,6 +4649,11 @@ class ChatViewModel : ViewModel() {
             MessageDeliveryStatus.DELIVERED
         }
         chatHandler?.updateDeliveryStatus(clientMsgId, resolved)
+        // Failed phone send never gets an inject — drop local working chrome.
+        if (resolved == MessageDeliveryStatus.FAILED) {
+            chatHandler?.settlePhoneTurnWorking()
+            updateCurrentSessionActivity(isStreaming = false, needsInput = false)
+        }
     }
 
     /**
@@ -4661,12 +4667,16 @@ class ChatViewModel : ViewModel() {
     fun injectThreadMessage(msg: ProactiveMessage): Boolean {
         val handler = chatHandler ?: return false
         val msgChatId = msg.chatId?.takeIf { it.isNotBlank() }
+        fun acceptInject(): Boolean {
+            handler.addAgentThreadMessage(
+                msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
+            )
+            updateCurrentSessionActivity(isStreaming = false, needsInput = false)
+            return true
+        }
         pendingThread?.let { pending ->
             if (msgChatId == null || msgChatId == pending.chatId) {
-                handler.addAgentThreadMessage(
-                    msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
-                )
-                return true
+                return acceptInject()
             }
         }
         // A freshly-created thread whose real session we're still switching to:
@@ -4675,10 +4685,7 @@ class ChatViewModel : ViewModel() {
         // set, so the very first reply doesn't fall through to a notification.
         creatingThread?.let { creating ->
             if (msgChatId == null || msgChatId == creating.chatId) {
-                handler.addAgentThreadMessage(
-                    msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
-                )
-                return true
+                return acceptInject()
             }
         }
         val activeId = handler.currentSessionId.value ?: return false
@@ -4691,10 +4698,7 @@ class ChatViewModel : ViewModel() {
         val belongs = knownChatId == null || msgChatId == null || knownChatId == msgChatId
         if (!belongs) return false
         if (msgChatId != null) threadChatIds[activeId] = msgChatId
-        handler.addAgentThreadMessage(
-            msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
-        )
-        return true
+        return acceptInject()
     }
 
     fun realtimeAgentContextMessages(maxMessages: Int = 14): List<RealtimeConversationContextMessage> {
@@ -9177,6 +9181,10 @@ class ChatViewModel : ViewModel() {
                     .toSet()
                 creatingThread = CreatingThread(pending.chatId, pending.name, knownIds)
                 send(textTransport.message, pending.chatId, null, messageId)
+                // Proactive path has no gateway deltas — arm local busy chrome.
+                handler.activeAgentName = currentAgentDisplayName()
+                handler.beginPhoneTurnWorking(handler.activeAgentName)
+                updateCurrentSessionActivity(isStreaming = true, needsInput = false)
                 switchToCreatedThread()
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
@@ -9197,6 +9205,11 @@ class ChatViewModel : ViewModel() {
             if (send != null) {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
                 send(textTransport.message, threadChatIds[activeThread.sessionId], null, messageId)
+                // Proactive path has no gateway deltas — arm local busy chrome
+                // (header streaming label, Stop, thinking dots) until inject.
+                handler.activeAgentName = currentAgentDisplayName()
+                handler.beginPhoneTurnWorking(handler.activeAgentName)
+                updateCurrentSessionActivity(isStreaming = true, needsInput = false)
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
             }
