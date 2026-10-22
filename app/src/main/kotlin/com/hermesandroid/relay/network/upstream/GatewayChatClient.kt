@@ -5170,6 +5170,20 @@ class GatewayChatClient(
         }
     }
 
+    /**
+     * Best-effort `session.interrupt` for a known live session id (e.g. phone
+     * Thread Stop when the dashboard WS can reach the same session). Does not
+     * require an [ActiveTurnHandle] — phone turns often have none.
+     */
+    fun interruptSession(sessionId: String) {
+        val sid = sessionId.trim()
+        if (sid.isEmpty()) return
+        Log.i(TAG, "session.interrupt requested reason=user_stop session=$sid")
+        scope.launch {
+            rpc("session.interrupt", buildJsonObject { put("session_id", sid) })
+        }
+    }
+
     private fun armCancelledTurnDrain(terminalRequired: Boolean) {
         val storedId = storedSessionId ?: return
         val liveId = liveSessionId ?: return
