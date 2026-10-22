@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - Android clears proactive/Threads OS notification tray banners when the matching conversation is open or a provisional Thread is opened, instead of leaving them until the user swipes them away.
+- Default proactive delivery no longer posts an OS notification when the matching Thread is already open and accepted the message (explicit `surfacing=notification` still forces one).
 
 ## [Android 1.19.0] - 2026-10-20
 
