@@ -453,6 +453,8 @@ class ChatHandler {
      * [ChatMessage.clientOnly] preserves it across the history reconcile.
      */
     fun addProactiveMessage(text: String) {
+        // A session inject is the phone-path reply surface — drop local working chrome.
+        settlePhoneTurnWorking()
         _messages.update { list ->
             val msg = ChatMessage(
                 id = "proactive-msg-${java.util.UUID.randomUUID()}",
@@ -478,6 +480,9 @@ class ChatHandler {
         agentName: String?,
         arrivedWhileAway: Boolean = false,
     ) {
+        // Phone replies arrive finished over proactive inject — settle the local
+        // "still working" shell that [beginPhoneTurnWorking] armed on send.
+        settlePhoneTurnWorking()
         val id = messageId?.let { "proactive-$it" } ?: "proactive-${java.util.UUID.randomUUID()}"
         val mediaHits = mutableListOf<Pair<String, MediaMarkerHit>>()
         val cleanedText = extractMediaMarkersFromContent(id, text, mediaHits)
@@ -497,6 +502,60 @@ class ChatHandler {
         }
         // The row must exist before the ViewModel attaches a loading card.
         mediaHits.forEach { (_, hit) -> dispatchMediaHit(id, hit) }
+    }
+
+    /**
+     * True for the empty client-only assistant shell armed when a phone Thread
+     * send leaves via the proactive channel (no gateway stream events).
+     */
+    private fun isPhoneWorkingPlaceholder(message: ChatMessage): Boolean =
+        message.clientOnly &&
+            message.role == MessageRole.ASSISTANT &&
+            message.isStreaming &&
+            message.content.isBlank() &&
+            message.toolCalls.isEmpty() &&
+            message.cards.isEmpty() &&
+            message.thinkingContent.isNullOrBlank()
+
+    /**
+     * Arm chat busy chrome for a phone-platform turn. Gateway/SSE paths set
+     * [isStreaming] from live deltas; phone Threads only get finished injects,
+     * so the UI would stay idle without this local placeholder.
+     *
+     * Returns the placeholder id (reuses an existing empty phone shell).
+     */
+    fun beginPhoneTurnWorking(agentName: String? = null): String {
+        val existing = _messages.value.findLast { isPhoneWorkingPlaceholder(it) }
+        if (existing != null) {
+            _isStreaming.value = true
+            return existing.id
+        }
+        val id = "phone-turn-working-${java.util.UUID.randomUUID()}"
+        addPlaceholderMessage(
+            ChatMessage(
+                id = id,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = System.currentTimeMillis(),
+                isStreaming = true,
+                agentName = agentName ?: activeAgentName,
+                clientOnly = true,
+            ),
+        )
+        return id
+    }
+
+    /**
+     * Drop the empty phone working shell and clear [isStreaming] when no other
+     * streaming rows remain. Does not touch non-clientOnly gateway placeholders.
+     */
+    fun settlePhoneTurnWorking() {
+        val hadPhonePlaceholder = _messages.value.any { isPhoneWorkingPlaceholder(it) }
+        if (!hadPhonePlaceholder) return
+        _messages.update { list -> list.filterNot { isPhoneWorkingPlaceholder(it) } }
+        if (_messages.value.none { it.isStreaming || it.isThinkingStreaming }) {
+            _isStreaming.value = false
+        }
     }
 
     /**
