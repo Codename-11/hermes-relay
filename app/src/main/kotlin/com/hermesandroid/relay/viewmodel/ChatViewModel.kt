@@ -4654,10 +4654,12 @@ class ChatViewModel : ViewModel() {
     /**
      * Render an inbound agent message inline in the open Thread when it belongs
      * there (the unified-Threads live path) — wired to the proactive handler's
-     * `injectIntoThread`. Returns true when shown in-thread, so the handler
-     * suppresses the notification + inbox entry. Matches the open Thread (or a
-     * pending "+ New Thread" draft) by chat_id, falling back to "accept" when
-     * either side has no parseable chat_id (the single home thread).
+     * `injectIntoThread`. Always inserts when the Thread matches; returns true
+     * only when the chat is on-screen in the foreground so the handler can
+     * suppress the OS notification (you're already looking at it). Matches the
+     * open Thread (or a pending "+ New Thread" draft) by chat_id, falling back
+     * to "accept" when either side has no parseable chat_id (the single home
+     * thread).
      */
     fun injectThreadMessage(msg: ProactiveMessage): Boolean {
         val handler = chatHandler ?: return false
@@ -4667,7 +4669,7 @@ class ChatViewModel : ViewModel() {
                 handler.addAgentThreadMessage(
                     msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
                 )
-                return true
+                return isConversationOnScreen()
             }
         }
         // A freshly-created thread whose real session we're still switching to:
@@ -4679,7 +4681,7 @@ class ChatViewModel : ViewModel() {
                 handler.addAgentThreadMessage(
                     msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
                 )
-                return true
+                return isConversationOnScreen()
             }
         }
         val activeId = handler.currentSessionId.value ?: return false
@@ -4695,8 +4697,12 @@ class ChatViewModel : ViewModel() {
         handler.addAgentThreadMessage(
             msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
         )
-        return true
+        return isConversationOnScreen()
     }
+
+    /** True when Chat is visible and the process is foreground — safe to skip OS notify. */
+    private fun isConversationOnScreen(): Boolean =
+        chatVisible && AppForegroundTracker.isForeground.value
 
     fun realtimeAgentContextMessages(maxMessages: Int = 14): List<RealtimeConversationContextMessage> {
         val handler = chatHandler ?: return emptyList()
