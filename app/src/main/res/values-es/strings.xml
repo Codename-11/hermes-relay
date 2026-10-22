@@ -4313,8 +4313,8 @@
     <string name="voice_streaming_stopped_basic_next">La voz en streaming se detuvo. El resto usará la voz básica. Revisa los ajustes del proveedor de voz.</string>
     <string name="stats_tts_queue_wait">Espera de la cola de audio</string>
     <string name="stats_tts_player_start">Demora de inicio del reproductor</string>
-    <string name="chat_settings_unread_indicators">Indicadores de no leídos</string>
-    <string name="chat_settings_show_unread_indicators">Mostrar indicadores de no leídos</string>
+    <string name="chat_settings_unread_indicators">Indicadores de mensajes no leídos</string>
+    <string name="chat_settings_show_unread_indicators">Mostrar indicadores de mensajes no leídos</string>
     <string name="chat_settings_show_unread_indicators_desc">Mostrar insignias de mensajes no leídos en chats, sesiones y perfiles. No cambia el estado de lectura ni las notificaciones de Android.</string>
     <string name="chat_unread_reply">Respuesta sin leer</string>
     <string name="chat_unread_conversations">Conversaciones sin leer: %1$d</string>
