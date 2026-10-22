@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- An explicit `com.hermesandroid.relay.action.NEW_CHAT` launch intent opens an empty chat on a chosen gateway URL and agent profile with the composer focused, for home-screen widgets, shortcuts, and automation. It never sends, fails closed with a warning when the gateway or profile is unknown, and is denied in Supervised Mode. See the New chat from a widget guide.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
