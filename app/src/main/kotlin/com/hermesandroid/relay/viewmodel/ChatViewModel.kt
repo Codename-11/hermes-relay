@@ -141,6 +141,7 @@ import com.hermesandroid.relay.notifications.cachedReplyAvatar
 import com.hermesandroid.relay.notifications.ChatNotificationTarget
 import com.hermesandroid.relay.notifications.TurnCompleteNotifier
 import com.hermesandroid.relay.notifications.InteractionRequestNotifier
+import com.hermesandroid.relay.notifications.ProactiveMessageNotifier
 import com.hermesandroid.relay.reliability.ReliabilityCenter
 import com.hermesandroid.relay.reliability.SessionResetEvidence
 import com.hermesandroid.relay.ui.components.ServerImageResult
@@ -6140,6 +6141,9 @@ class ChatViewModel : ViewModel() {
             .sortedBy { it.receivedAt }
         if (ordered.isEmpty()) return
 
+        // Opening the Thread means the user has seen those messages — clear tray.
+        appContext?.let { ProactiveMessageNotifier.cancelForChat(it, normalizedChatId) }
+
         exitProvisionalThread()
         recordPreResetEvidence(handler, "open_proactive_thread")
 
@@ -7705,11 +7709,20 @@ class ChatViewModel : ViewModel() {
         val context = appContext ?: return
         val binding = conversationBinding.value
         val sessionId = chatHandler?.currentSessionId?.value
+        pendingThread?.chatId?.let { ProactiveMessageNotifier.cancelForChat(context, it) }
         if (_isLoadingHistory.value || binding.sessionId != sessionId) return
         val target = ChatNotificationTarget.from(binding.contextKey, sessionId) ?: return
         pendingReplyNotifications.remove(target)
         TurnCompleteNotifier.cancel(context, target)
         InteractionRequestNotifier.cancelConversation(context, target)
+        // Threads / proactive banners: cancel by phone chat_id (session id,
+        // learned mapping, or default "phone" for unmarked home DMs).
+        ProactiveMessageNotifier.cancelForChat(context, sessionId)
+        threadChatIds[sessionId]?.let { ProactiveMessageNotifier.cancelForChat(context, it) }
+        val active = chatHandler?.sessions?.value?.firstOrNull { it.sessionId == sessionId }
+        if (active?.source == "phone" && threadChatIds[sessionId] == null) {
+            ProactiveMessageNotifier.cancelForChat(context, ProactiveMessageNotifier.DEFAULT_CHAT_ID)
+        }
         viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             runCatching { chatUnreadStore?.markRead(requireNotNull(binding.contextKey), target.sessionId) }
         }

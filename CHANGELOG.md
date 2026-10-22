@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android clears proactive/Threads OS notification tray banners when the matching conversation is open or a provisional Thread is opened, instead of leaving them until the user swipes them away.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
