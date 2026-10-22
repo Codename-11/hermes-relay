@@ -259,11 +259,49 @@ class ChatHandlerTest {
         handler.addAgentThreadMessage("Done.", "reply-1", "Hermes")
 
         assertFalse(handler.isStreaming.value)
+        assertFalse(handler.isPhoneTurnInFlight())
         val msgs = handler.messages.value
         assertEquals(1, msgs.size)
         assertEquals("Done.", msgs.single().content)
         assertEquals("proactive-reply-1", msgs.single().id)
         assertFalse(msgs.single().isStreaming)
+    }
+
+    @Test
+    fun addAgentThreadMessage_interimKeepsPhoneTurnWorkingChrome() {
+        handler.beginPhoneTurnWorking(agentName = "Hermes")
+        assertTrue(handler.isStreaming.value)
+
+        handler.addAgentThreadMessage(
+            "Compacting context…",
+            "status-1",
+            "Hermes",
+            turnContinues = true,
+        )
+
+        assertTrue(handler.isPhoneTurnInFlight())
+        assertTrue(handler.isStreaming.value)
+        val msgs = handler.messages.value
+        assertEquals(2, msgs.size)
+        assertEquals("Compacting context…", msgs[0].content)
+        assertFalse(msgs[0].isStreaming)
+        assertTrue(msgs[1].isStreaming)
+        assertTrue(msgs[1].content.isBlank())
+        assertTrue(msgs[1].clientOnly)
+    }
+
+    @Test
+    fun addAgentThreadMessage_finalAfterInterimSettlesChrome() {
+        handler.beginPhoneTurnWorking()
+        handler.addAgentThreadMessage("Working…", "s1", null, turnContinues = true)
+        assertTrue(handler.isStreaming.value)
+
+        handler.addAgentThreadMessage("Done.", "final-1", "Hermes", turnContinues = false)
+
+        assertFalse(handler.isPhoneTurnInFlight())
+        assertFalse(handler.isStreaming.value)
+        assertTrue(handler.messages.value.none { it.isStreaming && it.content.isBlank() })
+        assertEquals("Done.", handler.messages.value.last().content)
     }
 
     @Test
@@ -278,12 +316,25 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun addProactiveMessage_interimKeepsPhoneTurnWorkingChrome() {
+        handler.beginPhoneTurnWorking()
+
+        handler.addProactiveMessage("Still working…", turnContinues = true)
+
+        assertTrue(handler.isPhoneTurnInFlight())
+        assertTrue(handler.isStreaming.value)
+        assertTrue(handler.messages.value.any { it.content == "Still working…" })
+        assertTrue(handler.messages.value.any { it.isStreaming && it.content.isBlank() })
+    }
+
+    @Test
     fun settlePhoneTurnWorking_clearsEmptyPlaceholderWithoutReply() {
         handler.beginPhoneTurnWorking()
 
         handler.settlePhoneTurnWorking()
 
         assertFalse(handler.isStreaming.value)
+        assertFalse(handler.isPhoneTurnInFlight())
         assertTrue(handler.messages.value.isEmpty())
     }
 
