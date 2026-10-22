@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="new_chat_launch_gateway_not_found">Não foi possível iniciar um novo chat: esse gateway não está configurado neste dispositivo.</string>
+    <string name="new_chat_launch_profile_not_found">Não foi possível iniciar um novo chat: esse perfil de agente não está disponível neste gateway.</string>
+    <string name="new_chat_launch_unavailable">Não é possível iniciar um novo chat dessa forma agora.</string>
+</resources>

@@ -3887,16 +3887,30 @@ class ChatViewModel : ViewModel() {
     private val _composerPrefill = Channel<String>(capacity = Channel.CONFLATED)
     val composerPrefill = _composerPrefill.receiveAsFlow()
 
+    /** True once a chat handler and a gateway/API client exist to back a fresh draft. */
+    val canOpenFreshDraft: Boolean
+        get() = chatHandler != null &&
+            ((streamingEndpoint == "gateway" && gatewayClient != null) || apiClient != null)
+
     /** Open a fresh, reviewable draft for Android sharesheet content. */
     fun openSharedContentDraft(
         onReady: (String?) -> Unit,
         onFailure: () -> Unit,
     ): Boolean {
-        if (chatHandler == null) return false
-        val canCreateDraft =
-            (streamingEndpoint == "gateway" && gatewayClient != null) || apiClient != null
-        if (!canCreateDraft) return false
+        if (!canOpenFreshDraft) return false
         createNewChat(onReady = onReady, onFailure = onFailure)
+        return true
+    }
+
+    /**
+     * Open an empty draft for the explicit new-chat launch intent on the
+     * currently selected profile. Returns false when the chat runtime is not
+     * ready or Supervised Mode forbids new chats; nothing is ever sent.
+     */
+    fun openNewChatDraft(): Boolean {
+        if (!canOpenFreshDraft) return false
+        if (supervisedModePolicy.enabled && !supervisedModePolicy.capabilities.newChat) return false
+        createNewChat()
         return true
     }
 

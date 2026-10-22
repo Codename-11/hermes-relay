@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="new_chat_launch_gateway_not_found">Не удалось начать новый чат: этот шлюз не настроен на этом устройстве.</string>
+    <string name="new_chat_launch_profile_not_found">Не удалось начать новый чат: этот профиль агента недоступен на этом шлюзе.</string>
+    <string name="new_chat_launch_unavailable">Сейчас нельзя начать новый чат таким способом.</string>
+</resources>

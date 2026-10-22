@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="new_chat_launch_gateway_not_found">无法开始新聊天：此设备上未设置该网关。</string>
+    <string name="new_chat_launch_profile_not_found">无法开始新聊天：该智能体配置文件在此网关上不可用。</string>
+    <string name="new_chat_launch_unavailable">目前无法通过此方式开始新聊天。</string>
+</resources>
