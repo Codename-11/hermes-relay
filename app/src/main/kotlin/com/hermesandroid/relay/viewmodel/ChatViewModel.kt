@@ -4668,10 +4668,21 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return false
         val msgChatId = msg.chatId?.takeIf { it.isNotBlank() }
         fun acceptInject(): Boolean {
+            val turnContinues =
+                handler.isPhoneTurnInFlight() &&
+                    (msg.interim || looksLikePhoneTurnStatus(msg.text))
             handler.addAgentThreadMessage(
-                msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
+                msg.text,
+                msg.messageId,
+                msg.title,
+                msg.arrivedWhileAway,
+                turnContinues = turnContinues,
             )
-            updateCurrentSessionActivity(isStreaming = false, needsInput = false)
+            // Keep session activity busy through interim status; clear on final.
+            updateCurrentSessionActivity(
+                isStreaming = turnContinues || handler.isStreaming.value,
+                needsInput = false,
+            )
             return true
         }
         pendingThread?.let { pending ->
@@ -12476,3 +12487,33 @@ private fun String.limitPreview(maxChars: Int): String {
     if (length <= maxChars) return this
     return take(maxChars.coerceAtLeast(80)).trimEnd() + "..."
 }
+
+/**
+ * Heuristic for mid-turn phone status bubbles that arrived without
+ * `metadata.interim` (older hosts / plain send). Keeps busy chrome armed.
+ */
+internal fun looksLikePhoneTurnStatus(text: String): Boolean {
+    val t = text.trim()
+    if (t.isEmpty() || t.length > 280) return false
+    return PHONE_TURN_STATUS_RE.containsMatchIn(t)
+}
+
+private val PHONE_TURN_STATUS_RE = Regex(
+    pattern = listOf(
+        """compact""",
+        """compress""",
+        """summariz""",
+        """progress""",
+        """still working""",
+        """working\b""",
+        """thinking""",
+        """recall""",
+        """hindsight""",
+        """tool\b""",
+        """⏳""",
+        """⟳""",
+        """…\s*$""",
+        """\.\.\.\s*$""",
+    ).joinToString("|"),
+    option = RegexOption.IGNORE_CASE,
+)
