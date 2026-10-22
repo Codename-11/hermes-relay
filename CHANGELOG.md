@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Phone Threads and the home DM show the same mid-turn busy chrome (header streaming label, Stop, thinking dots) while a proactive reply is in flight. Those turns never rode the gateway stream, so the UI stayed idle until the finished bubble landed.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
