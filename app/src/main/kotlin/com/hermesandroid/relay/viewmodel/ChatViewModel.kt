@@ -12491,29 +12491,42 @@ private fun String.limitPreview(maxChars: Int): String {
 /**
  * Heuristic for mid-turn phone status bubbles that arrived without
  * `metadata.interim` (older hosts / plain send). Keeps busy chrome armed.
+ *
+ * Must stay **narrow**: bare substring matches like `working\b` / `tool\b`
+ * falsely classify final replies ("Not working — idle…", "tool card shipped")
+ * as interim and leave Stop / streaming stuck after the Mac turn ends.
+ * Prefer whole-line / lead-in status shapes ending with ellipsis.
  */
 internal fun looksLikePhoneTurnStatus(text: String): Boolean {
     val t = text.trim()
-    if (t.isEmpty() || t.length > 280) return false
+    if (t.isEmpty() || t.length > 160) return false
+    // Finals are multi-line or multi-clause; status is one short bubble.
+    if (t.contains('\n')) return false
+    if (sentenceEndCount(t) >= 2) return false
     return PHONE_TURN_STATUS_RE.containsMatchIn(t)
 }
 
+private fun sentenceEndCount(text: String): Int =
+    Regex("""[.!?]""").findAll(text).count()
+
+/**
+ * Whole-line / lead-in mid-turn shapes only. Do not match vocabulary inside
+ * ordinary replies ("not working", "compaction tool card", "progress later").
+ */
 private val PHONE_TURN_STATUS_RE = Regex(
     pattern = listOf(
-        """compact""",
-        """compress""",
-        """summariz""",
-        """progress""",
-        """still working""",
-        """working\b""",
-        """thinking""",
-        """recall""",
-        """hindsight""",
-        """tool\b""",
-        """⏳""",
-        """⟳""",
-        """…\s*$""",
-        """\.\.\.\s*$""",
+        // Lead-in only — never match vocabulary mid-sentence ("Not working…").
+        """^(still\s+)?working\b""",
+        """^(compact(ing)?|compress(ing)?|summariz\w*)\b""",
+        """^progress\b""",
+        """^thinking\b""",
+        """^(recalling|recall|hindsight)\b""",
+        """^running\s+tool\b""",
+        """^tool\b""",
+        """^⏳""",
+        """^⟳""",
+        // Explicit mid-turn phrase anywhere only when whole bubble is that phrase + ellipsis.
+        """^still\s+working\b.*([…\u2026]|\.\.\.)\s*$""",
     ).joinToString("|"),
     option = RegexOption.IGNORE_CASE,
 )
