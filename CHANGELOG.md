@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Chat history keeps durable row order after context compaction. Timestamp-only sorting no longer places a short reply such as "Yes" above the question it answered.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
