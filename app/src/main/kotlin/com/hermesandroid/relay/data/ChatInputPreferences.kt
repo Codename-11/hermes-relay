@@ -56,6 +56,8 @@ class ChatInputPreferencesRepository(
             booleanPreferencesKey("convert_large_pastes_to_attachments")
         internal val KEY_SHOW_GIT_WORKSPACE_IN_CHAT =
             booleanPreferencesKey("show_git_workspace_in_chat")
+        internal val KEY_SHOW_UNREAD_INDICATORS =
+            booleanPreferencesKey("show_unread_indicators")
     }
 
     val physicalKeyboardEnterBehavior: Flow<PhysicalKeyboardEnterBehavior> = dataStore.data
@@ -72,6 +74,14 @@ class ChatInputPreferencesRepository(
 
     suspend fun setBusyMessageAction(action: BusyMessageAction) {
         dataStore.edit { it[KEY_BUSY_MESSAGE_ACTION] = action.storedValue }
+    }
+
+    val showUnreadIndicators: Flow<Boolean> = dataStore.data
+        .map { preferences -> preferences[KEY_SHOW_UNREAD_INDICATORS] ?: true }
+        .distinctUntilChanged()
+
+    suspend fun setShowUnreadIndicators(enabled: Boolean) {
+        dataStore.edit { it[KEY_SHOW_UNREAD_INDICATORS] = enabled }
     }
 
     val convertLargePastesToAttachments: Flow<Boolean> = dataStore.data

@@ -4377,4 +4377,7 @@
     <string name="voice_settings_host_barge_in_desc">Управляет прерываниями в голосовом режиме хоста Hermes, но не микрофоном этого телефона. Используйте Прерывание на телефоне на вкладке Listening.</string>
     <string name="voice_settings_speak_tool_updates">Озвучивать уведомления инструментов</string>
     <string name="voice_settings_speak_tool_updates_desc">Встроенные уведомления инструментов звучат на английском. Отключите их, чтобы слышать ответы ассистента без этих уведомлений. Режим «Только финальный ответ» также отключает их озвучивание.</string>
+    <string name="chat_settings_unread_indicators">Индикаторы непрочитанного</string>
+    <string name="chat_settings_show_unread_indicators">Показывать индикаторы непрочитанного</string>
+    <string name="chat_settings_show_unread_indicators_desc">Показывать значки непрочитанного в чатах, сеансах и профилях. Не изменяет ни статус прочтения, ни уведомления Android.</string>
 </resources>
