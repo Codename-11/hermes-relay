@@ -1376,7 +1376,8 @@ class ChatHandler {
      *  - a server message whose id matches a local row UPDATES that row's
      *    server-authoritative fields (content, tool calls, cards, reasoning)
      *    in place while keeping every client-only field;
-     *  - a server message with no local row is INSERTED in timestamp order;
+     *  - a server message with no local row is INSERTED in durable row-id order
+     *    (timestamp only breaks ties / orders client-only orphans);
      *  - a client-only orphan ([ChatMessage.clientOnly], no server row) is KEPT;
      *  - a local row that WAS server-backed (not clientOnly) but is no longer in
      *    the transcript is DROPPED (genuinely deleted / forked / truncated
@@ -1724,15 +1725,29 @@ class ChatHandler {
                     trace.assistantText.trim() in syncedRealtimeTurnContents
                 )
         }
+        // Prefer durable row id (display_order / SQLite id) over wall-clock
+        // timestamp. Compaction rewrites older assistant rows with a later
+        // timestamp while following user replies keep their original earlier
+        // stamp — timestamp-only order puts e.g. "Yes" before the question.
+        // When rowId is absent (UUID history / clientOnly), keep the first-seen
+        // load index so coalesceRenderedHistoryItems can pin a replayed domain
+        // id at its original transcript slot even if the latest snapshot carries
+        // a newer timestamp. Client-only orphans are not in loadedOrder and sort
+        // after server rows, then by timestamp.
+        val loadedOrder = HashMap<String, Int>(loaded.size)
+        loaded.forEachIndexed { index, msg -> loadedOrder.putIfAbsent(msg.id, index) }
+        fun transcriptComparator(): Comparator<ChatMessage> =
+            compareBy<ChatMessage>(
+                { it.rowId ?: Long.MAX_VALUE },
+                { loadedOrder[it.id] ?: Int.MAX_VALUE },
+                { it.timestamp },
+                { it.id },
+            )
+        val orderedLoaded = loaded.sortedWith(transcriptComparator())
         val merged = if (preservedLocal.isEmpty()) {
-            loaded
+            orderedLoaded
         } else {
-            // Merge by timestamp so preserved orphans interleave with the
-            // reloaded server messages in chronological order. Voice trace IDs
-            // carry `System.currentTimeMillis()` in their suffix (see
-            // appendLocalVoiceIntentTrace); other orphans keep their live
-            // ChatMessage.timestamp — the source of truth either way.
-            (loaded + preservedLocal).sortedBy { it.timestamp }
+            (orderedLoaded + preservedLocal).sortedWith(transcriptComparator())
         }
 
         _messages.value = if (merged.size > MAX_MESSAGES) merged.takeLast(MAX_MESSAGES) else merged
