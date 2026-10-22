@@ -225,6 +225,89 @@ class ChatHandlerTest {
         assertEquals(listOf("same-token-123456"), tokens)
     }
 
+    // --- Phone-turn local working chrome (proactive path has no gateway stream) ---
+
+    @Test
+    fun beginPhoneTurnWorking_setsStreamingAndEmptyClientOnlyPlaceholder() {
+        val id = handler.beginPhoneTurnWorking(agentName = "Hermes")
+
+        assertTrue(handler.isStreaming.value)
+        val msg = handler.messages.value.single()
+        assertEquals(id, msg.id)
+        assertEquals(MessageRole.ASSISTANT, msg.role)
+        assertEquals("", msg.content)
+        assertTrue(msg.isStreaming)
+        assertTrue(msg.clientOnly)
+        assertEquals("Hermes", msg.agentName)
+    }
+
+    @Test
+    fun beginPhoneTurnWorking_reusesExistingEmptyPlaceholder() {
+        val first = handler.beginPhoneTurnWorking()
+        val second = handler.beginPhoneTurnWorking()
+
+        assertEquals(first, second)
+        assertEquals(1, handler.messages.value.size)
+        assertTrue(handler.isStreaming.value)
+    }
+
+    @Test
+    fun addAgentThreadMessage_settlesPhoneTurnWorkingPlaceholder() {
+        handler.beginPhoneTurnWorking()
+        assertTrue(handler.isStreaming.value)
+
+        handler.addAgentThreadMessage("Done.", "reply-1", "Hermes")
+
+        assertFalse(handler.isStreaming.value)
+        val msgs = handler.messages.value
+        assertEquals(1, msgs.size)
+        assertEquals("Done.", msgs.single().content)
+        assertEquals("proactive-reply-1", msgs.single().id)
+        assertFalse(msgs.single().isStreaming)
+    }
+
+    @Test
+    fun addProactiveMessage_settlesPhoneTurnWorkingPlaceholder() {
+        handler.beginPhoneTurnWorking()
+
+        handler.addProactiveMessage("Session notice")
+
+        assertFalse(handler.isStreaming.value)
+        assertTrue(handler.messages.value.none { it.isStreaming && it.content.isBlank() })
+        assertTrue(handler.messages.value.any { it.content == "Session notice" })
+    }
+
+    @Test
+    fun settlePhoneTurnWorking_clearsEmptyPlaceholderWithoutReply() {
+        handler.beginPhoneTurnWorking()
+
+        handler.settlePhoneTurnWorking()
+
+        assertFalse(handler.isStreaming.value)
+        assertTrue(handler.messages.value.isEmpty())
+    }
+
+    @Test
+    fun settlePhoneTurnWorking_doesNotDropGatewayStreamingPlaceholder() {
+        handler.addPlaceholderMessage(
+            ChatMessage(
+                id = "gw-assist",
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = 1L,
+                isStreaming = true,
+                clientOnly = false,
+            ),
+        )
+
+        handler.settlePhoneTurnWorking()
+
+        assertTrue(handler.isStreaming.value)
+        assertEquals(1, handler.messages.value.size)
+        assertEquals("gw-assist", handler.messages.value.single().id)
+        assertTrue(handler.messages.value.single().isStreaming)
+    }
+
     @Test
     fun onTextDelta_setsStreamingFlag() {
         handler.onTextDelta("assist-1", "delta")
