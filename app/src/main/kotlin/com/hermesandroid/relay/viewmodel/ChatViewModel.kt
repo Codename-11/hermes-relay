@@ -688,6 +688,14 @@ class ChatViewModel : ViewModel() {
     /** Test seam for the recovery poll cadence — production uses the defaults. */
     internal var recoveryTimingOverride: ChatStreamRecovery.Timing? = null
 
+    /**
+     * Whether the device has a usable network right now; wired by the runtime
+     * binder from ConnectionViewModel.networkStatus. Answer recovery uses it so
+     * history reads that fail while the phone is asleep or offline do not count
+     * toward giving up. Defaults to "online", the previous behaviour.
+     */
+    var networkAvailable: () -> Boolean = { true }
+
     private val _recoveringAnswer = MutableStateFlow(false)
 
     /**
@@ -4255,6 +4263,23 @@ class ChatViewModel : ViewModel() {
      * profile/session that created it; consulting the mutable endpoint here can
      * otherwise fall through to the shared API database.
      */
+    private fun recordRecoveryFetchFailure(sessionId: String, error: Exception, counted: Boolean) {
+        DiagnosticsLog.record(
+            category = DiagnosticCategory.Session,
+            severity = if (counted) DiagnosticSeverity.Warning else DiagnosticSeverity.Info,
+            title = "Answer recovery: history read failed",
+            detail = "stored_session=$sessionId; counted=$counted; " +
+                "error=${error::class.java.simpleName}: ${error.message.orEmpty()}",
+            operation = "recover dropped answer",
+            endpointRole = "gateway",
+            suggestion = if (counted) {
+                "Check that the Dashboard is reachable on the active route."
+            } else {
+                "The device was offline; recovery keeps polling and will not give up for this."
+            },
+        )
+    }
+
     private suspend fun loadGatewaySessionHistory(
         sessionId: String,
         requireProfileScope: Boolean = false,
@@ -8604,6 +8629,8 @@ class ChatViewModel : ViewModel() {
                 )
             },
             timing = recoveryTimingOverride ?: ChatStreamRecovery.Timing(),
+            isNetworkAvailable = { networkAvailable() },
+            onFetchFailure = { error, counted -> recordRecoveryFetchFailure(checkpoint.sessionId, error, counted) },
         )
         streamRecovery = recovery
         recovery.start(
@@ -8804,6 +8831,8 @@ class ChatViewModel : ViewModel() {
                 )
             },
             timing = recoveryTimingOverride ?: ChatStreamRecovery.Timing(),
+            isNetworkAvailable = { networkAvailable() },
+            onFetchFailure = { error, counted -> recordRecoveryFetchFailure(sessionId, error, counted) },
         )
         streamRecovery = recovery
         recovery.start(
