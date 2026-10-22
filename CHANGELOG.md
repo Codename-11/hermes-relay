@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - Phone Threads and the home DM show the same mid-turn busy chrome (header streaming label, Stop, thinking dots) while a proactive reply is in flight. Those turns never rode the gateway stream, so the UI stayed idle until the finished bubble landed.
+- Phone busy chrome no longer drops on the first mid-turn status inject (compaction notices, progress, interim commentary). Interim metadata keeps streaming/Stop armed until the final reply or an explicit settle.
 
 ## [Android 1.19.0] - 2026-10-20
 
