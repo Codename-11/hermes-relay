@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Phone Stop now interrupts the Mac turn. Phone Threads have no gateway ActiveTurnHandle, so Stop previously only cleared local chrome; it now sends platform `/stop` (and best-effort `session.interrupt`) so the gateway runner halts tools.
+- Phone Threads and the home DM show the same mid-turn busy chrome (header streaming label, Stop, thinking dots) while a proactive reply is in flight. Those turns never rode the gateway stream, so the UI stayed idle until the finished bubble landed.
+- Phone busy chrome no longer drops on the first mid-turn status inject (compaction notices, progress, interim commentary). Interim metadata keeps streaming/Stop armed until the final reply or an explicit settle.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
