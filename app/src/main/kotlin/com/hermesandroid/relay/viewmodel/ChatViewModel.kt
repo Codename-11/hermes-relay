@@ -11295,6 +11295,10 @@ class ChatViewModel : ViewModel() {
         clearPendingAskAfterInterrupt()
         clearTurnCheckpoint(preserveQueue = true)
         AppAnalytics.onStreamCancelled()
+        // Phone Threads never own a Gateway ActiveTurnHandle — cancel() above
+        // is a no-op for Mac work. Send platform /stop so the gateway runner
+        // interrupts the live phone session (same path as Telegram /stop).
+        interruptPhoneMacTurnIfNeeded()
         chatHandler?.let { handler ->
             val streamingMsg = handler.messages.value.findLast { it.isStreaming }
             if (streamingMsg != null) {
@@ -11306,6 +11310,43 @@ class ChatViewModel : ViewModel() {
                 // Stop must still be an unconditional escape hatch.
                 handler.clearStreamingStatus()
             }
+            if (handler.isPhoneTurnInFlight()) {
+                handler.settlePhoneTurnWorking()
+            }
+        }
+        updateCurrentSessionActivity(isStreaming = false, needsInput = false)
+    }
+
+    /**
+     * Phone / Threads turns run on the gateway **platform** adapter (proactive
+     * channel), not under [activeStream]. Local chrome alone must not be the
+     * stop path — ship `/stop` so Mac-side tools halt.
+     */
+    private fun interruptPhoneMacTurnIfNeeded() {
+        val handler = chatHandler ?: return
+        val sessionId = handler.currentSessionId.value
+        val active = sessionId?.let { sid ->
+            handler.sessions.value.firstOrNull { it.sessionId == sid }
+        }
+        val phoneTurn =
+            handler.isPhoneTurnInFlight() ||
+                active?.source == "phone" ||
+                creatingThread != null ||
+                pendingThread != null
+        if (!phoneTurn) return
+        val chatId = when {
+            creatingThread != null -> creatingThread?.chatId
+            pendingThread != null -> pendingThread?.chatId
+            sessionId != null -> threadChatIds[sessionId]
+            else -> null
+        } ?: "phone"
+        val send = onProactiveReply
+        if (send != null) {
+            send("/stop", chatId, null, "phone-stop-${UUID.randomUUID()}")
+        }
+        // Best-effort belt when this session is also live on the dashboard WS.
+        sessionId?.takeIf { it.isNotBlank() }?.let { sid ->
+            gatewayClient?.interruptSession(sid)
         }
     }
 

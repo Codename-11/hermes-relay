@@ -2680,6 +2680,36 @@ class ChatViewModelGatewayInboundTurnTest {
     }
 
     @Test
+    fun stopOnPhoneTurnSendsPlatformStopAndSettlesChrome() {
+        // Phone Threads have no Gateway ActiveTurnHandle — Stop must hit the
+        // platform /stop path so the Mac runner actually interrupts.
+        val proactive = mutableListOf<Pair<String, String?>>()
+        viewModel.onProactiveReply = { text, chatId, _, _ ->
+            proactive += text to chatId
+        }
+        handler.addSession(
+            com.hermesandroid.relay.data.ChatSession(
+                sessionId = "phone-session",
+                title = "Phone",
+                model = null,
+                source = "phone",
+            ),
+        )
+        handler.setSessionId("phone-session")
+        viewModel.seedThreadChatIds(mapOf("phone-session" to "phone"))
+        handler.beginPhoneTurnWorking("Hermes")
+        assertTrue(handler.isPhoneTurnInFlight())
+        assertTrue(handler.isStreaming.value)
+
+        viewModel.cancelStream()
+
+        assertEquals(listOf("/stop" to "phone"), proactive)
+        assertFalse(handler.isPhoneTurnInFlight())
+        assertFalse(handler.isStreaming.value)
+        // Primary path is platform /stop (above). session.interrupt is optional belt.
+    }
+
+    @Test
     fun stopClearsStaleBusyStateAfterTerminalBubbleAlreadySettled() {
         // Exercise Stop's route-independent fallback without the Gateway
         // orphan-state observer settling this synthetic state first.
