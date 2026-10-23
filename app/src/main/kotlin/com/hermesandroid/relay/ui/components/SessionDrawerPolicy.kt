@@ -192,6 +192,33 @@ private val SessionDrawerStatus.displayLabel: String
         SessionDrawerStatus.Idle -> "Idle"
     }
 
+internal fun sessionMatchesContentSearch(
+    sessionId: String,
+    contentMatchIds: Set<String>,
+): Boolean = sessionId in contentMatchIds
+
+internal fun mergeContentSearchSessions(
+    loaded: List<ChatSession>,
+    hits: List<ChatSession>,
+): List<ChatSession> {
+    if (hits.isEmpty()) return loaded
+    val seen = loaded.mapTo(mutableSetOf()) { it.sessionId }
+    return loaded + hits.filter { seen.add(it.sessionId) }
+}
+
+internal fun chatSessionFromSearchHit(
+    sessionId: String,
+    title: String?,
+    preview: String?,
+    model: String?,
+    source: String?,
+): ChatSession = ChatSession(
+    sessionId = sessionId,
+    title = title?.takeIf { it.isNotBlank() } ?: preview?.takeIf { it.isNotBlank() },
+    model = model,
+    source = source,
+)
+
 private fun updatedBucket(timestamp: Long, nowMillis: Long): String {
     if (timestamp <= 0L) return "Older"
     val age = (nowMillis - timestamp).coerceAtLeast(0L)

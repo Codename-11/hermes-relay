@@ -323,6 +323,9 @@ fun SessionDrawerContent(
     onTogglePin: (() -> Unit)? = null,
     /** Whether the sidebar pin is currently active (drives the control's state). */
     pinned: Boolean = false,
+    /** Gateway message-body hits for the current query. Empty when the query is blank. */
+    contentSearchSessions: List<ChatSession> = emptyList(),
+    onSearchQueryChange: (String) -> Unit = {},
 ) {
     var renameDialogTarget by remember { mutableStateOf<Pair<ProfileSessionRow, Boolean>?>(null) }
     var newThreadDialog by remember { mutableStateOf(false) }
@@ -339,6 +342,8 @@ fun SessionDrawerContent(
     var viewOptions by remember { mutableStateOf(SessionDrawerViewOptions()) }
     val listState = rememberLazyListState()
     val trimmedQuery = query.trim()
+    LaunchedEffect(trimmedQuery) { onSearchQueryChange(trimmedQuery) }
+    val contentMatchIds = contentSearchSessions.mapTo(mutableSetOf()) { it.sessionId }
     // Threads affordance shows when the capability is active OR there's already at least one
     // agent Thread (source=phone) in the list. If the filter is on Threads but they've
     // vanished, fall back to All so the drawer never gets stuck on an empty hidden filter.
@@ -354,7 +359,8 @@ fun SessionDrawerContent(
             source = "phone",
         )
     }
-    val scopedRows = (sessions + provisionalSessions).map { ProfileSessionRow(activeProfileName, it) }
+    val scopedRows = mergeContentSearchSessions(sessions + provisionalSessions, contentSearchSessions)
+        .map { ProfileSessionRow(activeProfileName, it) }
     val sourceRows = if (showAllProfiles) allProfileSessions else scopedRows
     val scopedActivityStates = scopedSessionActivityStates(
         rows = sourceRows,
@@ -400,6 +406,7 @@ fun SessionDrawerContent(
             val session = row.session
             val needle = trimmedQuery
             needle.isBlank() ||
+                session.sessionId in contentMatchIds ||
                 row.profile.contains(needle, ignoreCase = true) ||
                 session.sessionId.contains(needle, ignoreCase = true) ||
                 session.title.orEmpty().contains(needle, ignoreCase = true) ||

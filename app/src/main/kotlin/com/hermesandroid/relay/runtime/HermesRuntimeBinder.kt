@@ -213,6 +213,9 @@ internal class HermesRuntimeBinder(
                 excludeSources = connection.hiddenSources.value,
             )
         }
+        chat.setProfileSessionSearcher { profileName, query ->
+            connection.searchProfileScopedSessions(profileName, query)
+        }
         chat.setProfileMessageLoaderWithMode { profileName, sessionId, mode ->
             connection.loadProfileScopedMessages(profileName, sessionId, mode)
         }
