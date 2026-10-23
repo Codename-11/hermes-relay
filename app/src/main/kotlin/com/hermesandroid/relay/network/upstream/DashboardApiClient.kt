@@ -1205,6 +1205,44 @@ class DashboardApiClient(
         }
 
     /**
+     * Message-body search on the gateway index (`GET /api/sessions/search`).
+     * Fuzzy always; semantic RRF only when the host has an embedding model.
+     * The phone does not build its own index.
+     */
+    suspend fun searchSessions(
+        profile: String? = null,
+        query: String,
+        limit: Int = 20,
+    ): Result<List<SessionItem>> {
+        val q = query.trim()
+        if (q.isEmpty()) return Result.success(emptyList())
+        val params = buildList {
+            add("q=${queryValue(q)}")
+            add("limit=${limit.coerceIn(1, 50)}")
+            val name = profile?.trim().orEmpty()
+            if (name.isNotBlank()) add("profile=${pathSegment(name)}")
+        }
+        return getJsonObject("/api/sessions/search?${params.joinToString("&")}").mapCatching { root ->
+            val results = root["results"] as? kotlinx.serialization.json.JsonArray ?: return@mapCatching emptyList()
+            results.mapNotNull { element ->
+                val obj = element as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                val id = obj.stringOrNull("session_id") ?: obj.stringOrNull("id")
+                if (id.isNullOrBlank()) null
+                else SessionItem(
+                    id = id,
+                    title = obj.stringOrNull("title"),
+                    preview = obj.stringOrNull("snippet"),
+                    model = obj.stringOrNull("model"),
+                    source = obj.stringOrNull("source"),
+                )
+            }
+        }
+    }
+
+    private fun kotlinx.serialization.json.JsonObject.stringOrNull(key: String): String? =
+        (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() && it != "null" }
+
+    /**
      * Read the bounded, authoritative session window across every profile.
      * Every usable row must retain its owning profile; rows without one are
      * skipped rather than risking a cross-profile transcript or mutation.

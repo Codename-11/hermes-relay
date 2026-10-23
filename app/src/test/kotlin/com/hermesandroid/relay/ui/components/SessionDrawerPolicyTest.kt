@@ -238,6 +238,16 @@ class SessionDrawerPolicyTest {
         )
     }
 
+    @Test
+    fun `content search hits append sessions the loaded list does not have`() {
+        val loaded = listOf(ChatSession(sessionId = "loaded", title = "Loaded", model = null))
+        val hit = chatSessionFromSearchHit("body-hit", null, "matched inside a message", null, "cli")
+        val merged = mergeContentSearchSessions(loaded, listOf(hit))
+        assertEquals(listOf("loaded", "body-hit"), merged.map { it.sessionId })
+        assertEquals("matched inside a message", merged[1].title)
+        assertTrue(sessionMatchesContentSearch("body-hit", merged.map { it.sessionId }.toSet()))
+    }
+
     private fun row(
         profile: String,
         id: String,

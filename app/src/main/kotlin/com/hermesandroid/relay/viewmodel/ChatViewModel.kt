@@ -4165,6 +4165,15 @@ class ChatViewModel : ViewModel() {
         profileSessionPageLister = lister
     }
 
+    private var profileSessionSearcher:
+        (suspend (String?, String) -> Result<List<SessionItem>>?)? = null
+
+    fun setProfileSessionSearcher(
+        searcher: suspend (String?, String) -> Result<List<SessionItem>>?,
+    ) {
+        profileSessionSearcher = searcher
+    }
+
     private var dashboardSignInRequiredHandler: (() -> Unit)? = null
 
     fun setDashboardSignInRequiredHandler(handler: () -> Unit) {
@@ -4557,6 +4566,32 @@ class ChatViewModel : ViewModel() {
 
     val sessions: StateFlow<List<ChatSession>>
         get() = chatHandler?.sessions ?: _emptySessions
+
+    private val _contentSearchHits = MutableStateFlow<List<ChatSession>>(emptyList())
+    val contentSearchHits: StateFlow<List<ChatSession>> = _contentSearchHits
+    private val contentSearchGeneration = java.util.concurrent.atomic.AtomicLong(0)
+
+    fun searchSessionContents(query: String) {
+        val generation = contentSearchGeneration.incrementAndGet()
+        val q = query.trim()
+        if (q.length < 2) {
+            _contentSearchHits.value = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            val result = profileSessionSearcher?.invoke(currentSessionProfileName(), q)
+            if (contentSearchGeneration.get() != generation) return@launch
+            _contentSearchHits.value = result?.getOrNull().orEmpty().map { item ->
+                com.hermesandroid.relay.ui.components.chatSessionFromSearchHit(
+                    sessionId = item.id,
+                    title = item.title,
+                    preview = item.preview,
+                    model = item.model,
+                    source = item.source,
+                )
+            }
+        }
+    }
 
     val error: StateFlow<String?>
         get() = chatHandler?.error ?: _emptyError
