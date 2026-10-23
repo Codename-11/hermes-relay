@@ -3525,6 +3525,7 @@
     <string name="tool_name_cron">Programador</string>
     <string name="tool_name_computer">Uso del ordenador</string>
     <string name="tool_name_android">Acción en el teléfono</string>
+    <string name="tool_name_compaction">Compactación de contexto</string>
     <string name="timeline_no_checks">sin comprobaciones</string>
     <string name="thinking_title">Proceso de pensamiento</string>
     <string name="thinking_settled">Pensamiento</string>
