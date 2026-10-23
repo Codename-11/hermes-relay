@@ -3682,6 +3682,7 @@
     <string name="tool_name_cron">Agendador</string>
     <string name="tool_name_computer">Uso do computador</string>
     <string name="tool_name_android">Ação no telefone</string>
+    <string name="tool_name_compaction">Compactação de contexto</string>
     <string name="timeline_no_checks">sem verificações</string>
     <string name="thinking_title">Processo de raciocínio</string>
     <string name="thinking_settled">Pensamento</string>

@@ -3592,6 +3592,7 @@
     <string name="tool_name_vision">Анализ изображения</string>
     <string name="tool_name_computer">Управление компьютером</string>
     <string name="tool_name_android">Действие на телефоне</string>
+    <string name="tool_name_compaction">Сжатие контекста</string>
     <string name="tool_name_tts">Озвучивание</string>
     <string name="tool_name_file">Файл</string>
     <string name="badge_tool_failed">Ошибка инструмента</string>
