@@ -828,6 +828,16 @@ class ProfileController(
             )
     }
 
+    suspend fun searchProfileScopedSessions(
+        profileName: String?,
+        query: String,
+    ): Result<List<SessionItem>>? {
+        val connectionId = activeConnectionId.value ?: return null
+        val dashboardUrl = activeDashboardUrlProvider() ?: return null
+        return dashboardClientFactory(connectionId, dashboardUrl)
+            .searchSessions(profile = profileName, query = query)
+    }
+
     suspend fun listAllProfileSessions(limit: Int = 200): Result<List<SessionItem>>? {
         val connectionId = activeConnectionId.value ?: return null
         val dashboardUrl = activeDashboardUrlProvider() ?: return null
