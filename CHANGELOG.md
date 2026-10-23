@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Session drawer search asks the gateway for message-body matches. Fuzzy search is always used; semantic ranking is added only when the host has an embedding model configured.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
