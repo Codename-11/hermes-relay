@@ -1472,7 +1472,10 @@ class ChatHandler {
             } else null
             val activityTaskCount = if (activitySourceId != null) item.displayMetadata.intField("task_count") else null
             val activityFailedCount = if (activitySourceId != null) item.displayMetadata.intField("failed_count") else null
+            // Pure compaction handoffs: collapsible tool card, never a user bubble.
+            val compactionToolCalls = compactionSummaryToolCalls(item)
             val role = when {
+                compactionToolCalls != null -> MessageRole.ASSISTANT
                 displayKind == "model_switch" ||
                     displayKind == "async_delegation_complete" ||
                     displayKind == "auto_continue" -> MessageRole.SYSTEM
@@ -1497,14 +1500,18 @@ class ChatHandler {
                 item.role == "tool" -> return@mapNotNull null // Merged into assistant tool calls above
                 else -> return@mapNotNull null
             }
-            val displayContent = displayEventContent(displayKind, item.displayMetadata)
+            val displayContent = if (compactionToolCalls != null) {
+                ""
+            } else {
+                displayEventContent(displayKind, item.displayMetadata)
+            }
             val rawServerContent = displayContent ?: item.contentText ?: ""
             // If > 1e12, already in milliseconds; otherwise convert from seconds
             val ts = item.timestamp ?: 0.0
             val timestampMs = if (ts > 1e12) ts.toLong() else (ts * 1000).toLong()
 
             // Reconstruct tool calls from assistant messages
-            val toolCalls = if (role == MessageRole.ASSISTANT) {
+            val toolCalls = compactionToolCalls ?: if (role == MessageRole.ASSISTANT) {
                 parseToolCallsFromHistory(item.toolCalls, toolResults)
             } else {
                 emptyList()
@@ -2040,6 +2047,59 @@ class ChatHandler {
      * Format: array of objects with {id, type:"function", function: {name, arguments}}
      * or Hermes format: {name, call_id, args, ...}
      */
+    /**
+     * Pure compaction handoffs are model-facing `role=user` carriers. Clients
+     * project them as a completed collapsible `context_compaction` tool card
+     * (display_kind=compaction_summary from newer gateways, or content prefix
+     * belt for older rows). Never render as a user bubble.
+     */
+    private fun compactionSummaryToolCalls(item: MessageItem): List<ToolCall>? {
+        val displayKind = item.displayKind?.trim()?.lowercase()
+        val raw = item.contentText?.trim().orEmpty()
+        val metaSummary = item.displayMetadata.stringField("summary")?.trim().orEmpty()
+        val looksLikeHandoff =
+            displayKind == "compaction_summary" ||
+                raw.startsWith("[CONTEXT COMPACTION") ||
+                raw.startsWith("CONTEXT COMPACTION") ||
+                // Some surfaces strip brackets but keep the marker phrase.
+                raw.startsWith("[CONTEXT COMPACTION — REFERENCE ONLY]")
+        if (!looksLikeHandoff) return null
+
+        val summary = when {
+            metaSummary.isNotEmpty() -> metaSummary
+            raw.isNotEmpty() -> raw
+            else -> "Context compacted."
+        }
+        val callId = item.displayMetadata.stringField("tool_call_id")
+            ?: "compaction-display-${item.id ?: item.resolvedRowId ?: "x"}"
+        val name = item.displayMetadata.stringField("tool_name") ?: "context_compaction"
+        val fromHistory = parseToolCallsFromHistory(item.toolCalls, emptyMap())
+        if (fromHistory.isNotEmpty()) {
+            return fromHistory.map { tc ->
+                if (tc.result.isNullOrBlank()) {
+                    tc.copy(
+                        name = if (tc.name.isBlank()) name else tc.name,
+                        result = summary,
+                        success = true,
+                        isComplete = true,
+                    )
+                } else {
+                    tc
+                }
+            }
+        }
+        return listOf(
+            ToolCall(
+                id = callId,
+                name = name,
+                args = "{}",
+                result = summary,
+                success = true,
+                isComplete = true,
+            ),
+        )
+    }
+
     private fun parseToolCallsFromHistory(
         toolCallsJson: kotlinx.serialization.json.JsonElement?,
         toolResults: Map<String?, MessageItem>
