@@ -49,7 +49,10 @@ Wire envelopes (frozen — do not rename fields):
   * ``proactive.unsubscribe`` — app → server: ``{}`` (release)
   * ``phone.message``         — server → app: ``{message_id, chat_id, text,
       title, surfacing, reply_to, metadata, sent_at, queued_delivery?}``
-      (``queued_delivery=true`` only when this message is a reconnect flush)
+      (``queued_delivery=true`` only when this message is a reconnect flush;
+      a flush older than REFRAME_AFTER_SECONDS carries a ``[relay] RE-DELIVERED``
+      prefix in ``text``, a ``[RE-DELIVERED]`` title prefix, and
+      ``metadata.re_delivered_from`` so a late delivery cannot read as live)
   * ``proactive.backlog.complete`` — server → app: ``{count, ts}`` after a
       reconnect flush completes, so clients can show one summary for the batch
   * ``proactive.reply``       — app → server: ``{text, chat_id, reply_to,
@@ -77,6 +80,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 import uuid
 from collections import deque
@@ -99,6 +103,67 @@ MAX_BUFFERED_OUTBOUND = 50
 OUTBOUND_TTL_SECONDS = 24 * 3600
 MAX_METADATA_KEYS = 24
 MAX_METADATA_STRING_LENGTH = 512
+
+# Re-frame stale re-deliveries. Measured in production: an operational alert
+# was buffered while the phone was unsubscribed and flushed ~18h later into a
+# fresh-looking notification; the advisory ``queued_delivery=true`` flag alone
+# did not stop the client from surfacing it as a live page. Policy: pages
+# speak once; delayed re-deliveries must say so. The stamp rides INSIDE
+# ``text``/``title`` (not just envelope flags) so no client cooperation is
+# required for the delay to be legible. Messages flushed within the threshold
+# are untouched.
+REFRAME_AFTER_SECONDS = 10 * 60
+
+
+def _reframe_limit_seconds() -> float:
+    """Age threshold before a flush is re-framed (env-overridable for tests)."""
+    raw = os.environ.get("RELAY_REFRAME_AFTER_SECONDS", "").strip()
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return float(REFRAME_AFTER_SECONDS)
+
+
+def _utc_stamp(ms: float) -> str:
+    return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(ms / 1000.0))
+
+
+def _age_phrase(seconds: float) -> str:
+    m = int(seconds // 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}h{m:02d}m"
+    return f"{m}m"
+
+
+def reframe_stale(out_payload: dict[str, Any], now_ms: int) -> dict[str, Any] | None:
+    """Return a re-framed copy when this queued entry is a stale re-delivery.
+
+    Returns ``None`` when the entry is fresh enough to deliver unmodified.
+    The returned copy carries the delay stamp in ``text`` (prefixed), a
+    ``[RE-DELIVERED]`` title prefix, and ``metadata.re_delivered_from``.
+    """
+    sent_at = out_payload.get("sent_at") or 0
+    if not sent_at:
+        return None
+    age_s = (now_ms - sent_at) / 1000.0
+    if age_s <= _reframe_limit_seconds():
+        return None
+    note = (
+        f"[relay] RE-DELIVERED {_utc_stamp(now_ms)} — this message was sent "
+        f"{_utc_stamp(sent_at)} ({_age_phrase(age_s)} earlier) and arrived late "
+        "while the phone was offline. It is NOT a new event."
+    )
+    reframed = dict(out_payload)
+    reframed["text"] = note + "\n\n" + (out_payload.get("text") or "")
+    title = out_payload.get("title")
+    reframed["title"] = f"[RE-DELIVERED] {title}" if title else "[RE-DELIVERED]"
+    metadata = dict(reframed.get("metadata") or {})
+    metadata["re_delivered_from"] = _utc_stamp(sent_at)
+    reframed["metadata"] = metadata
+    return reframed
 
 
 class ProactiveError(Exception):
@@ -357,6 +422,12 @@ class ProactiveChannel:
                 # fails, the original remains suitable for another attempt.
                 delivered_payload = dict(out_payload)
                 delivered_payload["queued_delivery"] = True
+                # A re-delivery that sat queued for a long time must not read
+                # as a live page: stamp the delay into the body itself, not
+                # only into envelope flags a client may ignore.
+                reframed = reframe_stale(out_payload, now_ms)
+                if reframed is not None:
+                    delivered_payload = {**reframed, "queued_delivery": True}
                 await ws.send_str(
                     _envelope(
                         "phone.message",
