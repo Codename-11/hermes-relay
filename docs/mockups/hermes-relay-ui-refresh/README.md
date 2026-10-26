@@ -75,3 +75,31 @@ Official Hermes references:
 - `app/src/main/kotlin/com/hermesandroid/relay/ui/components/ConnectionInfoSheet.kt`
 - `app/src/main/kotlin/com/hermesandroid/relay/ui/theme/Theme.kt`
 - `app/src/main/kotlin/com/hermesandroid/relay/ui/theme/Type.kt`
+
+## Companion dashboard theme
+
+`relay-cockpit.yaml` packages the same "Relay cockpit" language as a Hermes
+dashboard theme, so the web Dashboard can match these surfaces without waiting on
+the Android rewrite. Drop-in, no build step:
+
+```bash
+cp relay-cockpit.yaml ~/.hermes/dashboard-themes/
+hermes config set dashboard.theme relay-cockpit
+```
+
+Verify activation from the running Dashboard, then refresh the tab
+(hard-refresh if a previous theme is cached):
+
+```bash
+curl -s http://127.0.0.1:9119/api/dashboard/themes   # "active": "relay-cockpit"
+```
+
+That proves discovery, a full parse of every block, and activation — not the
+rendered result, which you confirm in the browser. The theme's `customCSS` is
+scoped to the Dashboard and cannot leak to the CLI, Desktop, or Android.
+
+Typography is user-adjustable. `typography.baseSize` and `typography.lineHeight`
+are the intended taste knobs, and a live install may run different values than
+the committed defaults (`14px` / `1.5`) — that divergence is expected. Edit the
+copy under `~/.hermes/dashboard-themes/` to taste rather than editing this file
+to match a running install.

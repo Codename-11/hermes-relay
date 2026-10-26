@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- `relay-cockpit` companion Dashboard theme with install and verification notes in the UI refresh mockups.
+
+### Changed
+
+- The desktop connect banner is a single status line (`relay: connected · Tailscale · secure · server x`). CLI colors follow the Relay cockpit palette on terminals that report a dark or light background, and keep the terminal's own 16-color profile when the background is unknown. Color is decided by the stream that prints the output, and `--no-color`, `NO_COLOR` and redirected output stay plain.
+- The tray popup and the Dashboard plugin chrome use the same cockpit vocabulary. Plugin colors are still derived from the active Dashboard theme.
+- Android status greens and ambers follow the active palette. Small green text in the Git workspace darkens or lightens as needed to stay readable on light palettes.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added

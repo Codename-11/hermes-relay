@@ -27,7 +27,8 @@ export interface LogoOptions {
 /** Render the logo block (no trailing newline handling beyond a single `\n`). */
 export function renderLogo(opts: LogoOptions = {}): string {
   const t = opts.theme ?? makeTheme()
-  const lines = WORDMARK.map((l) => t.cyan(l))
+  // Identity purple — the one place the palette allows the brand hue.
+  const lines = WORDMARK.map((l) => t.identity(l))
   if (opts.subtitle ?? true) {
     lines.push(t.muted(TAGLINE))
     lines.push(t.muted(`v${VERSION}`))

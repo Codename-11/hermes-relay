@@ -2928,8 +2928,8 @@ fun ChatScreen(
                         else -> stringResource(R.string.chat_disconnected_label)
                     }
                     val statusColor = when {
-                        headerChatReady -> Color(0xFF4CAF50)
-                        isConnecting -> Color(0xFFFFA726)
+                        headerChatReady -> LocalBrand.current.green
+                        isConnecting -> LocalBrand.current.amber
                         else -> MaterialTheme.colorScheme.error
                     }
 
