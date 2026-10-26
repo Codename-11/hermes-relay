@@ -548,23 +548,29 @@ class TypedTargetTests(_EnvIsolated):
         self.assertEqual(pp.parse_target_ref("  phone  "), ("phone", None))
         self.assertIs(pp.validate_target_ref("phone"), True)
 
-    def test_custom_home_is_the_only_accepted_ref(self) -> None:
+    def test_custom_home_and_safe_extra_tokens_are_accepted(self) -> None:
+        # The canonical home channel is accepted, and so is any safe extra
+        # chat_id token (per-watcher Threads like ``watch-notify``); empty,
+        # whitespace and anything outside the bounded charset still fail
+        # closed (see the next test).
         os.environ["PHONE_HOME_CHANNEL"] = "family-phone"
         self.assertEqual(
             pp.parse_target_ref("family-phone"), ("family-phone", None)
         )
-        self.assertIsNone(pp.parse_target_ref("phone"))
+        self.assertEqual(pp.parse_target_ref("phone"), ("phone", None))
         self.assertIs(pp.validate_target_ref("family-phone"), True)
-        error = pp.validate_target_ref("phone")
-        self.assertIsInstance(error, str)
-        self.assertIn("family-phone", error)
+        self.assertIs(pp.validate_target_ref("phone"), True)
 
-    def test_empty_and_foreign_refs_fail_closed(self) -> None:
+    def test_empty_and_unsafe_refs_fail_closed(self) -> None:
         self.assertIsNone(pp.parse_target_ref(""))
         self.assertIsNone(pp.parse_target_ref("   "))
-        self.assertIsNone(pp.parse_target_ref("another-phone"))
+        self.assertIsNone(pp.parse_target_ref("has space"))
+        self.assertIsNone(pp.parse_target_ref("a/b"))
+        self.assertIsNone(pp.parse_target_ref("../etc/passwd"))
+        self.assertIsNone(pp.parse_target_ref("x" * 65))
         self.assertEqual(pp.validate_target_ref(""), "Phone target cannot be empty")
-        self.assertIsInstance(pp.validate_target_ref("another-phone"), str)
+        self.assertIsInstance(pp.validate_target_ref("a/b"), str)
+        self.assertIsInstance(pp.validate_target_ref("x" * 65), str)
 
     def test_parser_and_validator_reject_wrong_types_without_raising(self) -> None:
         self.assertIsNone(pp.parse_target_ref(None))  # type: ignore[arg-type]

@@ -58,6 +58,7 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -610,25 +611,43 @@ def _env_enablement() -> Optional[dict]:
     return seed
 
 
+# Safe chat_id token accepted as an extra Phone destination (per-watcher Threads
+# like watch-notify / watch-expiry). The relay app keys its Threads on chat_id and
+# both the reply path and PhoneAdapter.send already pass arbitrary chat_ids through;
+# only these two resolution hooks were single-destination. Bounded charset keeps
+# junk/typos from minting threads: 1-64 chars of [A-Za-z0-9._-], no path/URL chars.
+_EXTRA_CHAT_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
 def parse_target_ref(target_ref: str) -> Optional[tuple[str, Optional[str]]]:
-    """Resolve only the single canonical Phone destination."""
+    """Resolve the canonical Phone destination plus safe extra chat_ids."""
     if not isinstance(target_ref, str):
         return None
     candidate = target_ref.strip()
     canonical = _home_channel()
     if candidate == canonical:
         return canonical, None
+    # Extra Thread destinations (cron deliver=phone:<watch-name>): accept a
+    # bounded token so each watcher gets its own Thread instead of being
+    # rejected as "not the home channel".
+    if _EXTRA_CHAT_ID_RE.match(candidate):
+        return candidate, None
     return None
 
 
 def validate_target_ref(chat_id: str) -> bool | str:
-    """Accept only the configured/default canonical Phone chat ID."""
+    """Accept the canonical home chat ID and safe extra Thread chat_ids."""
     canonical = _home_channel()
     if not isinstance(chat_id, str) or not chat_id.strip():
         return "Phone target cannot be empty"
-    if chat_id != canonical:
-        return f"Phone target must be the configured home channel '{canonical}'"
-    return True
+    if chat_id == canonical:
+        return True
+    if _EXTRA_CHAT_ID_RE.match(chat_id):
+        return True
+    return (
+        f"Phone target must be the home channel '{canonical}' or a safe token "
+        f"(1-64 chars of A-Za-z0-9._-)"
+    )
 
 
 def _supports_typed_target_hooks(ctx: Any) -> bool:
