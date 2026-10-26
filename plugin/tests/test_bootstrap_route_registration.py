@@ -14,6 +14,7 @@ Covers two invariants:
 from __future__ import annotations
 
 import unittest
+from typing import Any
 from unittest import mock
 
 from aiohttp import web
@@ -160,6 +161,65 @@ class BootstrapRetirementSplitTest(unittest.TestCase):
         injected = self._register(app)
 
         self.assertEqual(injected, len(KEPT_ROUTES) - 1)
+
+
+class BootstrapReasoningPatchTest(unittest.TestCase):
+    """_maybe_patch_reasoning_stream wires the fallback callback."""
+
+    def test_wraps_run_agent_and_forwards_reasoning(self) -> None:
+        from plugin.hermes_relay_bootstrap import _patch
+
+        captured = []
+        async def fake_run_agent(**kwargs):
+            cb = kwargs.get("reasoning_callback")
+            if cb:
+                cb("testing thought")
+            return "ok", {}
+
+        class FakeAdapter:
+            _run_agent: Any = None
+
+        adapter = FakeAdapter()
+        adapter._run_agent = fake_run_agent
+
+        _patch._maybe_patch_reasoning_stream(adapter)
+        self.assertTrue(getattr(adapter._run_agent, "_relay_reasoning_patched", False))
+
+        def fake_tool_progress(event_type, **kw):
+            captured.append((event_type, kw))
+
+        import asyncio
+        asyncio.run(adapter._run_agent(tool_progress_callback=fake_tool_progress))
+
+        self.assertEqual(len(captured), 1)
+        self.assertEqual(captured[0][0], "reasoning.available")
+        self.assertEqual(captured[0][1].get("preview"), "testing thought")
+
+    def test_existing_reasoning_callback_is_preserved(self) -> None:
+        from plugin.hermes_relay_bootstrap import _patch
+
+        existing_called = []
+        def my_existing_reasoning_cb(text: str) -> None:
+            existing_called.append(text)
+
+        async def fake_run_agent(**kwargs):
+            cb = kwargs.get("reasoning_callback")
+            if cb:
+                cb("direct thought")
+            return "ok", {}
+
+        class FakeAdapter:
+            _run_agent: Any = None
+
+        adapter = FakeAdapter()
+        adapter._run_agent = fake_run_agent
+
+        _patch._maybe_patch_reasoning_stream(adapter)
+
+        import asyncio
+        asyncio.run(adapter._run_agent(reasoning_callback=my_existing_reasoning_cb))
+
+        self.assertEqual(existing_called, ["direct thought"])
 
 
 if __name__ == "__main__":
