@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="new_chat_launch_gateway_not_found">新しいチャットを開始できませんでした。このゲートウェイはこの端末に設定されていません。</string>
+    <string name="new_chat_launch_profile_not_found">新しいチャットを開始できませんでした。このエージェントプロファイルはこのゲートウェイでは利用できません。</string>
+    <string name="new_chat_launch_unavailable">現在、この方法では新しいチャットを開始できません。</string>
+</resources>

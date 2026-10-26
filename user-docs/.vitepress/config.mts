@@ -221,6 +221,7 @@ export default defineConfig({
             { text: 'Release tracks', link: '/guide/release-tracks' },
             { text: 'Chat', link: '/guide/chat' },
             { text: 'Supervised Mode', link: '/guide/supervised-mode' },
+            { text: 'New chat from a widget', link: '/guide/new-chat-intent' },
             { text: 'Sessions', link: '/guide/sessions' },
             { text: 'Troubleshooting', link: '/guide/troubleshooting' },
           ],
