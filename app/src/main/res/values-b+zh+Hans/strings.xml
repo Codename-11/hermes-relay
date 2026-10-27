@@ -4562,4 +4562,7 @@
     <string name="voice_settings_host_barge_in_desc">控制 Hermes 主机语音模式中的插话，不控制此手机的麦克风。请使用Listening 选项卡中的手机端插话。</string>
     <string name="voice_settings_speak_tool_updates">朗读工具提示</string>
     <string name="voice_settings_speak_tool_updates_desc">内置工具提示为英语。关闭后仍会朗读助手回复，但不会朗读这些提示。仅朗读最终答案也会使这些提示静音。</string>
+    <string name="chat_settings_unread_indicators">未读标记</string>
+    <string name="chat_settings_show_unread_indicators">显示未读标记</string>
+    <string name="chat_settings_show_unread_indicators_desc">在聊天、会话和个人资料中显示未读徽标。不会更改已读状态或 Android 通知。</string>
 </resources>

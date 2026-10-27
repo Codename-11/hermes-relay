@@ -4481,4 +4481,7 @@
     <string name="voice_settings_host_barge_in_desc">Controla interrupções no modo de voz do host Hermes, não o microfone deste telefone. Use Interrupção no telefone na aba Listening.</string>
     <string name="voice_settings_speak_tool_updates">Ler avisos de ferramentas</string>
     <string name="voice_settings_speak_tool_updates_desc">Os avisos predefinidos de ferramentas estão em inglês. Desative para ouvir as respostas sem esses avisos. Somente a resposta final também os silencia.</string>
+    <string name="chat_settings_unread_indicators">Indicadores de itens não lidos</string>
+    <string name="chat_settings_show_unread_indicators">Mostrar indicadores de itens não lidos</string>
+    <string name="chat_settings_show_unread_indicators_desc">Mostrar indicadores de mensagens não lidas em chats, sessões e perfis. Não altera o estado de leitura nem as notificações do Android.</string>
 </resources>

@@ -2,6 +2,7 @@
 
 package com.hermesandroid.relay.ui.screens
 
+import com.hermesandroid.relay.data.ChatInputPreferencesRepository
 import com.hermesandroid.relay.data.BusyMessageAction
 import com.hermesandroid.relay.data.canCorrectBusyMessage
 import com.hermesandroid.relay.ui.components.ChatMessageQueue
@@ -901,6 +902,8 @@ fun ChatScreen(
     val activityOwner by chatViewModel.conversationBinding.collectAsState()
     val activitySessionId by chatViewModel.currentSessionId.collectAsState()
     val completionReceipts by chatViewModel.completionReceipts.collectAsState()
+    val showUnreadIndicators by remember(context) { ChatInputPreferencesRepository(context).showUnreadIndicators }
+        .collectAsState(initial = true)
     val unreadForConnection = remember(completionReceipts, activityOwner.contextKey) {
         completionReceipts.filter {
             it.unread && AgentDisplay.parseProfileContextKey(it.contextKey)?.connectionId ==
@@ -2612,11 +2615,13 @@ fun ChatScreen(
                 loadMoreFailed = sessionPageLoadFailed,
                 isOpen = drawerState.isOpen || isPinnedSidebar,
                 activityStates = sessionActivityStates,
-                unreadSessionIds = unreadForConnection.filter { it.contextKey == activityOwner.contextKey }
+                unreadSessionIds = unreadForConnection.filter { showUnreadIndicators && it.contextKey == activityOwner.contextKey }
                     .mapTo(mutableSetOf()) { it.sessionId },
-                unreadProfileSessions = unreadForConnection.mapTo(mutableSetOf()) {
-                    requireNotNull(AgentDisplay.parseProfileContextKey(it.contextKey)).profileKey to it.sessionId
-                },
+                unreadProfileSessions = if (showUnreadIndicators) {
+                    unreadForConnection.mapTo(mutableSetOf()) {
+                        requireNotNull(AgentDisplay.parseProfileContextKey(it.contextKey)).profileKey to it.sessionId
+                    }
+                } else emptySet(),
                 animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
                 archiveSupported = sessionArchivingSupported,
@@ -3075,7 +3080,7 @@ fun ChatScreen(
                             }
                             if (!supervised) {
                                 com.hermesandroid.relay.ui.components.UnreadConversationBadge(
-                                    count = unreadForConnection.size,
+                                    count = if (showUnreadIndicators) unreadForConnection.size else 0,
                                     modifier = Modifier.align(Alignment.TopEnd),
                                 )
                             }
@@ -3291,7 +3296,7 @@ fun ChatScreen(
                     resolvedProfile = effectiveProfile,
                     presentation = profilePresentation,
                     activeDisplayName = globalSelectedAgentDisplayName,
-                    unreadCounts = unreadProfileCounts,
+                    unreadCounts = if (showUnreadIndicators) unreadProfileCounts else emptyMap(),
                     isProfileLocked = isProfileLocked,
                     lockedProfileName = lockedProfileName,
                     switchEnabled = profileSwitchEnabled,
@@ -4118,7 +4123,7 @@ fun ChatScreen(
                             modifier = Modifier
                                 .size(48.dp)
                                 .semantics {
-                                    contentDescription = if (unreadMessageCount > 0) {
+                                    contentDescription = if (showUnreadIndicators && unreadMessageCount > 0) {
                                         "Scroll to bottom, $unreadMessageCount unread " +
                                             if (unreadMessageCount == 1) "message" else "messages"
                                     } else {
@@ -4139,7 +4144,7 @@ fun ChatScreen(
                         ) {
                             BadgedBox(
                                 badge = {
-                                    if (unreadMessageCount > 0) {
+                                    if (showUnreadIndicators && unreadMessageCount > 0) {
                                         Badge(
                                             modifier = Modifier.clearAndSetSemantics { },
                                         ) {
@@ -5150,7 +5155,7 @@ fun ChatScreen(
             selectedProfile = selectedProfile,
             resolvedProfile = effectiveProfile,
             presentation = profilePresentation,
-            unreadCounts = unreadProfileCounts,
+            unreadCounts = if (showUnreadIndicators) unreadProfileCounts else emptyMap(),
             isProfileLocked = isProfileLocked,
             switchEnabled = profileSwitchEnabled,
             onSelect = selectProfileFromShelf,

@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +63,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.ChatInputPreferencesRepository
 import com.hermesandroid.relay.data.PhysicalKeyboardEnterBehavior
 import com.hermesandroid.relay.network.upstream.GatewayAvailability
 import com.hermesandroid.relay.network.upstream.ServerCapabilities
@@ -78,6 +80,7 @@ import com.hermesandroid.relay.ui.components.sourceBadge
 import com.hermesandroid.relay.ui.components.textColor
 import com.hermesandroid.relay.ui.theme.gradientBorder
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
+import kotlinx.coroutines.launch
 
 /**
  * Dedicated Chat settings screen. Hosts message length, attachment size,
@@ -105,6 +108,10 @@ fun ChatSettingsScreen(
     val maxMessageLength by connectionViewModel.maxMessageLength.collectAsState()
 
     val isDarkTheme = LocalBrand.current.isDark
+    val context = LocalContext.current
+    val chatInputPreferences = remember(context) { ChatInputPreferencesRepository(context) }
+    val showUnreadIndicators by chatInputPreferences.showUnreadIndicators.collectAsState(initial = true)
+    val scope = rememberCoroutineScope()
 
     Scaffold(
         topBar = {
@@ -151,6 +158,32 @@ fun ChatSettingsScreen(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    Text(
+                        text = stringResource(R.string.chat_settings_unread_indicators),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.chat_settings_show_unread_indicators))
+                            Text(
+                                stringResource(R.string.chat_settings_show_unread_indicators_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = showUnreadIndicators,
+                            onCheckedChange = { enabled ->
+                                scope.launch { chatInputPreferences.setShowUnreadIndicators(enabled) }
+                            },
+                        )
+                    }
+                    HorizontalDivider()
+
                     // Smooth auto-scroll toggle
                     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
                     Row(
