@@ -2617,9 +2617,11 @@ fun ChatScreen(
                 activityStates = sessionActivityStates,
                 unreadSessionIds = unreadForConnection.filter { showUnreadIndicators && it.contextKey == activityOwner.contextKey }
                     .mapTo(mutableSetOf()) { it.sessionId },
-                unreadProfileSessions = unreadForConnection.mapTo(mutableSetOf()) {
-                    requireNotNull(AgentDisplay.parseProfileContextKey(it.contextKey)).profileKey to it.sessionId
-                },
+                unreadProfileSessions = if (showUnreadIndicators) {
+                    unreadForConnection.mapTo(mutableSetOf()) {
+                        requireNotNull(AgentDisplay.parseProfileContextKey(it.contextKey)).profileKey to it.sessionId
+                    }
+                } else emptySet(),
                 animationEnabled = animationEnabled,
                 autoTitlesSupported = serverAutoTitles,
                 archiveSupported = sessionArchivingSupported,
