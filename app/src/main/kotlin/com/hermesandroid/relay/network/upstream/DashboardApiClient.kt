@@ -55,6 +55,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.URLEncoder
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import okio.BufferedSink
@@ -1389,12 +1390,123 @@ class DashboardApiClient(
      * `DELETE /api/sessions/{id}?profile=`. The write twin of [listSessions]:
      * a non-default profile's sessions live in that profile's own `state.db`, so
      * deleting through the api_server (one shared DB, no profile) leaves the row
-     * intact and the next profile-scoped list resurrects it. [profile] null/blank
+     * intact and the next profile-scoped list resurrects it. Sent under the
+     * server's edit fence (`request_id` + `expected_revision`, see
+     * [getSessionMutationSnapshot]); an already-absent session is a success. [profile] null/blank
      * → the launch profile's DB (param omitted). Mirrors [deleteCronJob]'s
      * profile-scoped delete plumbing.
      */
-    suspend fun deleteSession(sessionId: String, profile: String? = null): Result<JsonObject> =
-        deleteJsonObject("/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}")
+    suspend fun deleteSession(sessionId: String, profile: String? = null): Result<JsonObject> {
+        val base = "/api/sessions/${pathSegment(sessionId)}"
+        return fencedSessionWrite(
+            sessionId = sessionId,
+            profile = profile,
+            skipWhenAbsent = true,
+        ) { fence ->
+            val params = buildList {
+                profile?.trim()?.takeIf { it.isNotBlank() }?.let { add("profile=${pathSegment(it)}") }
+                if (fence != null) {
+                    add("request_id=${queryValue(fence.requestId)}")
+                    add("expected_revision=${fence.revision}")
+                    fence.generation?.let { add("expected_generation=$it") }
+                }
+            }
+            deleteJsonObject(base + params.joinToString(prefix = "?", separator = "&").takeIf { params.isNotEmpty() }.orEmpty())
+        }
+    }
+
+    /** Edit-fence values from `GET /api/sessions/{id}/mutation-snapshot`. */
+    data class SessionMutationSnapshot(
+        val revision: Int,
+        val generation: Int?,
+        val exists: Boolean,
+    )
+
+    private class SessionFence(
+        val requestId: String,
+        val revision: Int,
+        val generation: Int?,
+    )
+
+    /**
+     * Read the server's per-session edit fence. Current upstream refuses
+     * session DELETE/PATCH without `request_id` + `expected_revision`
+     * (409 `client_upgrade_required` / `mutation_identity_required`).
+     */
+    suspend fun getSessionMutationSnapshot(
+        sessionId: String,
+        profile: String? = null,
+    ): Result<SessionMutationSnapshot> =
+        getJsonObject(
+            "/api/sessions/${pathSegment(sessionId)}/mutation-snapshot${profileQuery(profile)}",
+        ).mapCatching { root ->
+            SessionMutationSnapshot(
+                revision = root.intField("runtime_revision") ?: 0,
+                generation = root.intField("runtime_generation"),
+                exists = root.booleanField("exists") ?: true,
+            )
+        }
+
+    /**
+     * Run a fenced session write: snapshot, write with a fresh `request_id`,
+     * and on a revision-conflict 409 re-snapshot and retry once with a new id.
+     * A 404 from the snapshot (older server) falls back to the unfenced write.
+     * [write] receives null for the legacy unfenced path.
+     */
+    private suspend fun fencedSessionWrite(
+        sessionId: String,
+        profile: String?,
+        skipWhenAbsent: Boolean = false,
+        write: suspend (SessionFence?) -> Result<JsonObject>,
+    ): Result<JsonObject> {
+        var snapshot = getSessionMutationSnapshot(sessionId, profile).getOrElse { error ->
+            return if (error.httpStatus() == 404) write(null) else Result.failure(error)
+        }
+        for (attempt in 0..1) {
+            if (skipWhenAbsent && !snapshot.exists) {
+                return Result.success(
+                    buildJsonObject {
+                        put("ok", true)
+                        put("already_absent", true)
+                    },
+                )
+            }
+            val result = write(
+                SessionFence(UUID.randomUUID().toString(), snapshot.revision, snapshot.generation),
+            )
+            val error = result.exceptionOrNull() ?: return result
+            val message = error.message.orEmpty()
+            val retryable = attempt == 0 &&
+                error.httpStatus() == 409 &&
+                !message.contains("session_busy") &&
+                !message.contains("client_upgrade_required")
+            if (!retryable) return result
+            snapshot = getSessionMutationSnapshot(sessionId, profile).getOrElse { return Result.failure(it) }
+        }
+        error("unreachable")
+    }
+
+    private fun Throwable.httpStatus(): Int? = (this as? DashboardHttpException)?.statusCode
+
+    private suspend fun patchSession(
+        sessionId: String,
+        profile: String?,
+        fields: JsonObject,
+    ): Result<JsonObject> =
+        fencedSessionWrite(sessionId, profile) { fence ->
+            patchJsonObject(
+                "/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}",
+                buildJsonObject {
+                    fields.forEach { (key, value) -> put(key, value) }
+                    profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
+                    if (fence != null) {
+                        put("request_id", fence.requestId)
+                        put("expected_revision", fence.revision)
+                        fence.generation?.let { put("expected_generation", it) }
+                    }
+                },
+            )
+        }
 
     /**
      * Export one session as server-owned JSON metadata + messages. This is the
@@ -1412,16 +1524,11 @@ class DashboardApiClient(
      * so the unscoped api_server rename would patch the wrong DB and the new
      * title would never appear in the profile-scoped list. Current upstream
      * reads `profile` from the PATCH body (`SessionRename`); the query param
-     * rides along for builds that scoped by query.
+     * rides along for builds that scoped by query. Sent under the edit fence
+     * (see [getSessionMutationSnapshot]).
      */
     suspend fun renameSession(sessionId: String, title: String, profile: String? = null): Result<JsonObject> =
-        patchJsonObject(
-            "/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}",
-            buildJsonObject {
-                put("title", title)
-                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
-            },
-        )
+        patchSession(sessionId, profile, buildJsonObject { put("title", title) })
 
     /**
      * Soft-archive or restore a session via the same dashboard
@@ -1436,13 +1543,7 @@ class DashboardApiClient(
         archived: Boolean,
         profile: String? = null,
     ): Result<JsonObject> =
-        patchJsonObject(
-            "/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}",
-            buildJsonObject {
-                put("archived", archived)
-                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
-            },
-        )
+        patchSession(sessionId, profile, buildJsonObject { put("archived", archived) })
 
     /** Persist the upstream keep flag that backs official-client session pins. */
     suspend fun setSessionPinned(
@@ -1450,13 +1551,7 @@ class DashboardApiClient(
         pinned: Boolean,
         profile: String? = null,
     ): Result<JsonObject> =
-        patchJsonObject(
-            "/api/sessions/${pathSegment(sessionId)}${profileQuery(profile)}",
-            buildJsonObject {
-                put("pinned", pinned)
-                profile?.trim()?.takeIf { it.isNotBlank() }?.let { put("profile", it) }
-            },
-        )
+        patchSession(sessionId, profile, buildJsonObject { put("pinned", pinned) })
 
     /**
      * Dry-run a server-backed bulk session cleanup via the dashboard

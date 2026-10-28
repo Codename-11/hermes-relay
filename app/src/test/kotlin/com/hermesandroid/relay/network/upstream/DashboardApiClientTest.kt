@@ -1874,8 +1874,158 @@ class DashboardApiClientTest {
         assertEquals("sess-old", exported["id"].toString().trim('"'))
     }
 
+    private fun enqueueSnapshot(revision: Int = 7, generation: String = "3", exists: Boolean = true) {
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """{"session_id":"s","exists":$exists,"runtime_revision":$revision,"runtime_generation":$generation}""",
+                ),
+        )
+    }
+
+    private fun jsonOk(body: String = """{"ok":true}""") =
+        MockResponse().setHeader("Content-Type", "application/json").setBody(body)
+
+    @Test
+    fun patchFence_bodyCarriesRequestIdAndExpectedRevision() = runTest {
+        enqueueSnapshot()
+        server.enqueue(jsonOk())
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.setSessionPinned("sess-a", pinned = true, profile = "mizu").getOrThrow()
+
+        val snap = server.takeRequest()
+        assertEquals("GET", snap.method)
+        assertEquals("/api/sessions/sess-a/mutation-snapshot", snap.requestUrl!!.encodedPath)
+        assertEquals("mizu", snap.requestUrl!!.queryParameter("profile"))
+        val body = Json.parseToJsonElement(server.takeRequest().body.readUtf8()).jsonObject
+        assertTrue(body["request_id"]!!.jsonPrimitive.content.isNotBlank())
+        assertEquals("7", body["expected_revision"]!!.jsonPrimitive.content)
+        assertEquals("3", body["expected_generation"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun deleteSession_sendsFenceQueryParams() = runTest {
+        enqueueSnapshot()
+        server.enqueue(jsonOk())
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.deleteSession("sess-a", profile = "mizu").getOrThrow()
+
+        server.takeRequest()
+        val del = server.takeRequest()
+        assertEquals("DELETE", del.method)
+        assertEquals("/api/sessions/sess-a", del.requestUrl!!.encodedPath)
+        assertEquals("mizu", del.requestUrl!!.queryParameter("profile"))
+        assertTrue(del.requestUrl!!.queryParameter("request_id")!!.isNotBlank())
+        assertEquals("7", del.requestUrl!!.queryParameter("expected_revision"))
+        assertEquals("3", del.requestUrl!!.queryParameter("expected_generation"))
+    }
+
+    @Test
+    fun deleteSession_omitsGenerationWhenNull() = runTest {
+        enqueueSnapshot(generation = "null")
+        server.enqueue(jsonOk())
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.deleteSession("sess-a").getOrThrow()
+
+        server.takeRequest()
+        val del = server.takeRequest()
+        assertEquals(null, del.requestUrl!!.queryParameter("profile"))
+        assertEquals(null, del.requestUrl!!.queryParameter("expected_generation"))
+        assertEquals("7", del.requestUrl!!.queryParameter("expected_revision"))
+    }
+
+    @Test
+    fun deleteSession_conflictResnapshotsAndRetriesOnceWithNewRequestId() = runTest {
+        enqueueSnapshot(revision = 7)
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"detail":"revision_conflict"}"""))
+        enqueueSnapshot(revision = 8)
+        server.enqueue(jsonOk())
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.deleteSession("sess-a").getOrThrow()
+
+        server.takeRequest()
+        val first = server.takeRequest()
+        server.takeRequest()
+        val second = server.takeRequest()
+        assertEquals("7", first.requestUrl!!.queryParameter("expected_revision"))
+        assertEquals("8", second.requestUrl!!.queryParameter("expected_revision"))
+        assertTrue(
+            first.requestUrl!!.queryParameter("request_id") != second.requestUrl!!.queryParameter("request_id"),
+        )
+    }
+
+    @Test
+    fun deleteSession_secondConflictFailsWithoutLooping() = runTest {
+        enqueueSnapshot()
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"detail":"revision_conflict"}"""))
+        enqueueSnapshot(revision = 8)
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"detail":"revision_conflict"}"""))
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val result = client.deleteSession("sess-a")
+
+        assertTrue(result.isFailure)
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test
+    fun deleteSession_sessionBusyConflictIsNotRetried() = runTest {
+        enqueueSnapshot()
+        server.enqueue(MockResponse().setResponseCode(409).setBody("""{"detail":"session_busy"}"""))
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        assertTrue(client.deleteSession("sess-a").isFailure)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun deleteSession_snapshot404FallsBackToLegacyUnfencedDelete() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"detail":"Not Found"}"""))
+        server.enqueue(jsonOk())
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.deleteSession("sess-a", profile = "mizu").getOrThrow()
+
+        server.takeRequest()
+        val del = server.takeRequest()
+        assertEquals("DELETE", del.method)
+        assertEquals("mizu", del.requestUrl!!.queryParameter("profile"))
+        assertEquals(null, del.requestUrl!!.queryParameter("request_id"))
+        assertEquals(null, del.requestUrl!!.queryParameter("expected_revision"))
+    }
+
+    @Test
+    fun renameSession_snapshot404FallsBackToUnfencedPatch() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(jsonOk())
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        client.renameSession("sess-a", "T").getOrThrow()
+
+        server.takeRequest()
+        val body = server.takeRequest().body.readUtf8()
+        assertFalse(body.contains("request_id"))
+        assertFalse(body.contains("expected_revision"))
+    }
+
+    @Test
+    fun snapshotServerError_isReturnedNotFallenBack() = runTest {
+        server.enqueue(MockResponse().setResponseCode(503).setBody("""{"detail":"storage_unavailable"}"""))
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        assertTrue(client.deleteSession("sess-a").isFailure)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun deleteSession_absentSessionSkipsDelete() = runTest {
+        enqueueSnapshot(exists = false)
+        val client = DashboardApiClient(baseUrl = server.url("/").toString())
+        val result = client.deleteSession("sess-a").getOrThrow()
+
+        assertEquals(1, server.requestCount)
+        assertEquals("true", result["already_absent"]!!.jsonPrimitive.content)
+    }
+
     @Test
     fun setSessionArchived_patchesArchivedScopedToProfile() = runTest {
+        enqueueSnapshot()
         server.enqueue(
             MockResponse()
                 .setHeader("Content-Type", "application/json")
@@ -1885,6 +2035,7 @@ class DashboardApiClientTest {
         val client = DashboardApiClient(baseUrl = server.url("/").toString())
         client.setSessionArchived("sess-old", archived = true, profile = "mizu").getOrThrow()
 
+        server.takeRequest() // mutation-snapshot
         val request = server.takeRequest()
         assertEquals("PATCH", request.method)
         // Current upstream reads profile from the PATCH body (SessionRename
@@ -1898,6 +2049,7 @@ class DashboardApiClientTest {
 
     @Test
     fun setSessionArchived_omitsProfileForDefaultSelection() = runTest {
+        enqueueSnapshot()
         server.enqueue(
             MockResponse()
                 .setHeader("Content-Type", "application/json")
@@ -1907,6 +2059,7 @@ class DashboardApiClientTest {
         val client = DashboardApiClient(baseUrl = server.url("/").toString())
         client.setSessionArchived("sess-old", archived = false, profile = null).getOrThrow()
 
+        server.takeRequest() // mutation-snapshot
         val request = server.takeRequest()
         assertEquals(null, request.requestUrl!!.queryParameter("profile"))
         val body = request.body.readUtf8()
@@ -1916,6 +2069,7 @@ class DashboardApiClientTest {
 
     @Test
     fun setSessionPinned_patchesPinnedScopedToProfile() = runTest {
+        enqueueSnapshot()
         server.enqueue(
             MockResponse()
                 .setHeader("Content-Type", "application/json")
@@ -1925,6 +2079,7 @@ class DashboardApiClientTest {
         val client = DashboardApiClient(baseUrl = server.url("/").toString())
         client.setSessionPinned("sess-keep", pinned = true, profile = "mizu").getOrThrow()
 
+        server.takeRequest() // mutation-snapshot
         val request = server.takeRequest()
         assertEquals("PATCH", request.method)
         assertEquals("/api/sessions/sess-keep", request.requestUrl!!.encodedPath)
@@ -1936,6 +2091,7 @@ class DashboardApiClientTest {
 
     @Test
     fun renameSession_carriesProfileInBodyAndQuery() = runTest {
+        enqueueSnapshot()
         server.enqueue(
             MockResponse()
                 .setHeader("Content-Type", "application/json")
@@ -1945,6 +2101,7 @@ class DashboardApiClientTest {
         val client = DashboardApiClient(baseUrl = server.url("/").toString())
         client.renameSession("sess-a", title = "New title", profile = "mizu").getOrThrow()
 
+        server.takeRequest() // mutation-snapshot
         val request = server.takeRequest()
         assertEquals("PATCH", request.method)
         assertEquals("/api/sessions/sess-a", request.requestUrl!!.encodedPath)
