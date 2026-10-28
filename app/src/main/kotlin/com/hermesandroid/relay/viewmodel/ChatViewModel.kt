@@ -7427,6 +7427,23 @@ class ChatViewModel : ViewModel() {
             return true
         }
 
+        // `/commands` is an app-palette entry, not a tui_gateway command (absent
+        // from the catalog; slash.exec answers "Unknown command") — list the
+        // server catalog locally instead of forwarding it.
+        if (normalizedName == "commands") {
+            viewModelScope.launch {
+                val commands = currentOrRefreshedServerCommands(gateway, handler) ?: return@launch
+                handler.addSystemNotice(
+                    if (commands.isEmpty()) {
+                        "No server commands are available."
+                    } else {
+                        commands.joinToString("\n") { "${it.command} — ${it.description}" }
+                    }
+                )
+            }
+            return true
+        }
+
         if (normalizedName == "compress" || normalizedName == "compact") {
             val focusTopic = text.substringAfter(' ', "").trim().takeIf { it.isNotBlank() }
             viewModelScope.launch {
@@ -7437,8 +7454,19 @@ class ChatViewModel : ViewModel() {
 
         viewModelScope.launch {
             val commands = currentOrRefreshedServerCommands(gateway, handler) ?: return@launch
-            val known = commands.any {
+            fun List<SlashCommand>.hasCommand() = any {
                 normalizeSlashCommandName(it.command.removePrefix("/").substringBefore(' ')) == normalizedName
+            }
+            var known = commands.hasCommand()
+            if (!known) {
+                // The cached list can predate a skill install; refetch once
+                // before rejecting.
+                gateway.commandsCatalog(connectIfNeeded = true, forceRefresh = true).getOrNull()?.let { fresh ->
+                    if (gatewayClient !== gateway) return@launch
+                    val parsed = parseCommandsCatalog(fresh)
+                    _serverCommands.value = parsed
+                    known = parsed.hasCommand()
+                }
             }
             if (!known) {
                 handler.addSystemNotice("/$rawName is not available on this Hermes gateway. Use /commands to browse supported commands.")
@@ -7546,7 +7574,33 @@ class ChatViewModel : ViewModel() {
         }
         val name = commandLine.removePrefix("/").substringBefore(' ')
 
-        val exec = gateway.slashExec(commandLine)
+        var exec = gateway.slashExec(commandLine)
+        if (exec.exceptionOrNull()?.message?.contains("no live session", ignoreCase = true) == true) {
+            // Built-ins only run through slash.exec, which needs a live session —
+            // resume/create one (as model selection does) and retry once.
+            val requestProfileContextKey = activeProfileContextKey
+            val startingSessionId = handler.currentSessionId.value
+            val preparedSessionId = gateway.prepareModelSelectionSession(startingSessionId)
+                .getOrElse { error ->
+                    handler.addSystemNotice("/$name failed: ${error.message ?: "gateway unavailable"}")
+                    return
+                }
+            if (
+                gatewayClient !== gateway || chatHandler !== handler ||
+                requestProfileContextKey != activeProfileContextKey ||
+                handler.currentSessionId.value != startingSessionId
+            ) {
+                return
+            }
+            if (startingSessionId == null) {
+                memoryRecoverySelectionRequired = false
+                handler.setSessionId(preparedSessionId)
+                selectBackgroundProcessSession(preparedSessionId)
+                gatewayProcessController.sessionReady(preparedSessionId)
+                onSessionChanged?.invoke(preparedSessionId)
+            }
+            exec = gateway.slashExec(commandLine)
+        }
         exec.onSuccess { result ->
             val output = result.stringValue("output") ?: "(no output)"
             val warning = result.stringValue("warning")
@@ -7555,12 +7609,8 @@ class ChatViewModel : ViewModel() {
         }
         val failure = exec.exceptionOrNull()
         val code = (failure as? GatewayRpcException)?.code
-        // 4018 = "use command.dispatch"; "no live session" happens before
-        // the first gateway turn — command.dispatch works sessionless for
-        // quick/plugin commands, so fall through for that too.
-        val fallThrough = code == 4018 ||
-            failure?.message?.contains("no live session", ignoreCase = true) == true
-        if (!fallThrough) {
+        // 4018 = "use command.dispatch" (quick/plugin/bundle/skill commands).
+        if (code != 4018) {
             handler.addSystemNotice("/$name failed: ${failure?.message ?: "unknown error"}")
             return
         }
