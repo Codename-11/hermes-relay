@@ -2076,7 +2076,14 @@ class GatewayChatClient(
                 validated.repeat?.let { put("repeat", it) }
                 validated.profile?.let { put("profile", it) }
             },
-        )
+        ).mapCatching { result ->
+            // cron.manage answers a refused create with a normal result carrying
+            // `success: false` + `error` — surface it instead of "created".
+            if ((result["success"] as? JsonPrimitive)?.booleanOrNull == false) {
+                throw GatewayRpcException(result.stringField("error") ?: "cron job was not created")
+            }
+            result
+        }
     }
 
     /** Current Hermes-owned profile roster; older gateways fail soft to the Dashboard/Relay list. */
