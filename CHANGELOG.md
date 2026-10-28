@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Built-in slash commands such as /help and /title work in a new chat before the first message, /commands lists the server's commands, and skill commands follow the selected profile, including skills installed after connecting.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
