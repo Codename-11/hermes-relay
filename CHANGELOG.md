@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Opening a conversation or switching profiles now retries a failed history read briefly before giving up, so one transient gateway or network failure no longer clears the conversation and raises a history error.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
