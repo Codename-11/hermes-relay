@@ -4250,6 +4250,26 @@ class ChatViewModel : ViewModel() {
     }
 
     /**
+     * [loadSessionHistory] for a user-initiated open or switch, with a bounded
+     * retry ([loadHistoryWithRetry]) so one transient read failure cannot
+     * clear the transcript and raise the history-load failure banner.
+     * Dashboard sign-in failures are not retried: [publishHistoryLoadFailure]
+     * routes them to the sign-in flow, which must not wait out the backoff.
+     * Callers keep their existing generation/context guards, so a result that
+     * lands after a newer switch is discarded rather than painted.
+     */
+    private suspend fun loadSessionHistoryForOpen(
+        sessionId: String,
+        requireProfileScope: Boolean = false,
+        mode: SessionMessageLoadMode = SessionMessageLoadMode.LATEST,
+        profileName: String? = currentSessionProfileName(),
+    ): List<MessageItem> = loadHistoryWithRetry(
+        isRetryable = { error -> !error.isDashboardSignInRequiredFailure() },
+    ) {
+        loadSessionHistory(sessionId, requireProfileScope, mode, profileName)
+    }
+
+    /**
      * Read a Gateway-owned session through the active profile even if the live
      * transport has just downgraded to SSE. Detached completion belongs to the
      * profile/session that created it; consulting the mutable endpoint here can
@@ -5411,7 +5431,7 @@ class ChatViewModel : ViewModel() {
                         automaticGatewayPrewarmBlocked = false
                     }
                 } else {
-                    val messages = loadSessionHistory(
+                    val messages = loadSessionHistoryForOpen(
                         sessionId,
                         requireProfileScope = streamingEndpoint == "gateway",
                         profileName = sessionProfileName,
@@ -6302,7 +6322,7 @@ class ChatViewModel : ViewModel() {
             }
             if (!recovered) {
                 try {
-                    val messages = loadSessionHistory(
+                    val messages = loadSessionHistoryForOpen(
                         sessionId,
                         requireProfileScope = streamingEndpoint == "gateway",
                         profileName = profileName,
