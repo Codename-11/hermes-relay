@@ -154,7 +154,11 @@ jobs:
   test:
     name: Test (Android)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Job budget is slightly above the step timeout so a stuck Gradle run fails
+    # the step (conclusion=failure) instead of cancelling the whole job. Job
+    # cancel bypasses continue-on-error and poisons Required checks as
+    # ANDROID_RESULT=cancelled even when tests are advisory on dev.
+    timeout-minutes: 25
     # Advisory on dev, strict on main. Evaluates to false (= strict) for
     # pushes to main and PRs whose base branch is main; true (= advisory)
     # for everything else (dev pushes, dev-targeted PRs, feature branches).
@@ -178,7 +182,10 @@ jobs:
       # suites tracked by issue #32. Keep CI release-relevant until that suite is
       # split: run the stable connection slice plus focused Chat/Voice state,
       # parser, layout, and accessibility regressions for the active release.
+      # Step timeout < job timeout: stuck runners exit failure (continue-on-error
+      # applies) rather than job-level cancel that fails the required gate.
       - name: Run focused Android unit tests
+        timeout-minutes: 18
         run: |
           ./gradlew :app:testSideloadDebugUnitTest \
             --tests com.hermesandroid.relay.network.ArchitectureBoundaryTest \
