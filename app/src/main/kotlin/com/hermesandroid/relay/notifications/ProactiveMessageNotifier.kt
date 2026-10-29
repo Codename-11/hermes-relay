@@ -42,6 +42,14 @@ object ProactiveMessageNotifier {
     private const val CHANNEL_ID = "hermes_proactive"
     private const val CHANNEL_NAME = "Threads"
 
+    /**
+     * Conversation key on the posted notification extras so opening a Thread
+     * can cancel every banner for that chat without remembering message ids.
+     * Blank / missing chat_id normalizes to [DEFAULT_CHAT_ID].
+     */
+    internal const val EXTRA_CHAT_ID = "hermes_proactive_chat_id"
+    internal const val DEFAULT_CHAT_ID = "phone"
+
     /** Base for derived notification ids — keeps us clear of other slots. */
     private const val ID_BASE = 0x48524D00 // "HRM" + 00
 
@@ -96,6 +104,7 @@ object ProactiveMessageNotifier {
         val resolvedTitle = title?.takeIf { it.isNotBlank() } ?: "Hermes"
         val collapsed = text.take(120)
         val expanded = text.take(1000)
+        val chatKey = normalizeChatId(chatId)
 
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -107,6 +116,12 @@ object ProactiveMessageNotifier {
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            // Survives process death so clear-on-seen can match without a local map.
+            .addExtras(
+                android.os.Bundle().apply {
+                    putString(EXTRA_CHAT_ID, chatKey)
+                },
+            )
 
         return runCatching {
             NotificationManagerCompat.from(context).notify(notificationId, builder.build())
@@ -118,6 +133,30 @@ object ProactiveMessageNotifier {
     fun cancel(context: Context, notificationId: Int) {
         NotificationManagerCompat.from(context).cancel(notificationId)
     }
+
+    /**
+     * Drop every proactive/Threads tray banner for one conversation once the
+     * user is looking at it. Matches [EXTRA_CHAT_ID] on active notifications
+     * (blank chat_id ≡ [DEFAULT_CHAT_ID]). Sibling chats stay in the tray.
+     */
+    fun cancelForChat(context: Context, chatId: String?) {
+        val key = normalizeChatId(chatId)
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        manager.activeNotifications
+            .asSequence()
+            .filter { it.notification.channelId == CHANNEL_ID }
+            .filter { normalizeChatId(it.notification.extras.getString(EXTRA_CHAT_ID)) == key }
+            .forEach { status ->
+                if (status.tag != null) {
+                    manager.cancel(status.tag, status.id)
+                } else {
+                    manager.cancel(status.id)
+                }
+            }
+    }
+
+    internal fun normalizeChatId(chatId: String?): String =
+        chatId?.takeIf { it.isNotBlank() } ?: DEFAULT_CHAT_ID
 
     /**
      * Build the inline Reply action (Phase 2c). The [RemoteInput] lets the user
@@ -205,6 +244,13 @@ object ProactiveMessageNotifier {
             // A confirmation, not a fresh ping — don't re-alert the user.
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .addExtras(
+                android.os.Bundle().apply {
+                    // Best-effort: keep channel membership for cancelForChat scans
+                    // even when confirm path has no chat id on the call site.
+                    putString(EXTRA_CHAT_ID, DEFAULT_CHAT_ID)
+                },
+            )
 
         runCatching {
             NotificationManagerCompat.from(context).notify(notificationId, builder.build())
