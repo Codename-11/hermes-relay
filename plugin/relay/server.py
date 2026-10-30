@@ -2194,6 +2194,49 @@ def _bridge_error_response(
     return web.json_response({"error": msg}, status=status)
 
 
+def _scroll_target_near_edge(
+    node: dict[str, Any], root: dict[str, Any], direction: str
+) -> tuple[bool, bool]:
+    """Detect a swipe origin near the viewport's bottom/top overlay zones.
+
+    Android's node-targeted scroll takes the target center and offsets the
+    finger origin by one quarter of the *whole* root's height/width. For a
+    lower item that puts the gesture inside floating UI or outside the list.
+    Return (near_edge, root_center_inside_target) so the caller can safely
+    fall back to root-centered scrolling rather than touch a floating bar.
+    """
+    bounds = node.get("bounds")
+    if not isinstance(bounds, dict) or not isinstance(root, dict):
+        raise ValueError("missing live screen bounds")
+    try:
+        left, top, right, bottom = (int(root[k]) for k in ("left", "top", "right", "bottom"))
+        nl, nt, nr, nb = (int(bounds[k]) for k in ("left", "top", "right", "bottom"))
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ValueError("invalid live screen bounds") from exc
+    w, h = right-left, bottom-top
+    if w < 160 or h < 160 or nr <= nl or nb <= nt:
+        raise ValueError("invalid target scroll geometry")
+    cx, cy = (nl+nr)/2, (nt+nb)/2
+    rmid_x, rmid_y = (left+right)/2, (top+bottom)/2
+    qx, qy = w/4, h/4
+    if direction == "down":
+        origin = cy+qy
+        risk = origin > top+0.76*h
+    elif direction == "up":
+        origin = cy-qy
+        risk = origin < top+0.24*h
+    elif direction == "left":
+        origin = cx-qx
+        risk = origin < left+0.24*w
+    elif direction == "right":
+        origin = cx+qx
+        risk = origin > left+0.76*w
+    else:
+        raise ValueError("unsupported scroll direction")
+    inside = nl < rmid_x < nr and nt < rmid_y < nb
+    return risk, inside
+
+
 async def _bridge_dispatch(
     request: web.Request,
     path: str,
@@ -2242,6 +2285,113 @@ async def _bridge_dispatch(
     if selector is not None and not isinstance(selector, str):
         return web.json_response({"error": "device selector must be a string"}, status=400)
 
+    # Older host android_swipe tools send direction/distance, but the phone's
+    # /swipe handler expects explicit start/end pixels. Derive a directional
+    # gesture from the live accessibility screen; leave coordinate callers
+    # untouched, and don't guess dimensions when screen inspection fails.
+    if method == "POST" and path == "/swipe" and not any(
+        key in body for key in ("start_x", "start_y", "end_x", "end_y")
+    ):
+        direction = body.get("direction")
+        distance = body.get("distance", "medium")
+        if direction in ("up", "down", "left", "right") and distance in (
+            "short", "medium", "long"
+        ):
+            try:
+                snapshot = await server.bridge.handle_command(
+                    method="GET",
+                    path="/screen",
+                    params={"include_bounds": "true"},
+                    body={"include_bounds": "true"},
+                    device=selector,
+                )
+            except BridgeError as exc:
+                return _bridge_error_response(exc)
+            except ConnectionError as exc:
+                return web.json_response({"error": str(exc)}, status=_BRIDGE_SEND_FAIL_STATUS)
+            result = snapshot.get("result")
+            bounds = result.get("rootBounds") if isinstance(result, dict) else None
+            if snapshot.get("status", 200) != 200 or not isinstance(bounds, dict):
+                return web.json_response(
+                    {"error": "cannot determine live screen geometry for swipe"}, status=503
+                )
+            try:
+                left, top, right, bottom = (
+                    int(bounds[k]) for k in ("left", "top", "right", "bottom")
+                )
+            except (KeyError, ValueError, TypeError):
+                return web.json_response(
+                    {"error": "invalid screen geometry for swipe"}, status=503
+                )
+            width, height = right - left, bottom - top
+            if width < 160 or height < 160:
+                return web.json_response(
+                    {"error": "screen too small for swipe"}, status=503
+                )
+            ratio = {"short": 0.20, "medium": 0.42, "long": 0.64}[distance]
+            cx, cy = (left + right) // 2, (top + bottom) // 2
+            if direction in ("up", "down"):
+                half = round(height * ratio / 2)
+                sx = ex = cx
+                sy, ey = (cy + half, cy - half) if direction == "up" else (
+                    cy - half, cy + half
+                )
+            else:
+                half = round(width * ratio / 2)
+                sy = ey = cy
+                sx, ex = (cx + half, cx - half) if direction == "left" else (
+                    cx - half, cx + half
+                )
+            body = {
+                "start_x": sx, "start_y": sy, "end_x": ex, "end_y": ey,
+                "duration_ms": 400,
+            }
+
+    scroll_fallback = False
+    if method == "POST" and path == "/scroll" and (body.get("nodeId") is not None or body.get("node_id") is not None):
+        direction = body.get("direction")
+        try:
+            live = await server.bridge.handle_command(
+                method="GET", path="/screen",
+                params={"include_bounds": "true"},
+                body={"include_bounds": "true"}, device=selector,
+            )
+        except BridgeError as exc:
+            return _bridge_error_response(exc)
+        except ConnectionError as exc:
+            return web.json_response({"error": str(exc)}, status=_BRIDGE_SEND_FAIL_STATUS)
+        data = live.get("result")
+        if live.get("status", 200) != 200 or not isinstance(data, dict):
+            return web.json_response({"error": "Cannot verify scroll target geometry; no gesture sent."}, status=503)
+        current = [item for item in (data.get("nodes") or [])
+                   if isinstance(item, dict) and item.get("nodeId") == (body.get("nodeId") or body.get("node_id"))]
+        if len(current) != 1:
+            return web.json_response({"error": "Scroll target disappeared; re-read the screen."}, status=409)
+        if not current[0].get("scrollable"):
+            return web.json_response({
+                "error": "Scroll target is not a scrollable container; re-read and choose one.",
+                "action_performed": False,
+            }, status=409)
+        try:
+            risky, root_inside = _scroll_target_near_edge(
+                current[0], data.get("rootBounds"), direction,
+            )
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+        if risky:
+            if not root_inside:
+                return web.json_response({
+                    "error": "Target scroll origin overlaps a screen edge; "
+                             "use a screen-level scroll instead.",
+                    "action_performed": False,
+                }, status=409)
+            # The root center is within the intended scrollable's bounds.
+            # Drop the node so the existing Android root-centered gesture
+            # avoids floating bars that intercepted the original gesture.
+            body.pop("nodeId", None)
+            body.pop("node_id", None)
+            scroll_fallback = True
+
     try:
         response = await server.bridge.handle_command(
             method=method,
@@ -2261,6 +2411,14 @@ async def _bridge_dispatch(
     result = response.get("result")
     if not isinstance(result, (dict, list)):
         result = {"value": result} if result is not None else {}
+    if path == "/scroll" and status == 200 and isinstance(result, dict):
+        result = dict(result)
+        # A dispatched Accessibility gesture may have been intercepted by an
+        # overlay. Callers must verify visible content movement separately.
+        result["gesture_dispatched_only"] = True
+        result["content_movement_verified"] = None
+        if scroll_fallback:
+            result["scroll_fallback"] = "screen_center"
     return web.json_response(result, status=status)
 
 
