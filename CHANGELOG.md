@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android bridge node-directed actions reject stale positional Accessibility IDs, using one-use handles bound to the original screen snapshot and a fresh UI identity check before dispatch.
+
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
