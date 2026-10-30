@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android screen-reader requests keep visible Accessibility nodes even when callers omit pixel coordinates.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added

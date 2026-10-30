@@ -402,7 +402,18 @@ def android_read_screen(include_bounds: bool = False) -> str:
                    clickable, focusable, bounds (if include_bounds=True)
     """
     try:
-        data = _get(f"/screen?include_bounds={str(include_bounds).lower()}")
+        # Some Android ScreenReader builds zero node bounds before applying
+        # their visibility predicate when include_bounds=false. This drops
+        # every node, even on an otherwise accessible screen. Always request
+        # actual geometry over the bridge and remove it from the tool result
+        # when the caller did not request coordinates.
+        data = _get("/screen?include_bounds=true")
+        if not include_bounds and isinstance(data, dict):
+            for node in data.get("nodes", []):
+                if isinstance(node, dict) and "bounds" in node:
+                    node["bounds"] = {
+                        "left": 0, "top": 0, "right": 0, "bottom": 0,
+                    }
         return json.dumps(data)
     except Exception as e:
         return json.dumps({"error": str(e)})
