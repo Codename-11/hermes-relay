@@ -474,20 +474,6 @@ class BridgeCommandHandler(
             )
         }
 
-        // === v0.4.1 polish: keep auto-return idle timer alive ===
-        // Any non-polling bridge command during a run is evidence the
-        // agent is still working — reset BridgeRunTracker's idle timer
-        // so it doesn't fire a premature /return_to_hermes mid-run.
-        // Pure /ping probes are noise and would reset the timer
-        // spuriously, so we gate on the same suppressed-paths set used
-        // for the activity log. When no foreground-shifting command
-        // has fired yet, the tracker's onBridgeCommandActivity() is a
-        // no-op so this is cheap even for commands that don't care.
-        if (path !in activityLogSuppressedPaths) {
-            com.hermesandroid.relay.bridge.BridgeRunTracker.onBridgeCommandActivity()
-        }
-        // === END v0.4.1 polish ===
-
         // === v0.4.1 polish: register activity-log pending entry ===
         // Record BEFORE any early-return respond() call so even commands
         // that bounce off safety rails (bridge_disabled, user_denied,
@@ -2420,15 +2406,6 @@ class BridgeCommandHandler(
             }
             if (status == 200 && pending.path == "/return_to_hermes") {
                 com.hermesandroid.relay.bridge.BridgeRunTracker.markReturnedToHermes()
-            }
-            // Reset the idle timer on respond too — the dispatch-time reset
-            // only gives 12s from command START, and a slow-executing
-            // command (screenshot, /screen on a big tree) could eat most
-            // of that window before the agent even sees the response. By
-            // also resetting here, the 12s window always starts fresh
-            // from when the agent got the latest information.
-            if (status == 200 && pending.path != "/return_to_hermes") {
-                com.hermesandroid.relay.bridge.BridgeRunTracker.onBridgeCommandActivity()
             }
         }
         // === END v0.4.1 polish ===
