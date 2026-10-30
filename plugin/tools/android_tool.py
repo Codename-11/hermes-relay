@@ -728,8 +728,26 @@ def android_screenshot(sensitive: bool = False) -> dict:
             ],
             "text_summary": summary,
         }
-    except Exception:
-        return {"error": "Screenshot unavailable"}
+    except Exception as exc:
+        # MediaProjection is an Android user-consent grant, not a permanent
+        # permission. A stopped projection needs a fresh user-initiated grant.
+        # Only surface known, safe error codes from the relay. Never include
+        # a raw exception, URL, authorization header, or private screen data.
+        response = getattr(exc, "response", None)
+        if response is not None:
+            try:
+                remote_error = response.json().get("error", "")
+            except (ValueError, AttributeError, TypeError):
+                remote_error = ""
+            if isinstance(remote_error, str) and remote_error.startswith(
+                "MediaProjection not granted"
+            ):
+                return {"error": (
+                    "Android screen capture consent expired. Open Hermes Relay "
+                    "→ Bridge → Screen capture, select Share entire screen and approve."
+                )}
+        return {"error": "Screenshot unavailable; check Bridge screen-capture consent and retry."}
+
 
 
 def android_scroll(direction: str, node_id: Optional[str] = None) -> str:
