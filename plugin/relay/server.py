@@ -2194,6 +2194,50 @@ def _bridge_error_response(
     return web.json_response({"error": msg}, status=status)
 
 
+def _directional_swipe_coordinates(
+    bounds: dict[str, Any], direction: str, distance: str
+) -> dict[str, int]:
+    """Translate the host's direction/distance swipe to Android pixel points.
+
+    The Android /swipe handler expects start/end coordinates; older host tools
+    send only direction and distance. Base gestures on live screen geometry
+    rather than guessed device dimensions.
+    """
+    if direction not in ("up", "down", "left", "right"):
+        raise ValueError("swipe direction must be up, down, left, or right")
+    if distance not in ("short", "medium", "long"):
+        raise ValueError("swipe distance must be short, medium, or long")
+    if not isinstance(bounds, dict):
+        raise ValueError("no active screen bounds available")
+    try:
+        left, top, right, bottom = (
+            int(bounds[key]) for key in ("left", "top", "right", "bottom")
+        )
+    except (KeyError, ValueError, TypeError) as exc:
+        raise ValueError("invalid active screen bounds") from exc
+    width, height = right - left, bottom - top
+    if width < 160 or height < 160:
+        raise ValueError("active screen too small for a directional swipe")
+    ratio = {"short": 0.20, "medium": 0.42, "long": 0.64}[distance]
+    cx, cy = (left + right) // 2, (top + bottom) // 2
+    if direction in ("up", "down"):
+        half = round(height * ratio / 2)
+        sx = ex = cx
+        sy, ey = (cy + half, cy - half) if direction == "up" else (
+            cy - half, cy + half
+        )
+    else:
+        half = round(width * ratio / 2)
+        sy = ey = cy
+        sx, ex = (cx + half, cx - half) if direction == "left" else (
+            cx - half, cx + half
+        )
+    return {
+        "start_x": sx, "start_y": sy, "end_x": ex, "end_y": ey,
+        "duration_ms": 400,
+    }
+
+
 async def _bridge_dispatch(
     request: web.Request,
     path: str,
@@ -2241,6 +2285,44 @@ async def _bridge_dispatch(
 
     if selector is not None and not isinstance(selector, str):
         return web.json_response({"error": "device selector must be a string"}, status=400)
+
+    # The host's direction/distance swipe format predates the Android
+    # coordinate-only /swipe handler. Convert only legacy directional calls;
+    # explicit coordinate gestures retain their original wire shape.
+    if method == "POST" and path == "/swipe" and not any(
+        key in body for key in ("start_x", "start_y", "end_x", "end_y")
+    ):
+        direction, distance = body.get("direction"), body.get("distance", "medium")
+        if direction is not None:
+            if direction not in ("up", "down", "left", "right") or distance not in (
+                "short", "medium", "long"
+            ):
+                return web.json_response(
+                    {"error": "invalid swipe direction or distance"}, status=400
+                )
+            try:
+                snapshot = await server.bridge.handle_command(
+                    method="GET", path="/screen",
+                    params={"include_bounds": "true"},
+                    body={"include_bounds": "true"}, device=selector,
+                )
+            except BridgeError as exc:
+                return _bridge_error_response(exc)
+            except ConnectionError as exc:
+                return web.json_response(
+                    {"error": str(exc)}, status=_BRIDGE_SEND_FAIL_STATUS
+                )
+            result = snapshot.get("result")
+            if snapshot.get("status", 200) != 200 or not isinstance(result, dict):
+                return web.json_response(
+                    {"error": "unable to inspect screen for swipe"}, status=503
+                )
+            try:
+                body = _directional_swipe_coordinates(
+                    result.get("rootBounds"), direction, distance
+                )
+            except ValueError as exc:
+                return web.json_response({"error": str(exc)}, status=503)
 
     try:
         response = await server.bridge.handle_command(

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Legacy direction-and-distance phone swipes use live screen bounds to send the coordinates Android expects.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
