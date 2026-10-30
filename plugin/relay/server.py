@@ -2352,6 +2352,17 @@ async def _bridge_dispatch(
     if selector is not None and not isinstance(selector, str):
         return web.json_response({"error": "device selector must be a string"}, status=400)
 
+    # The Android compact screen mode zeros node bounds in the response.
+    # Our one-time handles need real geometry for later live verification.
+    # Request full bounds from the phone, then compact the public response
+    # *after* storing the original node signatures. Root bounds stay intact.
+    # This works with Android builds that have fixed compact serialization
+    # as well as older versions that inadvertently omitted every node.
+    compact_screen = path == "/screen" and body.get("include_bounds") == "false"
+    if method == "GET" and path == "/screen":
+        params["include_bounds"] = "true"
+        body["include_bounds"] = "true"
+
     # Handle node IDs only through snapshot-bound tokens. A raw w0:34
     # must never be interpreted as a fresh target: it can now mean another
     # control, as observed in Calculator. The Relay performs this check
@@ -2400,6 +2411,15 @@ async def _bridge_dispatch(
     if status == 200 and isinstance(result, dict):
         if path in ("/screen", "/find_nodes"):
             result = _bridge_snapshot_nodes(session, selector, result, path)
+            if path == "/screen" and compact_screen:
+                result = dict(result)
+                result["nodes"] = [
+                    {**item, "bounds": {
+                        "left": 0, "top": 0, "right": 0, "bottom": 0,
+                    }}
+                    if isinstance(item, dict) and "bounds" in item else item
+                    for item in result["nodes"]
+                ]
         elif path == "/describe_node" and requested_handle is not None:
             result = dict(result)
             if "nodeId" in result:

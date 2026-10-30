@@ -48,8 +48,15 @@ class SnapshotNodeTests(AioHTTPTestCase):
         async def fake_device(*, method, path, params, body, device):
             self.calls.append((method, path, body.copy(), device))
             if path == "/screen":
+                # PR #818 fixes the Android compact mode to return nodes with
+                # zeroed geometry. Verification must not compare that against
+                # a separate full-geometry response and reject a valid tap.
+                compact = str(body.get("include_bounds", "true")) == "false"
+                item = node(self.text)
+                if compact:
+                    item["bounds"] = {"left": 0, "top": 0, "right": 0, "bottom": 0}
                 return {"status": 200, "result": {
-                    "packageName": "com.example.calc", "nodes": [node(self.text)],
+                    "packageName": "com.example.calc", "nodes": [item],
                     "rootBounds": {"left": 0, "top": 0, "right": 1080, "bottom": 2400},
                 }}
             if path == "/find_nodes":
@@ -98,6 +105,47 @@ class SnapshotNodeTests(AioHTTPTestCase):
         self.assertEqual(replay.status, 409)
         self.assertFalse((await replay.json())["action_performed"])
         self.assertEqual(len(self.calls), before)
+
+    async def test_compact_screen_preserves_output_and_allows_verified_tap(self):
+        # Host defaults to include_bounds=false; on Android with #818 that
+        # returns nodes with zero coordinates, but still requires fresh
+        # full-geometry verification for a secure tap.
+        response = await self.client.get(
+            "/screen?include_bounds=false", headers=self.headers,
+        )
+        self.assertEqual(response.status, 200)
+        data = await response.json()
+        self.assertEqual(data["rootBounds"]["bottom"], 2400)
+        self.assertEqual(data["nodes"][0]["bounds"], {
+            "left": 0, "top": 0, "right": 0, "bottom": 0,
+        })
+        identifier = data["nodes"][0]["nodeId"]
+        self.assertTrue(identifier.startswith("n-"))
+        self.assertEqual((await self.tap(identifier)).status, 200)
+        self.assertEqual(self.calls[-1][2]["nodeId"], "w1:34")
+
+    async def test_compact_screen_still_rejects_changed_control(self):
+        response = await self.client.get(
+            "/screen?include_bounds=false", headers=self.headers,
+        )
+        identifier = (await response.json())["nodes"][0]["nodeId"]
+        self.text = "0"
+        before = len(self.calls)
+        refused = await self.tap(identifier)
+        self.assertEqual(refused.status, 409)
+        self.assertIn("Stale", (await refused.json())["error"])
+        self.assertEqual(len(self.calls), before + 1)
+        self.assertEqual(self.calls[-1][1], "/screen")
+
+    async def test_full_screen_preserves_actual_bounds(self):
+        response = await self.client.get(
+            "/screen?include_bounds=true", headers=self.headers,
+        )
+        self.assertEqual(response.status, 200)
+        self.assertEqual((await response.json())["nodes"][0]["bounds"], {
+            "left": 20, "top": 100, "right": 70, "bottom": 150,
+        })
+        self.assertEqual(self.calls[-1][2]["include_bounds"], "true")
 
     async def test_new_screen_read_invalidates_old_target(self):
         first = await self.read_id()
