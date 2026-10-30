@@ -428,7 +428,8 @@ def android_find_nodes(text: Optional[str] = None,
     the accessibility walk budget of 512 nodes). Each match is a
     ScreenNode in the same shape ``android_read_screen`` emits, including
     a stable ``nodeId`` of the form ``"w<window>:<index>"`` you can feed
-    back into ``android_tap(node_id=...)``.
+    back into ``android_tap(node_id=...)``. These IDs are snapshot-bound
+    and single-use, not persistent Android element identifiers.
     """
     try:
         payload: dict = {"limit": int(limit)}
@@ -444,11 +445,26 @@ def android_find_nodes(text: Optional[str] = None,
         return json.dumps({"error": str(e)})
 
 
+def _gesture_failure(exc: Exception) -> str:
+    """Surface Relay's stale-node refusal instead of a generic HTTP 409."""
+    response = getattr(exc, "response", None)
+    if response is not None and getattr(response, "status_code", None) == 409:
+        try:
+            message = response.json().get("error")
+        except (AttributeError, TypeError, ValueError):
+            message = None
+        return json.dumps({
+            "error": message or "Stale or invalid node; read the screen again.",
+            "action_performed": False,
+        })
+    return json.dumps({"error": str(exc)})
+
+
 def android_tap(x: Optional[int] = None, y: Optional[int] = None,
                 node_id: Optional[str] = None) -> str:
     """
-    Tap at screen coordinates (x, y) or by accessibility node_id.
-    Prefer node_id when available — it's more reliable than coordinates.
+    Tap at coordinates or with a fresh, snapshot-bound accessibility ID.
+    Node IDs are single-use and change after another screen read or action.
     """
     try:
         payload = {}
@@ -462,7 +478,7 @@ def android_tap(x: Optional[int] = None, y: Optional[int] = None,
         data = _post("/tap", payload)
         return json.dumps(data)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _gesture_failure(e)
 
 
 def android_tap_text(text: str, exact: bool = False) -> str:
@@ -555,7 +571,7 @@ def android_long_press(
         data = _post("/long_press", payload)
         return json.dumps(data)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _gesture_failure(e)
 
 
 def android_type(text: str, clear_first: bool = False) -> str:
@@ -744,7 +760,7 @@ def android_scroll(direction: str, node_id: Optional[str] = None) -> str:
         data = _post("/scroll", payload)
         return json.dumps(data)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _gesture_failure(e)
 
 
 def android_wait(text: str = None, class_name: str = None,
@@ -885,7 +901,7 @@ def android_describe_node(node_id: str) -> str:
         data = _post("/describe_node", {"nodeId": node_id})
         return json.dumps(data)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _gesture_failure(e)
 
 
 def android_events(limit: int = 50, since: int = 0) -> str:
@@ -1906,7 +1922,7 @@ _SCHEMAS = {
             "node text OR contentDescription), class_name (exact match), "
             "clickable (True/False). Returns up to `limit` matches in the "
             "same ScreenNode shape as android_read_screen, including node "
-            "IDs you can feed into android_tap(node_id=...)."
+            "one-time IDs for android_tap(node_id=...). Re-read after every action."
         ),
         "parameters": {
             "type": "object",
@@ -1934,7 +1950,7 @@ _SCHEMAS = {
     },
     "android_tap": {
         "name": "android_tap",
-        "description": "Tap a UI element by node_id (preferred) or by screen coordinates (x, y). Always prefer node_id over coordinates — it's more reliable. Get node_ids from android_read_screen.",
+        "description": "Tap with screen coordinates or a one-time snapshot-bound node_id from android_read_screen or android_find_nodes. Old raw w0:NN IDs are rejected; re-read after each UI action.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -2074,7 +2090,7 @@ _SCHEMAS = {
     },
     "android_scroll": {
         "name": "android_scroll",
-        "description": "Scroll the screen or a specific scrollable element.",
+        "description": "Scroll the screen or a specific scrollable element. Node IDs are one-time snapshot-bound handles; re-read immediately before targeted scrolling.",
         "parameters": {
             "type": "object",
             "properties": {

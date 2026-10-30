@@ -2194,6 +2194,159 @@ def _bridge_error_response(
     return web.json_response({"error": msg}, status=status)
 
 
+# Phone Accessibility IDs (w0:31) are positions, not stable identities.
+# Relay-issued handles bind the original ID to ONE screen-read response.
+# Another read, any node-targeted action, or expiry invalidates the handle.
+_BRIDGE_NODE_SNAPSHOTS: dict[tuple[str, str], dict[str, Any]] = {}
+_BRIDGE_NODE_HANDLE = re.compile(r"\An-([A-Za-z0-9_-]{16,48})\.(w[0-9]+:[0-9]+)\Z")
+_BRIDGE_NODE_MAX_AGE_SECONDS = 90.0
+
+
+def _bridge_node_signature(node: dict[str, Any]) -> tuple[Any, ...]:
+    bounds = node.get("bounds") or {}
+    return (
+        node.get("text"), node.get("contentDescription"),
+        node.get("className"), node.get("viewId"),
+        tuple(bounds.get(n) for n in ("left", "top", "right", "bottom")),
+        node.get("clickable"), node.get("longClickable"),
+        node.get("scrollable"), node.get("editable"), node.get("enabled"),
+    )
+
+
+def _bridge_node_scope(session: Session, device: Any) -> tuple[str, str]:
+    return session.token, str(device or "")
+
+
+def _bridge_snapshot_nodes(
+    session: Session, device: Any, result: dict[str, Any], path: str
+) -> dict[str, Any]:
+    """Replace ephemeral raw Android IDs with private snapshot-bound IDs."""
+    field = "nodes" if path == "/screen" else "matches"
+    items = result.get(field)
+    if not isinstance(items, list):
+        return result
+    scope = _bridge_node_scope(session, device)
+    snapshot_token = secrets.token_urlsafe(16)
+    identities: dict[str, tuple[Any, ...]] = {}
+    copy = dict(result)
+    wrapped_items: list[Any] = []
+    for item in items:
+        if not isinstance(item, dict):
+            wrapped_items.append(item)
+            continue
+        node = dict(item)
+        raw_id = node.get("nodeId")
+        if isinstance(raw_id, str) and re.fullmatch(r"w[0-9]+:[0-9]+", raw_id):
+            identities[raw_id] = _bridge_node_signature(node)
+            node["nodeId"] = f"n-{snapshot_token}.{raw_id}"
+        wrapped_items.append(node)
+    copy[field] = wrapped_items
+    # A new screen read invalidates all earlier IDs for this session/device.
+    _BRIDGE_NODE_SNAPSHOTS[scope] = {
+        "token": snapshot_token,
+        "issued": time.monotonic(),
+        "nodes": identities,
+        "package": result.get("packageName") if path == "/screen" else None,
+    }
+    if len(_BRIDGE_NODE_SNAPSHOTS) > 256:
+        cutoff = time.monotonic() - _BRIDGE_NODE_MAX_AGE_SECONDS
+        for key, old in list(_BRIDGE_NODE_SNAPSHOTS.items()):
+            if old["issued"] < cutoff:
+                _BRIDGE_NODE_SNAPSHOTS.pop(key, None)
+    return copy
+
+
+async def _bridge_resolve_node(
+    server: RelayServer, session: Session, device: Any, encoded: Any,
+    *, consume: bool
+) -> tuple[str | None, str | None]:
+    """Validate an opaque handle against its original, then live, node."""
+    if not isinstance(encoded, str) or not (match := _BRIDGE_NODE_HANDLE.fullmatch(encoded)):
+        return None, "Unsafe raw/invalid node ID. Read the screen again to obtain a snapshot-bound ID."
+    nonce, raw_id = match.groups()
+    scope = _bridge_node_scope(session, device)
+    snap = _BRIDGE_NODE_SNAPSHOTS.get(scope)
+    if not snap or snap["token"] != nonce:
+        return None, "Stale node ID: a newer screen snapshot exists. Read the screen again."
+    if time.monotonic() - snap["issued"] > _BRIDGE_NODE_MAX_AGE_SECONDS:
+        _BRIDGE_NODE_SNAPSHOTS.pop(scope, None)
+        return None, "Expired node ID. Read the screen again."
+    original = snap["nodes"].get(raw_id)
+    if original is None:
+        return None, "Node was not present in the bound snapshot. Read the screen again."
+    try:
+        live = await server.bridge.handle_command(
+            method="GET", path="/screen",
+            params={"include_bounds": "true"},
+            body={"include_bounds": "true"},
+            device=device,
+        )
+    except (BridgeError, ConnectionError):
+        return None, "Cannot verify current UI; no gesture was performed."
+    # Another concurrent read/action might have invalidated the handle.
+    if _BRIDGE_NODE_SNAPSHOTS.get(scope) is not snap:
+        return None, "Stale node ID: the snapshot changed during verification."
+    data = live.get("result")
+    if live.get("status", 200) != 200 or not isinstance(data, dict):
+        return None, "Cannot verify current UI; no gesture was performed."
+    matches = [
+        node for node in (data.get("nodes") or [])
+        if isinstance(node, dict) and node.get("nodeId") == raw_id
+    ]
+    if len(matches) != 1 or _bridge_node_signature(matches[0]) != original:
+        _BRIDGE_NODE_SNAPSHOTS.pop(scope, None)
+        return None, "Stale node ID: target changed, moved or disappeared. Read the screen again."
+    if snap.get("package") is not None and snap["package"] != data.get("packageName"):
+        _BRIDGE_NODE_SNAPSHOTS.pop(scope, None)
+        return None, "Stale node ID: foreground screen changed. Read the screen again."
+    if consume:
+        _BRIDGE_NODE_SNAPSHOTS.pop(scope, None)
+    return raw_id, None
+
+
+def _scroll_target_near_edge(
+    node: dict[str, Any], root: dict[str, Any], direction: str
+) -> tuple[bool, bool]:
+    """Detect a swipe origin near the viewport's bottom/top overlay zones.
+
+    Android's node-targeted scroll takes the target center and offsets the
+    finger origin by one quarter of the *whole* root's height/width. For a
+    lower item that puts the gesture inside floating UI or outside the list.
+    Return (near_edge, root_center_inside_target) so the caller can safely
+    fall back to root-centered scrolling rather than touch a floating bar.
+    """
+    bounds = node.get("bounds")
+    if not isinstance(bounds, dict) or not isinstance(root, dict):
+        raise ValueError("missing live screen bounds")
+    try:
+        left, top, right, bottom = (int(root[k]) for k in ("left", "top", "right", "bottom"))
+        nl, nt, nr, nb = (int(bounds[k]) for k in ("left", "top", "right", "bottom"))
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ValueError("invalid live screen bounds") from exc
+    w, h = right-left, bottom-top
+    if w < 160 or h < 160 or nr <= nl or nb <= nt:
+        raise ValueError("invalid target scroll geometry")
+    cx, cy = (nl+nr)/2, (nt+nb)/2
+    rmid_x, rmid_y = (left+right)/2, (top+bottom)/2
+    qx, qy = w/4, h/4
+    if direction == "down":
+        origin = cy+qy
+        risk = origin > top+0.76*h
+    elif direction == "up":
+        origin = cy-qy
+        risk = origin < top+0.24*h
+    elif direction == "left":
+        origin = cx-qx
+        risk = origin < left+0.24*w
+    elif direction == "right":
+        origin = cx+qx
+        risk = origin > left+0.76*w
+    else:
+        raise ValueError("unsupported scroll direction")
+    inside = nl < rmid_x < nr and nt < rmid_y < nb
+    return risk, inside
+
+
 async def _bridge_dispatch(
     request: web.Request,
     path: str,
@@ -2242,6 +2395,71 @@ async def _bridge_dispatch(
     if selector is not None and not isinstance(selector, str):
         return web.json_response({"error": "device selector must be a string"}, status=400)
 
+    # Handle node IDs only through snapshot-bound tokens. A raw w0:34
+    # must never be interpreted as a fresh target: it can now mean another
+    # control, as observed in Calculator. The Relay performs this check
+    # independently of the Python tool version or active Hermes session.
+    requested_handle = None
+    node_key = None
+    if path in ("/tap", "/long_press", "/scroll", "/describe_node"):
+        present = [k for k in ("nodeId", "node_id") if body.get(k) is not None]
+        if len(present) == 2 and body["nodeId"] != body["node_id"]:
+            return web.json_response(
+                {"error": "Conflicting node IDs; read the screen again."}, status=409
+            )
+        if present:
+            node_key = present[0]
+            requested_handle = body[node_key]
+            resolved, warning = await _bridge_resolve_node(
+                server, session, selector, requested_handle,
+                consume=path != "/describe_node",
+            )
+            if warning:
+                return web.json_response(
+                    {"error": warning, "action_performed": False}, status=409
+                )
+            for field in present:
+                body[field] = resolved
+
+    scroll_fallback = False
+    if method == "POST" and path == "/scroll" and requested_handle is not None:
+        direction = body.get("direction")
+        try:
+            live = await server.bridge.handle_command(
+                method="GET", path="/screen",
+                params={"include_bounds": "true"},
+                body={"include_bounds": "true"}, device=selector,
+            )
+        except BridgeError as exc:
+            return _bridge_error_response(exc)
+        except ConnectionError as exc:
+            return web.json_response({"error": str(exc)}, status=_BRIDGE_SEND_FAIL_STATUS)
+        data = live.get("result")
+        if live.get("status", 200) != 200 or not isinstance(data, dict):
+            return web.json_response({"error": "Cannot verify scroll target geometry; no gesture sent."}, status=503)
+        current = [item for item in (data.get("nodes") or [])
+                   if isinstance(item, dict) and item.get("nodeId") == body.get(node_key)]
+        if len(current) != 1:
+            return web.json_response({"error": "Scroll target disappeared; re-read the screen."}, status=409)
+        try:
+            risky, root_inside = _scroll_target_near_edge(
+                current[0], data.get("rootBounds"), direction,
+            )
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=409)
+        if risky:
+            if not root_inside:
+                return web.json_response({
+                    "error": "Target scroll origin overlaps a screen edge; "
+                             "use a screen-level scroll instead.",
+                    "action_performed": False,
+                }, status=409)
+            # The root center is within the intended scrollable's bounds.
+            # Drop the node so the existing Android root-centered gesture
+            # avoids floating bars that intercepted the original gesture.
+            body.pop(node_key, None)
+            scroll_fallback = True
+
     try:
         response = await server.bridge.handle_command(
             method=method,
@@ -2261,6 +2479,13 @@ async def _bridge_dispatch(
     result = response.get("result")
     if not isinstance(result, (dict, list)):
         result = {"value": result} if result is not None else {}
+    if status == 200 and isinstance(result, dict):
+        if path in ("/screen", "/find_nodes"):
+            result = _bridge_snapshot_nodes(session, selector, result, path)
+        elif path == "/describe_node" and requested_handle is not None:
+            result = dict(result)
+            if "nodeId" in result:
+                result["nodeId"] = requested_handle
     return web.json_response(result, status=status)
 
 

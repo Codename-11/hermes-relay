@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android node-targeted actions reject stale Accessibility IDs instead of silently acting on a different control after UI changes.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
