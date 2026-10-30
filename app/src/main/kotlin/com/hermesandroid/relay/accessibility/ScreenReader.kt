@@ -266,7 +266,8 @@ class ScreenReader {
 
         val rect = Rect()
         node.getBoundsInScreen(rect)
-        val bounds = if (includeBounds) rect.toBoundsOrZero() else ZERO_BOUNDS
+        // Eligibility uses real geometry; includeBounds only changes the output.
+        val bounds = rect.toBoundsOrZero()
 
         val text = node.text?.toString()?.takeIf { it.isNotBlank() }?.take(MAX_TEXT_LEN)
         val contentDesc = node.contentDescription?.toString()
@@ -295,7 +296,7 @@ class ScreenReader {
                     contentDescription = contentDesc,
                     className = node.className?.toString(),
                     viewId = node.viewIdResourceName,
-                    bounds = bounds,
+                    bounds = if (includeBounds) bounds else ZERO_BOUNDS,
                     clickable = clickable,
                     longClickable = longClickable,
                     scrollable = scrollable,

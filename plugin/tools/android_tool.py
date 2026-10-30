@@ -1165,8 +1165,9 @@ def android_send_sms(to: str, body: str) -> str:
 def android_return_to_hermes() -> str:
     """
     Bring the Hermes Relay app back to the foreground after a bridge task
-    opened another app. This is the explicit tool counterpart to the phone's
-    auto-return safety net.
+    opened another app. External frontends without phone-delivered run
+    completion must call this explicitly when finished; inactivity does not
+    imply completion. Phone-owned completed turns can still return automatically.
     """
     try:
         data = _post("/return_to_hermes", {})
