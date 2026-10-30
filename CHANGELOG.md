@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Screenshot failures caused by expired Android screen-capture consent now explain how to reapprove sharing.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added

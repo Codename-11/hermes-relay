@@ -728,7 +728,23 @@ def android_screenshot(sensitive: bool = False) -> dict:
             ],
             "text_summary": summary,
         }
-    except Exception:
+    except Exception as exc:
+        # MediaProjection consent is session-scoped on Android. When it
+        # expires, distinguish that recoverable permission state from a
+        # generic screenshot failure without exposing private response data.
+        response = getattr(exc, "response", None)
+        if response is not None:
+            try:
+                error = response.json().get("error", "")
+            except (AttributeError, TypeError, ValueError):
+                error = ""
+            if isinstance(error, str) and error.startswith("MediaProjection not granted"):
+                return {
+                    "error": (
+                        "Android screen-capture consent expired. Open Hermes Relay "
+                        "Bridge and approve Share entire screen again."
+                    )
+                }
         return {"error": "Screenshot unavailable"}
 
 
