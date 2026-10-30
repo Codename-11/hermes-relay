@@ -735,7 +735,9 @@ def android_screenshot(sensitive: bool = False) -> dict:
 def android_scroll(direction: str, node_id: Optional[str] = None) -> str:
     """
     Scroll within a scrollable element or the whole screen.
-    direction: up, down, left, right
+    direction: up, down, left, right.
+    A dispatched gesture does not prove content moved; verify with a new
+    screen read. Relay can fall back to screen-center for edge-overlay risks.
     """
     try:
         payload = {"direction": direction}
@@ -2074,7 +2076,7 @@ _SCHEMAS = {
     },
     "android_scroll": {
         "name": "android_scroll",
-        "description": "Scroll the screen or a specific scrollable element.",
+        "description": "Scroll the screen or a targeted scrollable element. A dispatched gesture does not prove movement: re-read the screen afterward. Targeted scrolls near floating screen-edge overlays may fall back to screen-center or be refused.",
         "parameters": {
             "type": "object",
             "properties": {
