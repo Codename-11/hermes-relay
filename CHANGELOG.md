@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in Codex subscription GPT-Live-1.1 WebRTC voice provider for Hermes Relay realtime-agent sessions, with Hermes-owned delegation and an isolated audio worker.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added

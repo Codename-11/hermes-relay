@@ -1,0 +1,4 @@
+# Optional, isolated Codex GPT Live WebRTC worker dependencies.
+# Install into a dedicated voice worker environment, NOT the Relay runtime.
+aiortc>=1.15,<2
+av>=17,<18

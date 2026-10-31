@@ -69,6 +69,7 @@ class VoiceLabTests(unittest.TestCase):
         self.assertEqual(
             registry.provider_ids(),
             [
+                "codex_live",
                 "elevenlabs_tts",
                 "openai_realtime",
                 "openai_tts",

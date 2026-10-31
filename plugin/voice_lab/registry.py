@@ -12,6 +12,7 @@ from .providers.openai_realtime import OpenAIRealtimeProvider
 from .providers.stub import StubToneProvider
 from .providers.xai_tts import XAITTSProvider
 from .providers.xai_realtime import XAIRealtimeProvider
+from .providers.codex_live_catalog import CodexLiveCatalog
 
 ProviderFactory = Callable[[], VoiceProvider]
 
@@ -61,4 +62,5 @@ def default_registry() -> ProviderRegistry:
     registry.register(StubToneProvider.info, StubToneProvider)
     registry.register(XAITTSProvider.info, XAITTSProvider)
     registry.register(XAIRealtimeProvider.info, XAIRealtimeProvider)
+    registry.register(CodexLiveCatalog.info, CodexLiveCatalog)
     return registry

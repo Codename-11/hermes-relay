@@ -95,6 +95,7 @@ from .providers import adapter_for
 from .providers.base import RealtimeAgentConnection, RealtimeAgentProvider, RealtimeAgentRenderConfig
 from .providers.openai import OpenAIRealtimeAgentProvider
 from .providers.xai import XAIRealtimeAgentProvider
+from .providers.codex_live import CodexLiveProvider
 
 DEFAULT_SAMPLE_RATE = 24000
 DEFAULT_CHANNELS = 1
@@ -304,6 +305,7 @@ class RealtimeAgentHandler:
         self.native_providers: dict[str, RealtimeAgentProvider] = {
             OpenAIRealtimeAgentProvider.provider_id: OpenAIRealtimeAgentProvider(),
             XAIRealtimeAgentProvider.provider_id: XAIRealtimeAgentProvider(),
+            CodexLiveProvider.provider_id: CodexLiveProvider(),
         }
         # Optional durable-fallback hook (wired by the relay server to
         # ProactiveChannel.push, which buffers for an offline phone): a
