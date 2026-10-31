@@ -34,6 +34,19 @@ class ScreenshotConsentTests(unittest.TestCase):
         self.assertIn("Screenshot unavailable", result["error"])
         self.assertNotIn("SECRET-BEARER", str(result))
 
+    def test_auth_failure_is_sanitized_without_leaking_a_private_token(self):
+        # The older companion PR tested a 401 separately. Retain that safety
+        # regression but respect the primary PR's more helpful generic text.
+        private_message = b'{"error":"expired authorization bearer SECRET-BEARER"}'
+        with mock.patch.object(
+            android_tool, "_get",
+            side_effect=http_error(status=401, payload=private_message),
+        ):
+            result = android_tool.android_screenshot()
+        self.assertIn("Screenshot unavailable", result["error"])
+        self.assertNotIn("SECRET-BEARER", str(result))
+        self.assertNotIn("authorization bearer", str(result))
+
     def test_malformed_json_is_handled_safely(self):
         with mock.patch.object(android_tool, "_get", side_effect=http_error(payload=b"not-json")):
             result = android_tool.android_screenshot()

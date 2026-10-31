@@ -746,7 +746,9 @@ def android_screenshot(sensitive: bool = False) -> dict:
                     "Android screen capture consent expired. Open Hermes Relay "
                     "→ Bridge → Screen capture, select Share entire screen and approve."
                 )}
-        return {"error": "Screenshot unavailable; check Bridge screen-capture consent and retry."}
+        # For unknown failures preserve the existing generic message; do not
+        # imply the user revoked screen capture or reveal remote error details.
+        return {"error": "Screenshot unavailable"}
 
 
 
