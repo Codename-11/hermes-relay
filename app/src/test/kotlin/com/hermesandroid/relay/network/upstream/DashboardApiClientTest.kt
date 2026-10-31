@@ -35,6 +35,43 @@ import java.util.concurrent.TimeUnit
 class DashboardApiClientTest {
 
     @Test
+    fun profileScopedModelPickerReadsOnlySelectedProfile() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"provider":"provider-alpha","model":"provider-alpha/model-one","providers":[{"slug":"provider-alpha","name":"Provider Alpha","models":["provider-alpha/model-one","provider-alpha/model-two"],"is_current":true},{"slug":"provider-beta","name":"Provider Beta","models":["provider-beta/model-three"],"is_current":false}]}""",
+            ),
+        )
+        val options = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getProfilePickerModelOptions("agent-alpha", refresh = true).getOrThrow()
+        assertEquals("provider-alpha", options.currentProvider)
+        assertEquals("provider-alpha/model-one", options.currentModel)
+        assertEquals(listOf("provider-alpha", "provider-beta"), options.providers.map { it.slug })
+        assertEquals(listOf("provider-alpha/model-one", "provider-alpha/model-two"),
+            options.providers.first().models)
+        assertEquals(listOf("provider-beta/model-three"), options.providers.last().models)
+        val request = server.takeRequest().requestUrl!!
+        assertEquals("/api/model/options", request.encodedPath)
+        assertEquals("agent-alpha", request.queryParameter("profile"))
+        assertEquals("0", request.queryParameter("include_unconfigured"))
+        assertEquals("1", request.queryParameter("refresh"))
+    }
+
+    @Test
+    fun defaultModelPickerUsesLaunchProfileWithoutUnscopedProfiles() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"provider":"provider-root","model":"provider-root/default","providers":[{"slug":"provider-root","models":["provider-root/default","provider-root/alternate"]}]}""",
+            ),
+        )
+        val options = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getProfilePickerModelOptions(profile = null).getOrThrow()
+        assertEquals(listOf("provider-root/default", "provider-root/alternate"), options.providers.single().models)
+        val request = server.takeRequest().requestUrl!!
+        assertEquals(null, request.queryParameter("profile"))
+        assertEquals("0", request.queryParameter("include_unconfigured"))
+    }
+
+    @Test
     fun oversizedChunkedLatestHistoryRecoversAll500Rows() = runBlocking {
         assertOversizedHistoryRecovery(SessionMessageLoadMode.LATEST, chunked = true)
     }
@@ -207,7 +244,7 @@ class DashboardApiClientTest {
                   "schema_version": 2,
                   "capabilities": ["credential_pools", "structured_balances", "opencode_go"],
                   "providers": [{
-                    "id": "openai-codex",
+                    "id": "provider-root",
                     "display_name": "Codex",
                     "status": "available",
                     "active_credential_state": "known",

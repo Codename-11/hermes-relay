@@ -2909,18 +2909,9 @@ class GatewayChatClient(
             liveSessionId?.let { put("session_id", it) }
             if (refresh) put("refresh", true)
         }
-        return rpc("model.options", params).map { result ->
-            val providers = normalizeGatewayModelProviders(
-                (result["providers"] as? JsonArray).orEmpty().mapNotNull { el ->
-                    val obj = el as? JsonObject ?: return@mapNotNull null
-                    parseGatewayModelProvider(obj)
-                },
-            )
-            GatewayModelOptions(
-                providers = providers,
-                currentModel = result.stringField("model") ?: "",
-                currentProvider = result.stringField("provider") ?: "",
-            )
+        return rpc("model.options", params).mapCatching { result ->
+            parseGatewayModelOptionsPayload(result)
+                ?: error("Gateway returned an invalid model inventory")
         }
     }
 
