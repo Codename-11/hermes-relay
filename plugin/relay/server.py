@@ -2294,9 +2294,17 @@ async def _bridge_dispatch(
     ):
         direction = body.get("direction")
         distance = body.get("distance", "medium")
-        if direction in ("up", "down", "left", "right") and distance in (
-            "short", "medium", "long"
+        # Don't forward invalid direction/distance to a coordinate-only
+        # Android handler. An invalid legacy gesture must fail closed before
+        # we request a screen or attempt any phone action.
+        if direction is not None and (
+            direction not in ("up", "down", "left", "right")
+            or distance not in ("short", "medium", "long")
         ):
+            return web.json_response(
+                {"error": "invalid swipe direction or distance"}, status=400
+            )
+        if direction is not None:
             try:
                 snapshot = await server.bridge.handle_command(
                     method="GET",
