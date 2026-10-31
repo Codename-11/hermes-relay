@@ -1278,8 +1278,19 @@ class ChatViewModel : ViewModel() {
         _modelOptionsError.value = null
         val generation = modelOptionsGeneration.incrementAndGet()
         val profileKey = modelOptionsProfileKey()
+        val requestedProfile = currentSessionProfileName()
+        val dashboard = dashboardMediaClientProvider?.invoke()
         viewModelScope.launch {
-            gateway.modelOptions(refresh = refresh).fold(
+            // Dashboard REST explicitly scopes its inventory to the requested profile.
+            // Gateway model.options can only infer the profile from a live session,
+            // which is often absent when opening a picker in a new Android chat.
+            // Keep the gateway fallback for dashboard-less connections.
+            val dashboardResult = dashboard?.getProfilePickerModelOptions(
+                profile = requestedProfile, refresh = refresh,
+            )
+            val inventoryResult: Result<GatewayModelOptions> =
+                dashboardResult?.takeIf { it.isSuccess } ?: gateway.modelOptions(refresh = refresh)
+            inventoryResult.fold(
                 onSuccess = {
                     if (gatewayClient !== gateway || !isCurrentModelOptionsResponse(
                             generation,

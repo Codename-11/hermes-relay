@@ -35,6 +35,41 @@ import java.util.concurrent.TimeUnit
 class DashboardApiClientTest {
 
     @Test
+    fun profileScopedModelPickerReadsOnlySelectedProfile() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"provider":"codex-web-gpt","model":"chatgpt-web/gpt-6-sol","providers":[{"slug":"codex-web-gpt","name":"GPT Web","models":["chatgpt-web/gpt-6-sol","chatgpt-web/gpt-6-sol-instant"],"is_current":true}]}""",
+            ),
+        )
+        val options = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getProfilePickerModelOptions("chatgpt", refresh = true).getOrThrow()
+        assertEquals("codex-web-gpt", options.currentProvider)
+        assertEquals("chatgpt-web/gpt-6-sol", options.currentModel)
+        assertEquals(listOf("chatgpt-web/gpt-6-sol", "chatgpt-web/gpt-6-sol-instant"),
+            options.providers.single().models)
+        val request = server.takeRequest().requestUrl!!
+        assertEquals("/api/model/options", request.encodedPath)
+        assertEquals("chatgpt", request.queryParameter("profile"))
+        assertEquals("0", request.queryParameter("include_unconfigured"))
+        assertEquals("1", request.queryParameter("refresh"))
+    }
+
+    @Test
+    fun defaultModelPickerUsesLaunchProfileWithoutUnscopedProfiles() = runTest {
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "application/json").setBody(
+                """{"provider":"openai-codex","model":"gpt-6.1-terra","providers":[{"slug":"openai-codex","models":["gpt-6.1-terra","gpt-6.1-sol"]}]}""",
+            ),
+        )
+        val options = DashboardApiClient(baseUrl = server.url("/").toString())
+            .getProfilePickerModelOptions(profile = null).getOrThrow()
+        assertEquals(listOf("gpt-6.1-terra", "gpt-6.1-sol"), options.providers.single().models)
+        val request = server.takeRequest().requestUrl!!
+        assertEquals(null, request.queryParameter("profile"))
+        assertEquals("0", request.queryParameter("include_unconfigured"))
+    }
+
+    @Test
     fun oversizedChunkedLatestHistoryRecoversAll500Rows() = runBlocking {
         assertOversizedHistoryRecovery(SessionMessageLoadMode.LATEST, chunked = true)
     }

@@ -4398,13 +4398,16 @@ fun ChatScreen(
                 R.string.chat_large_paste_too_large,
                 maxAttachmentMb,
             )
-            val rawSseModelOptions = remember(apiModelOptions, agentProfiles, selectedModelOverride) {
-                (apiModelOptions +
-                    agentProfiles.mapNotNull { profile ->
-                        AgentDisplay.requestModelName(profile.model)?.let { ApiModelOption(it) }
-                    } +
-                    listOfNotNull(AgentDisplay.requestModelName(selectedModelOverride)?.let { ApiModelOption(it) }))
-                    .distinctBy { it.id }
+            // Only actual advertised routes belong in the fallback list. Other
+            // profiles' defaults are NOT selectable models in this conversation.
+            // When the gateway catalog is unavailable, keep its error visible
+            // instead of fabricating a cross-profile four-model catalog.
+            val rawSseModelOptions = remember(apiModelOptions, selectedModelOverride, isGatewayTransport) {
+                fallbackModelPickerOptions(
+                    apiModelOptions,
+                    AgentDisplay.requestModelName(selectedModelOverride),
+                    isGatewayTransport,
+                )
             }
             val profileModelForPicker = AgentDisplay.requestModelName(conversationProfile?.model)
             val pickerScope = remember(
@@ -4430,8 +4433,9 @@ fun ChatScreen(
             // that to the active OVERRIDE, so using it here mislabeled the user's
             // override as the server default. serverModelName comes from /api/config
             // (never touched by overrides) — the same source the agent drawer uses.
-            val serverDefaultModelDetail = if (pickerScope.isGptWebProfile) {
+            val serverDefaultModelDetail = if (explicitBindingProfileName != null) {
                 AgentDisplay.displayModelName(conversationProfile?.model)
+                    ?: AgentDisplay.displayModelName(serverModelName)
             } else {
                 AgentDisplay.displayModelName(serverModelName)
                     ?: AgentDisplay.displayModelName(effectiveProfile?.model)
