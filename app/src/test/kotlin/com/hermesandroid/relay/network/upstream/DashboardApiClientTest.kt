@@ -38,18 +38,20 @@ class DashboardApiClientTest {
     fun profileScopedModelPickerReadsOnlySelectedProfile() = runTest {
         server.enqueue(
             MockResponse().setHeader("Content-Type", "application/json").setBody(
-                """{"provider":"codex-web-gpt","model":"chatgpt-web/gpt-6-sol","providers":[{"slug":"codex-web-gpt","name":"GPT Web","models":["chatgpt-web/gpt-6-sol","chatgpt-web/gpt-6-sol-instant"],"is_current":true}]}""",
+                """{"provider":"provider-alpha","model":"provider-alpha/model-one","providers":[{"slug":"provider-alpha","name":"Provider Alpha","models":["provider-alpha/model-one","provider-alpha/model-two"],"is_current":true},{"slug":"provider-beta","name":"Provider Beta","models":["provider-beta/model-three"],"is_current":false}]}""",
             ),
         )
         val options = DashboardApiClient(baseUrl = server.url("/").toString())
-            .getProfilePickerModelOptions("chatgpt", refresh = true).getOrThrow()
-        assertEquals("codex-web-gpt", options.currentProvider)
-        assertEquals("chatgpt-web/gpt-6-sol", options.currentModel)
-        assertEquals(listOf("chatgpt-web/gpt-6-sol", "chatgpt-web/gpt-6-sol-instant"),
-            options.providers.single().models)
+            .getProfilePickerModelOptions("agent-alpha", refresh = true).getOrThrow()
+        assertEquals("provider-alpha", options.currentProvider)
+        assertEquals("provider-alpha/model-one", options.currentModel)
+        assertEquals(listOf("provider-alpha", "provider-beta"), options.providers.map { it.slug })
+        assertEquals(listOf("provider-alpha/model-one", "provider-alpha/model-two"),
+            options.providers.first().models)
+        assertEquals(listOf("provider-beta/model-three"), options.providers.last().models)
         val request = server.takeRequest().requestUrl!!
         assertEquals("/api/model/options", request.encodedPath)
-        assertEquals("chatgpt", request.queryParameter("profile"))
+        assertEquals("agent-alpha", request.queryParameter("profile"))
         assertEquals("0", request.queryParameter("include_unconfigured"))
         assertEquals("1", request.queryParameter("refresh"))
     }
@@ -58,12 +60,12 @@ class DashboardApiClientTest {
     fun defaultModelPickerUsesLaunchProfileWithoutUnscopedProfiles() = runTest {
         server.enqueue(
             MockResponse().setHeader("Content-Type", "application/json").setBody(
-                """{"provider":"openai-codex","model":"gpt-6.1-terra","providers":[{"slug":"openai-codex","models":["gpt-6.1-terra","gpt-6.1-sol"]}]}""",
+                """{"provider":"provider-root","model":"provider-root/default","providers":[{"slug":"provider-root","models":["provider-root/default","provider-root/alternate"]}]}""",
             ),
         )
         val options = DashboardApiClient(baseUrl = server.url("/").toString())
             .getProfilePickerModelOptions(profile = null).getOrThrow()
-        assertEquals(listOf("gpt-6.1-terra", "gpt-6.1-sol"), options.providers.single().models)
+        assertEquals(listOf("provider-root/default", "provider-root/alternate"), options.providers.single().models)
         val request = server.takeRequest().requestUrl!!
         assertEquals(null, request.queryParameter("profile"))
         assertEquals("0", request.queryParameter("include_unconfigured"))
@@ -242,7 +244,7 @@ class DashboardApiClientTest {
                   "schema_version": 2,
                   "capabilities": ["credential_pools", "structured_balances", "opencode_go"],
                   "providers": [{
-                    "id": "openai-codex",
+                    "id": "provider-root",
                     "display_name": "Codex",
                     "status": "available",
                     "active_credential_state": "known",

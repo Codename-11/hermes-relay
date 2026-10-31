@@ -4409,21 +4409,11 @@ fun ChatScreen(
                     isGatewayTransport,
                 )
             }
-            val profileModelForPicker = AgentDisplay.requestModelName(conversationProfile?.model)
-            val pickerScope = remember(
-                explicitBindingProfileName, profileModelForPicker, modelProviders, rawSseModelOptions,
-            ) {
-                scopeProfileModelPicker(
-                    explicitBindingProfileName, profileModelForPicker, modelProviders,
-                    rawSseModelOptions.map { it.id },
-                )
-            }
-            val pickerProviders = pickerScope.providers
-            val sseModelOptions = if (pickerScope.isGptWebProfile) {
-                pickerScope.fallbackModelIds.map { ApiModelOption(it) }
-            } else {
-                rawSseModelOptions
-            }
+            // Provider inventory is already scoped by Dashboard REST to the
+            // selected profile. Do not implement vendor/model-specific picker
+            // behavior; retain the ordinary server-default option for all bots.
+            val pickerProviders = modelProviders
+            val sseModelOptions = rawSseModelOptions
             val currentModelForInput = AgentDisplay.displayModelName(sessionModelState.model)
             val fallbackModelDetail = AgentDisplay.displayModelName(gatewayCurrentModel)
                 ?: AgentDisplay.displayModelName(effectiveProfile?.model)
@@ -4447,7 +4437,6 @@ fun ChatScreen(
             val modelDefaultLabel = stringResource(R.string.chat_model_label)
             val modelPickerOptions = remember(
                 pickerProviders,
-                pickerScope.showDefaultRow,
                 sseModelOptions,
                 selectedModelOverride,
                 selectedProviderOverride,
@@ -4463,16 +4452,14 @@ fun ChatScreen(
                     emptyList()
                 } else {
                     buildList {
-                        if (pickerScope.showDefaultRow) {
-                            add(
-                                ChatInputPickerOption(
-                                    label = serverDefaultLabel,
-                                    value = null,
-                                    secondary = serverDefaultModelDetail?.let { compactModelChipLabel(it, modelDefaultLabel) },
-                                    selected = sessionModelState.inheritsProfileDefault,
-                                ),
-                            )
-                        }
+                        add(
+                            ChatInputPickerOption(
+                                label = serverDefaultLabel,
+                                value = null,
+                                secondary = serverDefaultModelDetail?.let { compactModelChipLabel(it, modelDefaultLabel) },
+                                selected = sessionModelState.inheritsProfileDefault,
+                            ),
+                        )
                         if (pickerProviders.any { it.models.isNotEmpty() }) {
                             // Current provider first — matches the desktop picker,
                             // which defaults the selection to is_current, so the
