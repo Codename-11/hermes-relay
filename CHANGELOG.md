@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android bridge directional swipes translate host distance presets to device coordinates. Node-targeted scrolling avoids screen-edge overlays when a safe screen-center origin exists and reports whether content movement was separately verified.
+
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
