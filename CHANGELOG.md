@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android model picker fetches the selected Hermes profile's provider catalog and displays its own default instead of mixing other bots' default models when a catalog is unavailable.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
