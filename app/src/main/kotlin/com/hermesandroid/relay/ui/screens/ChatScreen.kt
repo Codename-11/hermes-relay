@@ -4398,13 +4398,28 @@ fun ChatScreen(
                 R.string.chat_large_paste_too_large,
                 maxAttachmentMb,
             )
-            val sseModelOptions = remember(apiModelOptions, agentProfiles, selectedModelOverride) {
+            val rawSseModelOptions = remember(apiModelOptions, agentProfiles, selectedModelOverride) {
                 (apiModelOptions +
                     agentProfiles.mapNotNull { profile ->
                         AgentDisplay.requestModelName(profile.model)?.let { ApiModelOption(it) }
                     } +
                     listOfNotNull(AgentDisplay.requestModelName(selectedModelOverride)?.let { ApiModelOption(it) }))
                     .distinctBy { it.id }
+            }
+            val profileModelForPicker = AgentDisplay.requestModelName(conversationProfile?.model)
+            val pickerScope = remember(
+                explicitBindingProfileName, profileModelForPicker, modelProviders, rawSseModelOptions,
+            ) {
+                scopeProfileModelPicker(
+                    explicitBindingProfileName, profileModelForPicker, modelProviders,
+                    rawSseModelOptions.map { it.id },
+                )
+            }
+            val pickerProviders = pickerScope.providers
+            val sseModelOptions = if (pickerScope.isGptWebProfile) {
+                pickerScope.fallbackModelIds.map { ApiModelOption(it) }
+            } else {
+                rawSseModelOptions
             }
             val currentModelForInput = AgentDisplay.displayModelName(sessionModelState.model)
             val fallbackModelDetail = AgentDisplay.displayModelName(gatewayCurrentModel)
@@ -4415,15 +4430,20 @@ fun ChatScreen(
             // that to the active OVERRIDE, so using it here mislabeled the user's
             // override as the server default. serverModelName comes from /api/config
             // (never touched by overrides) — the same source the agent drawer uses.
-            val serverDefaultModelDetail = AgentDisplay.displayModelName(serverModelName)
-                ?: AgentDisplay.displayModelName(effectiveProfile?.model)
-            val hasModelChoices = modelProviders.any { it.models.isNotEmpty() } || sseModelOptions.isNotEmpty()
+            val serverDefaultModelDetail = if (pickerScope.isGptWebProfile) {
+                AgentDisplay.displayModelName(conversationProfile?.model)
+            } else {
+                AgentDisplay.displayModelName(serverModelName)
+                    ?: AgentDisplay.displayModelName(effectiveProfile?.model)
+            }
+            val hasModelChoices = pickerProviders.any { it.models.isNotEmpty() } || sseModelOptions.isNotEmpty()
             val serverDefaultLabel = stringResource(R.string.chat_server_default)
             val notOnPlanLabel = stringResource(R.string.chat_not_on_plan)
             val needsSetupLabel = stringResource(R.string.chat_needs_setup)
             val modelDefaultLabel = stringResource(R.string.chat_model_label)
             val modelPickerOptions = remember(
-                modelProviders,
+                pickerProviders,
+                pickerScope.showDefaultRow,
                 sseModelOptions,
                 selectedModelOverride,
                 selectedProviderOverride,
@@ -4439,19 +4459,21 @@ fun ChatScreen(
                     emptyList()
                 } else {
                     buildList {
-                        add(
-                            ChatInputPickerOption(
-                                label = serverDefaultLabel,
-                                value = null,
-                                secondary = serverDefaultModelDetail?.let { compactModelChipLabel(it, modelDefaultLabel) },
-                                selected = sessionModelState.inheritsProfileDefault,
-                            ),
-                        )
-                        if (modelProviders.any { it.models.isNotEmpty() }) {
+                        if (pickerScope.showDefaultRow) {
+                            add(
+                                ChatInputPickerOption(
+                                    label = serverDefaultLabel,
+                                    value = null,
+                                    secondary = serverDefaultModelDetail?.let { compactModelChipLabel(it, modelDefaultLabel) },
+                                    selected = sessionModelState.inheritsProfileDefault,
+                                ),
+                            )
+                        }
+                        if (pickerProviders.any { it.models.isNotEmpty() }) {
                             // Current provider first — matches the desktop picker,
                             // which defaults the selection to is_current, so the
                             // user's authenticated/current provider leads.
-                            modelProviders.sortedByDescending { it.isCurrent }.forEach { provider ->
+                            pickerProviders.sortedByDescending { it.isCurrent }.forEach { provider ->
                                 provider.models.distinct().forEach { model ->
                                     // Respect upstream's per-provider availability:
                                     // unavailable_models are paid models the account
@@ -4476,7 +4498,7 @@ fun ChatScreen(
                                     )
                                 }
                             }
-                            val providerModelIds = modelProviders.flatMap { it.models }.toSet()
+                            val providerModelIds = pickerProviders.flatMap { it.models }.toSet()
                             sseModelOptions.filter { it.id !in providerModelIds }.forEach { model ->
                                 add(
                                     ChatInputPickerOption(
