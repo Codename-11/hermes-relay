@@ -3250,23 +3250,61 @@ class ChatHandler {
         }
     }
 
+    /**
+     * The row that owns [toolCallId]. A completion can arrive after the live
+     * row was split at a mid-turn correction, in which case the call lives on
+     * the earlier row; resolving by tool id keeps the completion where it began.
+     */
+    private fun toolOwnerMessageId(messageId: String, toolCallId: String): String {
+        val live = _messages.value.firstOrNull {
+            it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT
+        }
+        if (live?.toolCalls?.any { it.id == toolCallId } == true) return messageId
+        return _messages.value.firstOrNull { message ->
+            message.role == MessageRole.ASSISTANT && message.toolCalls.any { it.id == toolCallId }
+        }?.id ?: messageId
+    }
+
+    /**
+     * Close the live assistant row at a mid-turn boundary without ending the
+     * turn. Used when a correction is accepted while the turn runs: the caller
+     * opens a fresh row after the user's message so the reply continues below
+     * it instead of growing above.
+     */
+    fun settleStreamingRow(messageId: String) {
+        _messages.update { messages ->
+            messages.map { msg ->
+                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
+                    msg.copy(
+                        isStreaming = false,
+                        isThinkingStreaming = false,
+                        thinkingSegments = sealThinkingSegment(msg.thinkingSegments),
+                    )
+                } else {
+                    msg
+                }
+            }
+        }
+    }
+
     fun onToolCallComplete(
         messageId: String,
         toolCallId: String,
         resultPreview: String? = null,
         provenance: String? = null,
     ) {
+        val ownerMessageId = toolOwnerMessageId(messageId, toolCallId)
         // Snapshot the matching tool call's name BEFORE mutating — we need it
         // to decide whether to emit a phone-action result bubble below.
         val toolName = _messages.value
-            .firstOrNull { it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT }
+            .firstOrNull { it.matchesIdentity(ownerMessageId) && it.role == MessageRole.ASSISTANT }
             ?.toolCalls
             ?.firstOrNull { it.id == toolCallId }
             ?.name
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(ownerMessageId) && msg.role == MessageRole.ASSISTANT) {
                     val updatedCalls = msg.toolCalls.map { call ->
                         if (call.id == toolCallId && !call.isComplete) {
                             call.copy(
@@ -3300,17 +3338,18 @@ class ChatHandler {
     }
 
     fun onToolCallFailed(messageId: String, toolCallId: String, error: String?) {
+        val ownerMessageId = toolOwnerMessageId(messageId, toolCallId)
         // Snapshot tool name before the update so the phone-action bubble
         // can label the failure correctly.
         val toolName = _messages.value
-            .firstOrNull { it.matchesIdentity(messageId) && it.role == MessageRole.ASSISTANT }
+            .firstOrNull { it.matchesIdentity(ownerMessageId) && it.role == MessageRole.ASSISTANT }
             ?.toolCalls
             ?.firstOrNull { it.id == toolCallId }
             ?.name
 
         _messages.update { messages ->
             messages.map { msg ->
-                if (msg.matchesIdentity(messageId) && msg.role == MessageRole.ASSISTANT) {
+                if (msg.matchesIdentity(ownerMessageId) && msg.role == MessageRole.ASSISTANT) {
                     val updatedCalls = msg.toolCalls.map { call ->
                         if (call.id == toolCallId && !call.isComplete) {
                             call.copy(
