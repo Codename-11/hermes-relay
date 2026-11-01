@@ -17,8 +17,10 @@ import io.mockk.mockk
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -84,7 +86,7 @@ class ProfileControllerLockTest {
     private var streamingEndpoint: String = "completions"
     private var gatewayAvailability: GatewayAvailability = GatewayAvailability.Ready
 
-    private val lastSessionIds = mutableListOf<String?>()
+    private val lastSessionIds = java.util.concurrent.CopyOnWriteArrayList<String?>()
 
     private val mizu = Profile(name = "mizu", model = "model-a")
     private val coder = Profile(name = "coder", model = "model-b")
@@ -296,10 +298,13 @@ class ProfileControllerLockTest {
 
     @After
     fun tearDown() {
-        scope.cancel()
-        // Start each run from clean lock state — the DataStore file is shared by
-        // the app-internal store name across tests in the same JVM.
-        runBlocking { controller.profileLockStore.clear(connectionId) }
+        // Wait for previous writes to finish before clearing shared DataStores;
+        // otherwise an old controller can publish after the next test starts.
+        runBlocking {
+            scope.coroutineContext[Job]?.cancelAndJoin()
+            controller.profileLockStore.clear(connectionId)
+            controller.profileSessionStore.clearAll()
+        }
     }
 
     // --- await helpers ------------------------------------------------------
@@ -393,8 +398,8 @@ class ProfileControllerLockTest {
         controller.refreshDashboardProfiles()
 
         assertEquals("pinned", awaitFlow(controller.effectiveSessionProfileName) { it == "pinned" })
-        assertEquals(pinned, awaitFlow(controller.effectiveDisplayProfile) { it?.name == "pinned" })
-        assertEquals(pinned, awaitFlow(controller.serverDefaultDisplayProfile) { it?.name == "pinned" })
+        assertEquals(pinned, awaitFlow(controller.effectiveDisplayProfile) { it == pinned })
+        assertEquals(pinned, awaitFlow(controller.serverDefaultDisplayProfile) { it == pinned })
         assertEquals("default", controller.serverDefaultProfileScope.value?.current)
         assertTrue(awaitFlow(controller.selectionSettled) { it })
         runBlocking { controller.listProfileScopedSessions()?.getOrThrow() }
@@ -561,8 +566,9 @@ class ProfileControllerLockTest {
 
         controller.markFreshDraft(connectionId, mizu.name, SessionTransport.SSE)
         withTimeout(5_000) {
-            sessions.sessionIdFlow(connectionId, mizu.name, SessionTransport.SSE)
-                .first { it == null }
+            while (sessions.sessionIdFlow(connectionId, mizu.name, SessionTransport.SSE).first() != null) {
+                delay(10)
+            }
         }
 
         // Simulate an older read observing the pre-clear value: the live intent
