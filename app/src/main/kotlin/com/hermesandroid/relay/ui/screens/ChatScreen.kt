@@ -1176,6 +1176,7 @@ fun ChatScreen(
         showChildHistory = !supervised,
     )
     val smoothAutoScroll by connectionViewModel.smoothAutoScroll.collectAsState()
+    val collapseReasoningByDefault by connectionViewModel.collapseReasoningByDefault.collectAsState()
     val closeDrawerOnSend by connectionViewModel.closeDrawerOnSend.collectAsState()
     val keepComposerFocusedOnSend by
         connectionViewModel.keepComposerFocusedOnSend.collectAsState()
@@ -3818,12 +3819,14 @@ fun ChatScreen(
                                         retainedSubagentIds = retainedSubagentIds,
                                         onSteer = chatViewModel::steerSubagent,
                                         onUserScrolledAway = { userScrolledAway = true },
+                                        collapseReasoningByDefault = collapseReasoningByDefault,
                                     )
                                 }
                                 MessageBubble(
                                     message = message,
                                     modifier = bubbleModifier,
                                     showThinkingBlock = !interleaveLiveThinking,
+                                    collapseReasoningByDefault = collapseReasoningByDefault,
                                     petVisitTargetKey = if (
                                         message.uiKey == petVisitTargetUiKey &&
                                         message.uiKey in visibleMessageKeys

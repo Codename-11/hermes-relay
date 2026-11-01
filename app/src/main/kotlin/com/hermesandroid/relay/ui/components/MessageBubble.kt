@@ -117,6 +117,8 @@ fun MessageBubble(
      * the same text is not drawn twice.
      */
     showThinkingBlock: Boolean = true,
+    /** Seed reasoning disclosures closed; see [ThinkingBlock.collapsedByDefault]. */
+    collapseReasoningByDefault: Boolean = false,
     showAgentIdentity: Boolean = true,
     showTimestamps: Boolean = true,
     showWorkingStatus: Boolean = true,
@@ -401,6 +403,7 @@ fun MessageBubble(
                 timestamp = message.timestamp,
                 petObstacleKey = "chat-thinking:${message.uiKey}",
                 stateKey = "thinking:${message.uiKey}",
+                collapsedByDefault = collapseReasoningByDefault,
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
                     .padding(bottom = 4.dp)

@@ -59,14 +59,21 @@ fun ThinkingBlock(
      * with several reasoning blocks passes message plus segment index.
      */
     stateKey: String? = null,
+    /**
+     * Seed the block closed even while it streams. The content still arrives
+     * live and a tap still opens it; only the initial state changes, so a long
+     * turn cannot push the reply off screen with an expanding wall of text.
+     */
+    collapsedByDefault: Boolean = false,
 ) {
     if (thinkingContent.isBlank()) return
-    val expandedState = rememberSaveable(stateKey) { mutableStateOf(isStreaming) }
+    val startsExpanded = isStreaming && !collapsedByDefault
+    val expandedState = rememberSaveable(stateKey) { mutableStateOf(startsExpanded) }
     val toggledState = rememberSaveable(stateKey, "toggled") { mutableStateOf(false) }
     var expanded by expandedState
     var userToggled by toggledState
-    LaunchedEffect(isStreaming) {
-        if (!userToggled) expanded = isStreaming
+    LaunchedEffect(isStreaming, collapsedByDefault) {
+        if (!userToggled) expanded = isStreaming && !collapsedByDefault
     }
     val locale = LocalLocale.current.platformLocale
     val timeLabel = timestamp?.let {
