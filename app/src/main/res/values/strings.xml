@@ -854,6 +854,8 @@
     <string name="chat_settings_back">Back</string>
     <string name="chat_settings_smooth_auto_scroll">Smooth auto-scroll</string>
     <string name="chat_settings_smooth_auto_scroll_desc">Follow new messages while streaming. Scroll up to pause; tap the arrow or scroll back to the bottom to resume.</string>
+    <string name="chat_settings_collapse_reasoning">Collapse reasoning by default</string>
+    <string name="chat_settings_collapse_reasoning_desc">Keep live reasoning available but start it collapsed. Tap a block to read it.</string>
     <string name="chat_settings_thinking_indicator">Thinking indicator</string>
     <string name="chat_settings_thinking_indicator_desc">The animation shown in a reply bubble while Hermes is working.</string>
     <string name="chat_settings_dots">Dots</string>

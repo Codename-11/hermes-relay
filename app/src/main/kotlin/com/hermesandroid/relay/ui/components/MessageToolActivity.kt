@@ -113,6 +113,7 @@ internal fun LiveThinkingToolColumn(
     onUserScrolledAway: () -> Unit,
     modifier: Modifier = Modifier,
     maxBubbleWidth: Dp = 300.dp,
+    collapseReasoningByDefault: Boolean = false,
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         message.thinkingSegments.forEachIndexed { index, text ->
@@ -123,6 +124,7 @@ internal fun LiveThinkingToolColumn(
                     timestamp = message.timestamp,
                     petObstacleKey = "chat-thinking:${message.uiKey}:$index",
                     stateKey = "thinking:${message.uiKey}:$index",
+                    collapsedByDefault = collapseReasoningByDefault,
                     modifier = Modifier
                         .widthIn(max = maxBubbleWidth)
                         .padding(bottom = 4.dp),
