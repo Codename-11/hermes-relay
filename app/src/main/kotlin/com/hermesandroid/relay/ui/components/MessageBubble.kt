@@ -400,6 +400,7 @@ fun MessageBubble(
                 isStreaming = message.isThinkingStreaming,
                 timestamp = message.timestamp,
                 petObstacleKey = "chat-thinking:${message.uiKey}",
+                stateKey = "thinking:${message.uiKey}",
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
                     .padding(bottom = 4.dp)
