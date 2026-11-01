@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,10 +51,20 @@ fun ThinkingBlock(
     accessibilityLabel: String = stringResource(R.string.thinking_thinking_short),
     /** Stable key when this interactive block participates in Chat pet terrain. */
     petObstacleKey: String? = null,
+    /**
+     * Identity for the disclosure state. A row scrolled out of the lazy list is
+     * disposed and plain `remember` forgets whether the reader opened it, which
+     * collapsed blocks again as soon as they left the viewport. The saveable
+     * registry survives that; the key must be stable per block, so a message
+     * with several reasoning blocks passes message plus segment index.
+     */
+    stateKey: String? = null,
 ) {
     if (thinkingContent.isBlank()) return
-    var expanded by remember { mutableStateOf(isStreaming) }
-    var userToggled by remember { mutableStateOf(false) }
+    val expandedState = rememberSaveable(stateKey) { mutableStateOf(isStreaming) }
+    val toggledState = rememberSaveable(stateKey, "toggled") { mutableStateOf(false) }
+    var expanded by expandedState
+    var userToggled by toggledState
     LaunchedEffect(isStreaming) {
         if (!userToggled) expanded = isStreaming
     }

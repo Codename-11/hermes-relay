@@ -122,6 +122,7 @@ internal fun LiveThinkingToolColumn(
                     isStreaming = message.isThinkingStreaming && index == message.thinkingSegments.lastIndex,
                     timestamp = message.timestamp,
                     petObstacleKey = "chat-thinking:${message.uiKey}:$index",
+                    stateKey = "thinking:${message.uiKey}:$index",
                     modifier = Modifier
                         .widthIn(max = maxBubbleWidth)
                         .padding(bottom = 4.dp),
