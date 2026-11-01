@@ -42,6 +42,15 @@ data class ChatMessage(
     // Reasoning/thinking content (collapsible in UI)
     val thinkingContent: String = "",
     val isThinkingStreaming: Boolean = false,
+    /**
+     * [thinkingContent] split at tool boundaries, so live reasoning can be
+     * rendered as alternating blocks with the tool rows it produced instead of
+     * one growing block above all of them. Empty on history rows (which are
+     * rebuilt per model call from the server) and on turns with no tool calls,
+     * and the renderer then falls back to the single [thinkingContent] block.
+     * The concatenation of the non-blank entries is always [thinkingContent].
+     */
+    val thinkingSegments: List<String> = emptyList(),
     // Token tracking (from content_complete event)
     val inputTokens: Int? = null,
     val outputTokens: Int? = null,
@@ -411,6 +420,13 @@ data class ToolCall(
      * rather than the active running spinner.
      */
     val isGenerating: Boolean = false,
+    /**
+     * Index into the owning message's [ChatMessage.thinkingSegments] of the
+     * reasoning block that was open when this call started, so the chat can
+     * draw the thinking that preceded the call directly above it. Null on
+     * history rows and on calls that arrived before any visible reasoning.
+     */
+    val thinkingSegment: Int? = null,
     /**
      * Subagent lane index from gateway `subagent.*` events (`task_index`).
      * Null = top-level tool call, rendered exactly as before. Non-null

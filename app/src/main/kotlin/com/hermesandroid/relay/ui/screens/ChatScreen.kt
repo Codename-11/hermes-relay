@@ -236,6 +236,7 @@ import com.hermesandroid.relay.ui.components.InjectedContextSheet
 import com.hermesandroid.relay.ui.components.InlineAutocomplete
 import com.hermesandroid.relay.ui.components.loadedContentTransform
 import com.hermesandroid.relay.ui.components.MessageBubble
+import com.hermesandroid.relay.ui.components.MessageToolActivity
 import com.hermesandroid.relay.ui.components.PendingAttachmentComposer
 import com.hermesandroid.relay.ui.components.AttachmentViewer
 import com.hermesandroid.relay.ui.components.ChatQuoteReferenceChip
@@ -260,6 +261,7 @@ import java.util.UUID
 import com.hermesandroid.relay.ui.components.RelayChromeIconButton
 import com.hermesandroid.relay.ui.components.SphereState
 import com.hermesandroid.relay.ui.components.LocalThinkingIndicator
+import com.hermesandroid.relay.ui.components.LiveThinkingToolColumn
 import com.hermesandroid.relay.ui.components.ThinkingIndicatorConfig
 import com.hermesandroid.relay.ui.components.ThinkingIndicatorStyle
 import com.hermesandroid.relay.ui.components.ThinkingMatrixColor
@@ -277,13 +279,7 @@ import com.hermesandroid.relay.ui.components.ProfileShelf
 import com.hermesandroid.relay.ui.components.ProfileSwitcherSheet
 import com.hermesandroid.relay.ui.components.SlashCommand
 import com.hermesandroid.relay.ui.components.StreamingDots
-import com.hermesandroid.relay.ui.components.SubagentLane
-import com.hermesandroid.relay.ui.components.ToolActivityRun
-import com.hermesandroid.relay.ui.components.ToolProgressCard
-import com.hermesandroid.relay.ui.components.ToolTranscriptItem
-import com.hermesandroid.relay.ui.components.groupTranscriptTools
 import com.hermesandroid.relay.ui.components.isVisibleForToolDisplay
-import com.hermesandroid.relay.ui.components.showsImageGenerationPlaceholder
 import com.hermesandroid.relay.data.isImageGenerationToolName
 import com.hermesandroid.relay.ui.components.VoiceModeOverlay
 import com.hermesandroid.relay.ui.LocalSnackbarHost
@@ -3759,6 +3755,17 @@ fun ChatScreen(
                             }
 
                             val hasBackgroundTask = message.backgroundTask != null
+                            // A live turn that has already crossed a tool
+                            // boundary splits its reasoning so each block can
+                            // sit above the calls it produced. History rows
+                            // carry no split (the server rebuilds one row per
+                            // model call) and keep the single-block layout.
+                            val retainedSubagentIds = remember(activityRecords) {
+                                activityRecords.flatMap { it.children }.mapTo(HashSet()) { it.id }
+                            }
+                            val interleaveLiveThinking = message.isStreaming &&
+                                message.thinkingSegments.count { it.isNotBlank() } > 1
+
                             val shouldRenderBubble =
                                 !hasBackgroundTask ||
                                     message.content.isNotBlank() ||
@@ -3803,9 +3810,20 @@ fun ChatScreen(
                                         else if (isFirstInGroup) 6.dp
                                         else 1.dp,
                                 )
+                                if (interleaveLiveThinking) {
+                                    LiveThinkingToolColumn(
+                                        message = message,
+                                        toolDisplay = toolDisplay,
+                                        isStreaming = isStreaming,
+                                        retainedSubagentIds = retainedSubagentIds,
+                                        onSteer = chatViewModel::steerSubagent,
+                                        onUserScrolledAway = { userScrolledAway = true },
+                                    )
+                                }
                                 MessageBubble(
                                     message = message,
                                     modifier = bubbleModifier,
+                                    showThinkingBlock = !interleaveLiveThinking,
                                     petVisitTargetKey = if (
                                         message.uiKey == petVisitTargetUiKey &&
                                         message.uiKey in visibleMessageKeys
@@ -3981,67 +3999,18 @@ fun ChatScreen(
                                 }
                             }
 
-                            if (!hasBackgroundTask) {
-                                // Subagent children (taskIndex != null) group
-                                // into lanes after the top-level transcript
-                                // activity; the null group retains source order
-                                // while routine calls collapse into runs.
-                                val laneGroups = message.toolCalls.groupBy { it.taskIndex }
-                                val transcriptTools = groupTranscriptTools(laneGroups[null].orEmpty())
-                                transcriptTools.forEachIndexed { itemIndex, item ->
-                                    when (item) {
-                                        is ToolTranscriptItem.ActivityRun -> {
-                                            if (item.isVisibleForToolDisplay(toolDisplay)) {
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                ToolActivityRun(
-                                                    calls = item.calls,
-                                                    live = item.calls.any { !it.isComplete } ||
-                                                        (message.isStreaming && itemIndex == transcriptTools.lastIndex),
-                                                    detailed = toolDisplay == "detailed",
-                                                    messageTimestamp = message.timestamp,
-                                                    petObstacleKey = "chat-tools:${message.uiKey}:${item.calls.first().uiKey}",
-                                                    onExpandedChange = { expanded ->
-                                                        if (expanded && isStreaming) {
-                                                            userScrolledAway = true
-                                                        }
-                                                    },
-                                                )
-                                            }
-                                        }
-                                        is ToolTranscriptItem.Standalone -> {
-                                            // Generated media owns its lifecycle inside the
-                                            // message bubble. Every other standalone call is
-                                            // attention-bearing and stays visible even when
-                                            // ordinary tool scaffolding is Off.
-                                            if (!item.call.showsImageGenerationPlaceholder()) {
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                ToolProgressCard(
-                                                    toolCall = item.call,
-                                                    messageTimestamp = message.timestamp,
-                                                    onExpandedChange = { expanded ->
-                                                        if (expanded && isStreaming) {
-                                                            userScrolledAway = true
-                                                        }
-                                                    },
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                                // Delegated work is a lifecycle surface, not
-                                // optional diagnostic scaffolding. Keep lanes
-                                // visible in Off, Compact, and Detailed modes.
-                                laneGroups.keys.filterNotNull().sorted().forEach { taskIndex ->
-                                    val laneCalls = laneGroups.getValue(taskIndex)
-                                    val retainedIds = activityRecords.flatMap { it.children }.mapTo(HashSet()) { it.id }
-                                    if (laneCalls.all { it.subagentId != null && it.subagentId in retainedIds }) return@forEach
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    SubagentLane(
-                                        taskIndex = taskIndex,
-                                        calls = laneGroups.getValue(taskIndex),
-                                        onSteer = chatViewModel::steerSubagent,
-                                    )
-                                }
+                            if (!hasBackgroundTask && !interleaveLiveThinking) {
+                                MessageToolActivity(
+                                    calls = message.toolCalls,
+                                    uiKey = message.uiKey,
+                                    messageTimestamp = message.timestamp,
+                                    messageStreaming = message.isStreaming,
+                                    isStreaming = isStreaming,
+                                    toolDisplay = toolDisplay,
+                                    retainedSubagentIds = retainedSubagentIds,
+                                    onSteer = chatViewModel::steerSubagent,
+                                    onUserScrolledAway = { userScrolledAway = true },
+                                )
                             }
                         }
 
