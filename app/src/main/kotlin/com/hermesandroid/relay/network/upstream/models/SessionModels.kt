@@ -543,6 +543,10 @@ data class HermesSseEvent(
     val partial: Boolean? = null,
     val interrupted: Boolean? = null,
     @SerialName("api_calls") val apiCalls: Int? = null,
+    /** Machine exit reason from hermes-agent terminal_run_status (cancelled/failed runs). */
+    @SerialName("turn_exit_reason") val turnExitReason: String? = null,
+    /** Optional dedicated interrupt reason field when servers set it. */
+    @SerialName("interrupt_reason") val interruptReason: String? = null,
     // session.created
     val title: String? = null,
     // run.started — user_message is an object
@@ -572,6 +576,39 @@ data class HermesSseEvent(
     /** Extract message as string (returns null if message is an object, not a string). */
     val messageText: String?
         get() = (message as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+    /**
+     * User-visible interrupt explanation from a terminal SSE event.
+     * Never returns a bare "Response/Run interrupted" without a server reason when one exists.
+     */
+    fun resolveInterruptMessage(
+        responseFallback: String = "Response interrupted",
+        runFallback: String = "Run interrupted",
+        preferRun: Boolean = false,
+    ): String {
+        val candidates = listOfNotNull(
+            interruptReason,
+            error,
+            content,
+            output,
+            finalResponse,
+            text,
+            messageText,
+            turnExitReason?.let { "Operation interrupted: ${it.replace('_', ' ')}." },
+        ).map { it.trim() }.filter { it.isNotEmpty() && !isBareInterruptPlaceholder(it) }
+        if (candidates.isNotEmpty()) return candidates.first()
+        return if (preferRun) runFallback else responseFallback
+    }
+}
+
+/** True for legacy bare placeholders that carry no reason. */
+internal fun isBareInterruptPlaceholder(text: String): Boolean {
+    val t = text.trim()
+    if (t.isEmpty()) return true
+    return t.equals("Operation interrupted.", ignoreCase = true) ||
+        t.equals("Operation interrupted", ignoreCase = true) ||
+        t.equals("Response interrupted", ignoreCase = true) ||
+        t.equals("Run interrupted", ignoreCase = true)
 }
 
 @Serializable

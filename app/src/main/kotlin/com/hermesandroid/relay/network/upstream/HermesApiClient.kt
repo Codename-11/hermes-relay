@@ -1296,7 +1296,7 @@ class HermesApiClient(
                                     }
                                 } else if (event.interrupted == true) {
                                     if (completeCalled.compareAndSet(false, true)) {
-                                        onError("Response interrupted")
+                                        onError(event.resolveInterruptMessage(preferRun = false))
                                     }
                                 } else {
                                     onTurnComplete()
@@ -1315,7 +1315,7 @@ class HermesApiClient(
                                     if (!runtimeMatches) {
                                         onError("Server response did not confirm the selected model route.")
                                     } else if (event.interrupted == true) {
-                                        onError("Run interrupted")
+                                        onError(event.resolveInterruptMessage(preferRun = true))
                                     } else {
                                         onComplete()
                                     }
@@ -1802,7 +1802,7 @@ class HermesApiClient(
                                 mainHandler.post {
                                     onUsage(event.usage)
                                     if (event.interrupted == true) {
-                                        onError("Run interrupted")
+                                        onError(event.resolveInterruptMessage(preferRun = true))
                                     } else {
                                         onComplete()
                                     }
@@ -1815,7 +1815,7 @@ class HermesApiClient(
                                 onUsage(event.usage)
                                 if (event.interrupted == true) {
                                     if (completeCalled.compareAndSet(false, true)) {
-                                        onError("Response interrupted")
+                                        onError(event.resolveInterruptMessage(preferRun = false))
                                     }
                                 } else {
                                     onTurnComplete()
@@ -1827,7 +1827,7 @@ class HermesApiClient(
                                 mainHandler.post {
                                     onUsage(event.usage)
                                     if (event.interrupted == true) {
-                                        onError("Run interrupted")
+                                        onError(event.resolveInterruptMessage(preferRun = true))
                                     } else {
                                         onComplete()
                                     }
