@@ -3834,6 +3834,7 @@
     <string name="tool_name_cron">Scheduler</string>
     <string name="tool_name_computer">Computer-Nutzung</string>
     <string name="tool_name_android">Telefonaktion</string>
+    <string name="tool_name_compaction">Kontextkomprimierung</string>
     <string name="timeline_no_checks">keine Prüfungen</string>
     <string name="thinking_title">Denkprozess</string>
     <string name="thinking_settled">Gedanke</string>

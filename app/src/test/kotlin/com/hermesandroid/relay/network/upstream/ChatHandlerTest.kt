@@ -938,6 +938,81 @@ class ChatHandlerTest {
     }
 
     @Test
+    fun loadMessageHistory_rendersCompactionSummaryAsCollapsibleToolCard() {
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "compact-1",
+                    role = "user",
+                    content = JsonPrimitive(
+                        "[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted.\n\n" +
+                            "## Historical Task Snapshot\nold work",
+                    ),
+                    displayKind = "compaction_summary",
+                    displayMetadata = buildJsonObject {
+                        put("title", "Context compaction")
+                        put("summary", "## Historical Task Snapshot\nold work")
+                        put("tool_name", "context_compaction")
+                        put("tool_call_id", "compaction-display-1")
+                    },
+                    toolCalls = buildJsonArray {
+                        add(
+                            buildJsonObject {
+                                put("id", "compaction-display-1")
+                                put("type", "function")
+                                put(
+                                    "function",
+                                    buildJsonObject {
+                                        put("name", "context_compaction")
+                                        put("arguments", "{}")
+                                    },
+                                )
+                            },
+                        )
+                    },
+                ),
+                MessageItem(id = "u-1", role = "user", content = JsonPrimitive("continue")),
+            ),
+        )
+
+        assertEquals(2, handler.messages.value.size)
+        val card = handler.messages.value.first()
+        assertEquals(MessageRole.ASSISTANT, card.role)
+        assertEquals("", card.content)
+        assertEquals(1, card.toolCalls.size)
+        val tool = card.toolCalls.single()
+        assertEquals("context_compaction", tool.name)
+        assertEquals(true, tool.isComplete)
+        assertTrue(tool.result?.contains("old work") == true)
+        assertEquals(MessageRole.USER, handler.messages.value[1].role)
+        assertEquals("continue", handler.messages.value[1].content)
+    }
+
+    @Test
+    fun loadMessageHistory_rendersLegacyCompactionUserBubbleAsToolCard() {
+        // Older gateways left pure handoffs as role=user with the marker prefix
+        // and no display_kind — still must not show as a user bubble.
+        handler.loadMessageHistory(
+            listOf(
+                MessageItem(
+                    id = "legacy-compact",
+                    role = "user",
+                    content = JsonPrimitive(
+                        "[CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted into the summary below.\n\n" +
+                            "## Goal\nship the fix",
+                    ),
+                ),
+            ),
+        )
+
+        val card = handler.messages.value.single()
+        assertEquals(MessageRole.ASSISTANT, card.role)
+        assertEquals("", card.content)
+        assertEquals("context_compaction", card.toolCalls.single().name)
+        assertTrue(card.toolCalls.single().result?.contains("ship the fix") == true)
+    }
+
+    @Test
     fun loadMessageHistory_rendersTypedModelSwitchAsSystemTimelineRow() {
         handler.loadMessageHistory(
             listOf(

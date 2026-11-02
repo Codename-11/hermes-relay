@@ -3766,6 +3766,7 @@
     <string name="tool_name_cron">调度器</string>
     <string name="tool_name_computer">电脑操作</string>
     <string name="tool_name_android">手机操作</string>
+    <string name="tool_name_compaction">上下文压缩</string>
     <string name="timeline_no_checks">无检查</string>
     <string name="thinking_title">思考过程</string>
     <string name="thinking_settled">思考</string>
