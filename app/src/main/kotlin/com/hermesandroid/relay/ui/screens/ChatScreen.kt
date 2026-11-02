@@ -1643,6 +1643,33 @@ fun ChatScreen(
     val copySessionIdLabel = stringResource(R.string.chat_copy_session_id)
     val hermesMessageLabel = stringResource(R.string.chat_hermes_message)
     val focusManager = LocalFocusManager.current
+    // Explicit new-chat launch: focus the composer and raise the keyboard so the
+    // user can type or dictate immediately. Nothing is sent or prefilled.
+    val composerFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+    val softwareKeyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val composerFocusRequest by com.hermesandroid.relay.util.NewChatLaunchRequests
+        .composerFocus.collectAsState()
+    LaunchedEffect(composerFocusRequest) {
+        val request = composerFocusRequest ?: return@LaunchedEffect
+        // Let the Chat destination and window insets settle before focusing.
+        delay(250L)
+        var focused = false
+        while (!focused && com.hermesandroid.relay.util.isNewChatLaunchFresh(
+                requestedAtMs = request.requestedAtMs,
+                nowMs = System.currentTimeMillis(),
+                ttlMs = com.hermesandroid.relay.util.NewChatLaunch.FOCUS_TTL_MS,
+            )
+        ) {
+            // Older Compose versions throw when the field is not attached yet;
+            // newer ones return false. Treat both as "try again shortly".
+            val result: Any? = runCatching { composerFocusRequester.requestFocus() }
+                .getOrElse { false }
+            focused = result != false
+            if (!focused) delay(150L)
+        }
+        if (focused) softwareKeyboard?.show()
+        com.hermesandroid.relay.util.NewChatLaunchRequests.consumeComposerFocus(request.id)
+    }
     val finishSuccessfulSend: () -> Unit = {
         // Sending is an explicit "follow my turn" action, including when it
         // queues behind an active run. Automatic queued-turn handoff itself
@@ -4660,6 +4687,7 @@ fun ChatScreen(
 
             ChatInputBar(
                 busyAction = effectiveBusyAction.takeIf { isStreaming },
+                composerFocusRequester = composerFocusRequester,
                 correctionAvailable = canSteerCurrentMessage,
                 onBusyActionChange = {
                     editingQueuedMessage = false
