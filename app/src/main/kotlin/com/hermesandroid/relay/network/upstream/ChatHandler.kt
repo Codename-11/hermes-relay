@@ -451,8 +451,13 @@ class ChatHandler {
      * only voices ASSISTANT messages) so injection can't trigger uncontrolled
      * speech; Phase 3's TTS-on-voice will speak proactive messages explicitly.
      * [ChatMessage.clientOnly] preserves it across the history reconcile.
+     *
+     * [turnContinues] keeps local busy chrome armed after mid-turn status /
+     * progress injects (hindsight, compaction notices, tool status). Final
+     * replies leave it false so Stop / streaming settle.
      */
-    fun addProactiveMessage(text: String) {
+    fun addProactiveMessage(text: String, turnContinues: Boolean = false) {
+        applyPhoneTurnInject(turnContinues = turnContinues)
         _messages.update { list ->
             val msg = ChatMessage(
                 id = "proactive-msg-${java.util.UUID.randomUUID()}",
@@ -463,6 +468,7 @@ class ChatHandler {
             )
             (list + msg).let { if (it.size > MAX_MESSAGES) it.drop(it.size - MAX_MESSAGES) else it }
         }
+        rearmPhoneTurnWorkingIfNeeded(turnContinues)
     }
 
     /**
@@ -471,13 +477,18 @@ class ChatHandler {
      * in the conversation, not just as a notification). [clientOnly] preserves it
      * across the history reconcile; idempotent on the proactive [messageId] so a
      * re-delivered push (e.g. an outbound-buffer flush) never double-posts.
+     *
+     * [turnContinues] true = mid-turn surface (status/progress); busy chrome
+     * stays. False = turn-final reply; settle chrome.
      */
     fun addAgentThreadMessage(
         text: String,
         messageId: String?,
         agentName: String?,
         arrivedWhileAway: Boolean = false,
+        turnContinues: Boolean = false,
     ) {
+        applyPhoneTurnInject(turnContinues = turnContinues)
         val id = messageId?.let { "proactive-$it" } ?: "proactive-${java.util.UUID.randomUUID()}"
         val mediaHits = mutableListOf<Pair<String, MediaMarkerHit>>()
         val cleanedText = extractMediaMarkersFromContent(id, text, mediaHits)
@@ -497,6 +508,108 @@ class ChatHandler {
         }
         // The row must exist before the ViewModel attaches a loading card.
         mediaHits.forEach { (_, hit) -> dispatchMediaHit(id, hit) }
+        rearmPhoneTurnWorkingIfNeeded(turnContinues)
+    }
+
+    /**
+     * True for the empty client-only assistant shell armed when a phone Thread
+     * send leaves via the proactive channel (no gateway stream events).
+     */
+    private fun isPhoneWorkingPlaceholder(message: ChatMessage): Boolean =
+        message.clientOnly &&
+            message.role == MessageRole.ASSISTANT &&
+            message.isStreaming &&
+            message.content.isBlank() &&
+            message.toolCalls.isEmpty() &&
+            message.cards.isEmpty() &&
+            message.thinkingContent.isNullOrBlank()
+
+    /**
+     * True while a phone proactive turn is still running on the Mac. Mid-turn
+     * injects must not clear busy chrome until [settlePhoneTurnWorking] or a
+     * non-continuing final inject.
+     */
+    @Volatile
+    private var phoneTurnInFlight: Boolean = false
+
+    /** Last agent name used for the phone working shell (re-arm after interim). */
+    @Volatile
+    private var phoneTurnAgentName: String? = null
+
+    /**
+     * Arm chat busy chrome for a phone-platform turn. Gateway/SSE paths set
+     * [isStreaming] from live deltas; phone Threads only get finished injects,
+     * so the UI would stay idle without this local placeholder.
+     *
+     * Returns the placeholder id (reuses an existing empty phone shell).
+     */
+    fun beginPhoneTurnWorking(agentName: String? = null): String {
+        phoneTurnInFlight = true
+        if (agentName != null) phoneTurnAgentName = agentName
+        val existing = _messages.value.findLast { isPhoneWorkingPlaceholder(it) }
+        if (existing != null) {
+            _isStreaming.value = true
+            return existing.id
+        }
+        val id = "phone-turn-working-${java.util.UUID.randomUUID()}"
+        addPlaceholderMessage(
+            ChatMessage(
+                id = id,
+                role = MessageRole.ASSISTANT,
+                content = "",
+                timestamp = System.currentTimeMillis(),
+                isStreaming = true,
+                agentName = agentName ?: phoneTurnAgentName ?: activeAgentName,
+                clientOnly = true,
+            ),
+        )
+        return id
+    }
+
+    /**
+     * Drop the empty phone working shell, clear the in-flight turn flag, and
+     * clear [isStreaming] when no other streaming rows remain. Does not touch
+     * non-clientOnly gateway placeholders.
+     */
+    fun settlePhoneTurnWorking() {
+        phoneTurnInFlight = false
+        val hadPhonePlaceholder = _messages.value.any { isPhoneWorkingPlaceholder(it) }
+        if (hadPhonePlaceholder) {
+            _messages.update { list -> list.filterNot { isPhoneWorkingPlaceholder(it) } }
+        }
+        if (_messages.value.none { it.isStreaming || it.isThinkingStreaming }) {
+            _isStreaming.value = false
+        }
+    }
+
+    /** Whether a phone proactive turn still expects more Mac-side work. */
+    fun isPhoneTurnInFlight(): Boolean = phoneTurnInFlight
+
+    /**
+     * Before appending an inject bubble: always drop the empty working shell so
+     * the real content is visible. Only end the turn (clear in-flight) when the
+     * inject is final ([turnContinues] false).
+     */
+    private fun applyPhoneTurnInject(turnContinues: Boolean) {
+        val hadPhonePlaceholder = _messages.value.any { isPhoneWorkingPlaceholder(it) }
+        if (hadPhonePlaceholder) {
+            _messages.update { list -> list.filterNot { isPhoneWorkingPlaceholder(it) } }
+        }
+        if (!turnContinues) {
+            phoneTurnInFlight = false
+            if (_messages.value.none { it.isStreaming || it.isThinkingStreaming }) {
+                _isStreaming.value = false
+            }
+        }
+    }
+
+    /**
+     * After a mid-turn inject, put the empty working shell back so header /
+     * Stop / dots stay armed until the final reply or explicit settle.
+     */
+    private fun rearmPhoneTurnWorkingIfNeeded(turnContinues: Boolean) {
+        if (!turnContinues || !phoneTurnInFlight) return
+        beginPhoneTurnWorking(phoneTurnAgentName ?: activeAgentName)
     }
 
     /**
