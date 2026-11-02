@@ -4631,6 +4631,7 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return false
         if (handler.currentSessionId.value == null) return false
         handler.addProactiveMessage(text)
+        updateCurrentSessionActivity(isStreaming = false, needsInput = false)
         return true
     }
 
@@ -4648,6 +4649,11 @@ class ChatViewModel : ViewModel() {
             MessageDeliveryStatus.DELIVERED
         }
         chatHandler?.updateDeliveryStatus(clientMsgId, resolved)
+        // Failed phone send never gets an inject — drop local working chrome.
+        if (resolved == MessageDeliveryStatus.FAILED) {
+            chatHandler?.settlePhoneTurnWorking()
+            updateCurrentSessionActivity(isStreaming = false, needsInput = false)
+        }
     }
 
     /**
@@ -4661,12 +4667,27 @@ class ChatViewModel : ViewModel() {
     fun injectThreadMessage(msg: ProactiveMessage): Boolean {
         val handler = chatHandler ?: return false
         val msgChatId = msg.chatId?.takeIf { it.isNotBlank() }
+        fun acceptInject(): Boolean {
+            val turnContinues =
+                handler.isPhoneTurnInFlight() &&
+                    (msg.interim || looksLikePhoneTurnStatus(msg.text))
+            handler.addAgentThreadMessage(
+                msg.text,
+                msg.messageId,
+                msg.title,
+                msg.arrivedWhileAway,
+                turnContinues = turnContinues,
+            )
+            // Keep session activity busy through interim status; clear on final.
+            updateCurrentSessionActivity(
+                isStreaming = turnContinues || handler.isStreaming.value,
+                needsInput = false,
+            )
+            return true
+        }
         pendingThread?.let { pending ->
             if (msgChatId == null || msgChatId == pending.chatId) {
-                handler.addAgentThreadMessage(
-                    msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
-                )
-                return true
+                return acceptInject()
             }
         }
         // A freshly-created thread whose real session we're still switching to:
@@ -4675,10 +4696,7 @@ class ChatViewModel : ViewModel() {
         // set, so the very first reply doesn't fall through to a notification.
         creatingThread?.let { creating ->
             if (msgChatId == null || msgChatId == creating.chatId) {
-                handler.addAgentThreadMessage(
-                    msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
-                )
-                return true
+                return acceptInject()
             }
         }
         val activeId = handler.currentSessionId.value ?: return false
@@ -4691,10 +4709,7 @@ class ChatViewModel : ViewModel() {
         val belongs = knownChatId == null || msgChatId == null || knownChatId == msgChatId
         if (!belongs) return false
         if (msgChatId != null) threadChatIds[activeId] = msgChatId
-        handler.addAgentThreadMessage(
-            msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
-        )
-        return true
+        return acceptInject()
     }
 
     fun realtimeAgentContextMessages(maxMessages: Int = 14): List<RealtimeConversationContextMessage> {
@@ -9177,6 +9192,10 @@ class ChatViewModel : ViewModel() {
                     .toSet()
                 creatingThread = CreatingThread(pending.chatId, pending.name, knownIds)
                 send(textTransport.message, pending.chatId, null, messageId)
+                // Proactive path has no gateway deltas — arm local busy chrome.
+                handler.activeAgentName = currentAgentDisplayName()
+                handler.beginPhoneTurnWorking(handler.activeAgentName)
+                updateCurrentSessionActivity(isStreaming = true, needsInput = false)
                 switchToCreatedThread()
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
@@ -9197,6 +9216,11 @@ class ChatViewModel : ViewModel() {
             if (send != null) {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
                 send(textTransport.message, threadChatIds[activeThread.sessionId], null, messageId)
+                // Proactive path has no gateway deltas — arm local busy chrome
+                // (header streaming label, Stop, thinking dots) until inject.
+                handler.activeAgentName = currentAgentDisplayName()
+                handler.beginPhoneTurnWorking(handler.activeAgentName)
+                updateCurrentSessionActivity(isStreaming = true, needsInput = false)
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
             }
@@ -11271,6 +11295,10 @@ class ChatViewModel : ViewModel() {
         clearPendingAskAfterInterrupt()
         clearTurnCheckpoint(preserveQueue = true)
         AppAnalytics.onStreamCancelled()
+        // Phone Threads never own a Gateway ActiveTurnHandle — cancel() above
+        // is a no-op for Mac work. Send platform /stop so the gateway runner
+        // interrupts the live phone session (same path as Telegram /stop).
+        interruptPhoneMacTurnIfNeeded()
         chatHandler?.let { handler ->
             val streamingMsg = handler.messages.value.findLast { it.isStreaming }
             if (streamingMsg != null) {
@@ -11282,6 +11310,43 @@ class ChatViewModel : ViewModel() {
                 // Stop must still be an unconditional escape hatch.
                 handler.clearStreamingStatus()
             }
+            if (handler.isPhoneTurnInFlight()) {
+                handler.settlePhoneTurnWorking()
+            }
+        }
+        updateCurrentSessionActivity(isStreaming = false, needsInput = false)
+    }
+
+    /**
+     * Phone / Threads turns run on the gateway **platform** adapter (proactive
+     * channel), not under [activeStream]. Local chrome alone must not be the
+     * stop path — ship `/stop` so Mac-side tools halt.
+     */
+    private fun interruptPhoneMacTurnIfNeeded() {
+        val handler = chatHandler ?: return
+        val sessionId = handler.currentSessionId.value
+        val active = sessionId?.let { sid ->
+            handler.sessions.value.firstOrNull { it.sessionId == sid }
+        }
+        val phoneTurn =
+            handler.isPhoneTurnInFlight() ||
+                active?.source == "phone" ||
+                creatingThread != null ||
+                pendingThread != null
+        if (!phoneTurn) return
+        val chatId = when {
+            creatingThread != null -> creatingThread?.chatId
+            pendingThread != null -> pendingThread?.chatId
+            sessionId != null -> threadChatIds[sessionId]
+            else -> null
+        } ?: "phone"
+        val send = onProactiveReply
+        if (send != null) {
+            send("/stop", chatId, null, "phone-stop-${UUID.randomUUID()}")
+        }
+        // Best-effort belt when this session is also live on the dashboard WS.
+        sessionId?.takeIf { it.isNotBlank() }?.let { sid ->
+            gatewayClient?.interruptSession(sid)
         }
     }
 
@@ -12463,3 +12528,33 @@ private fun String.limitPreview(maxChars: Int): String {
     if (length <= maxChars) return this
     return take(maxChars.coerceAtLeast(80)).trimEnd() + "..."
 }
+
+/**
+ * Heuristic for mid-turn phone status bubbles that arrived without
+ * `metadata.interim` (older hosts / plain send). Keeps busy chrome armed.
+ */
+internal fun looksLikePhoneTurnStatus(text: String): Boolean {
+    val t = text.trim()
+    if (t.isEmpty() || t.length > 280) return false
+    return PHONE_TURN_STATUS_RE.containsMatchIn(t)
+}
+
+private val PHONE_TURN_STATUS_RE = Regex(
+    pattern = listOf(
+        """compact""",
+        """compress""",
+        """summariz""",
+        """progress""",
+        """still working""",
+        """working\b""",
+        """thinking""",
+        """recall""",
+        """hindsight""",
+        """tool\b""",
+        """⏳""",
+        """⟳""",
+        """…\s*$""",
+        """\.\.\.\s*$""",
+    ).joinToString("|"),
+    option = RegexOption.IGNORE_CASE,
+)
