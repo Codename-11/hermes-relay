@@ -2840,13 +2840,16 @@ fun ChatScreen(
             ModalNavigationDrawer(
                 drawerState = drawerState,
                 // Material routes scrim taps through the drawer's gesture handler.
-                // Keep it enabled so tapping outside always dismisses the drawer; the
-                // voice overlay already owns input while voice mode is visible.
-                // Edge-swipe is also disabled while the pinned sidebar owns the
-                // leading edge, so a swipe can't open a second sessions surface.
+                // Enable only while the drawer is open so swipe-to-close and
+                // outside taps dismiss it; while closed, disable gestures so
+                // horizontal pans on code blocks/tables are not stolen by
+                // swipe-to-open (Material3 has no edge-width knob). Hamburger
+                // and the pinned sidebar still open sessions. Voice overlay
+                // already owns input while voice mode is visible.
                 gesturesEnabled = resolveDrawerGesturesEnabled(
                     supervisedHistoryAllowed = sessionsHistoryAllowed,
                     pinnedSidebar = isPinnedSidebar,
+                    drawerOpen = drawerState.isOpen,
                 ),
                 // Do not compose a second session browser behind the sidebar.
                 drawerContent = {
