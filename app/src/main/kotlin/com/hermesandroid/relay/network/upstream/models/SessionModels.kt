@@ -399,6 +399,12 @@ data class MessageItem(
     @SerialName("display_metadata")
     @Serializable(with = FlexibleJsonObjectSerializer::class)
     val displayMetadata: JsonObject? = null,
+    // Shared outbound delivery id (phone proactive / platform bridge). When set,
+    // live Thread bubbles keyed as proactive-<id> adopt history by this field
+    // before falling back to content match.
+    @SerialName("platform_message_id")
+    @Serializable(with = FlexibleIdSerializer::class)
+    val platformMessageId: String? = null,
     // Reasoning persisted with the assistant message (upstream serializes
     // both names; reasoning is the canonical one). Restored into
     // ChatMessage.thinkingContent so the Thought-process block survives a

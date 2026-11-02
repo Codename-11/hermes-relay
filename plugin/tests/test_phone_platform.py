@@ -246,6 +246,20 @@ class PayloadTests(_EnvIsolated):
         )
         self.assertEqual(p["surfacing"], "session")
 
+    def test_message_id_preassigned_when_omitted(self) -> None:
+        p = pp._build_message_payload("c", "hi")
+        self.assertTrue(isinstance(p.get("message_id"), str) and p["message_id"])
+        self.assertEqual(len(p["message_id"]), 12)
+
+    def test_message_id_explicit_and_metadata(self) -> None:
+        p = pp._build_message_payload("c", "hi", message_id="aabbccddeeff")
+        self.assertEqual(p["message_id"], "aabbccddeeff")
+        p2 = pp._build_message_payload(
+            "c", "hi", metadata={"message_id": "112233445566", "k": 1}
+        )
+        self.assertEqual(p2["message_id"], "112233445566")
+        self.assertEqual(p2["metadata"], {"k": 1})
+
 
 # ── env_enablement ─────────────────────────────────────────────────────────
 
