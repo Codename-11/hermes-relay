@@ -1231,9 +1231,12 @@ class DashboardApiClient(
                 else SessionItem(
                     id = id,
                     title = obj.stringOrNull("title"),
-                    preview = obj.stringOrNull("snippet"),
+                    preview = obj.stringOrNull("snippet") ?: obj.stringOrNull("preview"),
+                    matchKind = obj.stringOrNull("match_kind"),
                     model = obj.stringOrNull("model"),
                     source = obj.stringOrNull("source"),
+                    lastActive = obj.doubleOrNull("last_active")
+                        ?: obj.doubleOrNull("session_started"),
                 )
             }
         }
@@ -1241,6 +1244,11 @@ class DashboardApiClient(
 
     private fun kotlinx.serialization.json.JsonObject.stringOrNull(key: String): String? =
         (this[key] as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() && it != "null" }
+
+    private fun kotlinx.serialization.json.JsonObject.doubleOrNull(key: String): Double? {
+        val prim = this[key] as? kotlinx.serialization.json.JsonPrimitive ?: return null
+        return prim.content.toDoubleOrNull()
+    }
 
     /**
      * Read the bounded, authoritative session window across every profile.
