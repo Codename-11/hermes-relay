@@ -84,6 +84,10 @@
          WAKE_LOCK covers both lock levels. -->
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
 
+    <!-- BYO FCM service (optional). Requires Play Services on device; pure
+         de-Googled installs keep Device Control but will not receive FCM wakes.
+         POST_NOTIFICATIONS is already declared above for Device Control / FGS. -->
+
     <application>
         <service
             android:name=".accessibility.HermesAccessibilityService"
@@ -105,6 +109,14 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Maintains the sideload Device Control bridge while the user has explicitly enabled agent control." />
+        </service>
+
+        <service
+            android:name=".push.HermesFcmMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
         </service>
 
         <!-- Note: GatewayKeepAliveService ("Keep connected in background") is
