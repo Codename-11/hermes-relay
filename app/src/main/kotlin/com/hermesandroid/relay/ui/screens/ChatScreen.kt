@@ -978,6 +978,7 @@ fun ChatScreen(
     val error by chatViewModel.error.collectAsState()
     val sessions by chatViewModel.sessions.collectAsState()
     val contentSearchHits by chatViewModel.contentSearchHits.collectAsState()
+    val contentSearchPending by chatViewModel.contentSearchPending.collectAsState()
     val backgroundSessionActivityStates by
         chatViewModel.backgroundSessionActivityStates.collectAsState()
     val serverAutoTitles by chatViewModel.serverAutoTitles.collectAsState()
@@ -2814,6 +2815,7 @@ fun ChatScreen(
                 onTogglePin = if (isWideLayout && sessionsHistoryAllowed) toggleSessionsSidebarPin else null,
                 pinned = isPinnedSidebar,
                 contentSearchSessions = contentSearchHits,
+                contentSearchPending = contentSearchPending,
                 onSearchQueryChange = chatViewModel::searchSessionContents,
             )
         }
