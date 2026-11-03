@@ -285,4 +285,82 @@ class ChatStreamRecoveryTest {
         assertFalse(gaveUp)
         assertFalse(recovery.isActive)
     }
+
+    /**
+     * Regression (Relay 1.19, 2026-10-22): with the phone asleep the three history
+     * reads (5 s, 10 s, 20 s) all failed, recovery gave up, and the chat showed
+     * "The active profile's conversation history could not be reached" although
+     * the server had finished the answer. Offline failures must not count.
+     */
+    @Test
+    fun offlineFetchFailuresDoNotGiveUpAndTheAnswerIsRecoveredLater() = runTest {
+        var online = false
+        val script = ScriptedHistory(
+            listOf(
+                { throw IOException("Software caused connection abort") },
+                { throw IOException("Software caused connection abort") },
+                { throw IOException("Software caused connection abort") },
+                { throw IOException("Software caused connection abort") },
+                { listOf(user("u1"), assistant("a1", "answer finished while away")) },
+                { listOf(user("u1"), assistant("a1", "answer finished while away")) },
+            ),
+        )
+        var gaveUp: ChatStreamRecovery.GiveUpReason? = null
+        var recovered: List<MessageItem>? = null
+        val recovery = ChatStreamRecovery(
+            this,
+            script.fetcher { testScheduler.currentTime },
+            isNetworkAvailable = { online },
+        )
+        recovery.start(pending, 0, {}, { recovered = it }, { gaveUp = it })
+
+        advanceTimeBy(5_000 + 10_000 + 20_000 + 30_000 + 1) // four failed reads, all offline
+        assertNull(gaveUp)
+        assertTrue(recovery.isActive)
+
+        online = true
+        advanceTimeBy(30_000 + 30_000 + 1)
+        assertNull(gaveUp)
+        assertEquals("answer finished while away", recovered?.last()?.contentText)
+    }
+
+    @Test
+    fun onlineFailuresStillGiveUpEvenWithOfflineOnesInBetween() = runTest {
+        val onlineByCall = listOf(true, false, true, true)
+        var call = 0
+        val script = ScriptedHistory(listOf({ throw IOException("dashboard down") }))
+        var gaveUp: ChatStreamRecovery.GiveUpReason? = null
+        val recovery = ChatStreamRecovery(
+            this,
+            script.fetcher { testScheduler.currentTime },
+            isNetworkAvailable = { onlineByCall[minOf(call++, onlineByCall.lastIndex)] },
+        )
+        recovery.start(pending, 0, {}, {}, { gaveUp = it })
+
+        advanceTimeBy(5_000 + 10_000 + 20_000 + 30_000 + 1)
+
+        assertEquals(ChatStreamRecovery.GiveUpReason.HISTORY_UNAVAILABLE, gaveUp)
+        assertEquals(4, script.fetchCount)
+    }
+
+    @Test
+    fun everyFailedReadIsReportedWithWhetherItCounted() = runTest {
+        var online = false
+        val reports = mutableListOf<Pair<String?, Boolean>>()
+        val script = ScriptedHistory(listOf({ throw IOException("no route") }))
+        val recovery = ChatStreamRecovery(
+            this,
+            script.fetcher { testScheduler.currentTime },
+            isNetworkAvailable = { online },
+            onFetchFailure = { error, counted -> reports += error.message to counted },
+        )
+        recovery.start(pending, 0, {}, {}, {})
+
+        advanceTimeBy(5_000 + 1)
+        online = true
+        advanceTimeBy(10_000)
+
+        assertEquals(listOf("no route" to false, "no route" to true), reports)
+        recovery.cancel()
+    }
 }

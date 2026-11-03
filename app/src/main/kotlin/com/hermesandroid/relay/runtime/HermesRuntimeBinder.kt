@@ -26,6 +26,7 @@ import com.hermesandroid.relay.data.VoiceSettings
 import com.hermesandroid.relay.network.relay.RelayVoiceAudioClientAdapter
 import com.hermesandroid.relay.network.relay.RelayVoiceClient
 import com.hermesandroid.relay.network.shared.AutoVoiceAudioClient
+import com.hermesandroid.relay.network.shared.ConnectivityObserver
 import com.hermesandroid.relay.network.shared.pluginProxyRoutesOrNull
 import com.hermesandroid.relay.network.upstream.StandardHermesVoiceClient
 import com.hermesandroid.relay.viewmodel.SESSION_DIRECTORY_PAGE_SIZE
@@ -213,6 +214,8 @@ internal class HermesRuntimeBinder(
                 excludeSources = connection.hiddenSources.value,
             )
         }
+        // Answer recovery must not give up on history reads that fail only because the phone is offline.
+        chat.networkAvailable = { connection.networkStatus.value == ConnectivityObserver.Status.Available }
         chat.setProfileMessageLoaderWithMode { profileName, sessionId, mode ->
             connection.loadProfileScopedMessages(profileName, sessionId, mode)
         }

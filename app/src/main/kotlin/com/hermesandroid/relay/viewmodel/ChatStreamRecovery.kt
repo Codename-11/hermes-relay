@@ -57,6 +57,16 @@ class ChatStreamRecovery(
     private val scope: CoroutineScope,
     private val fetchHistory: suspend () -> List<MessageItem>,
     private val timing: Timing = Timing(),
+    /**
+     * Whether the device currently has a usable network. A failed read while
+     * offline (screen-off / Doze / a network switch) says nothing about the
+     * server's history, so it must not count toward
+     * [Timing.maxConsecutiveFetchFailures]; polling simply continues within
+     * [Timing.recoveryWindowMs]. Defaults to "online" (the previous behaviour).
+     */
+    private val isNetworkAvailable: () -> Boolean = { true },
+    /** Every failed history read, and whether it counted toward giving up (for diagnostics). */
+    private val onFetchFailure: (error: Exception, counted: Boolean) -> Unit = { _, _ -> },
 ) {
 
     data class Timing(
@@ -133,7 +143,10 @@ class ChatStreamRecovery(
                     fetchHistory()
                 } catch (e: CancellationException) {
                     throw e
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    val counted = isNetworkAvailable()
+                    onFetchFailure(e, counted)
+                    if (!counted) continue
                     consecutiveFetchFailures++
                     if (consecutiveFetchFailures >= timing.maxConsecutiveFetchFailures) {
                         onGaveUp(GiveUpReason.HISTORY_UNAVAILABLE)
