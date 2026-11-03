@@ -621,6 +621,19 @@ data class GatewayModelOptions(
     val currentProvider: String,
 )
 
+/** Parse the same inventory shape from profile-scoped dashboard REST and gateway RPC. */
+internal fun parseGatewayModelOptionsPayload(payload: JsonObject): GatewayModelOptions? {
+    val entries = payload["providers"] as? JsonArray ?: return null
+    val providers = normalizeGatewayModelProviders(entries.mapNotNull { entry ->
+        (entry as? JsonObject)?.let(::parseGatewayModelProvider)
+    })
+    return GatewayModelOptions(
+        providers = providers,
+        currentModel = (payload["model"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+        currentProvider = (payload["provider"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+    )
+}
+
 /** Coherent model identity from a single `session.info` payload. */
 data class GatewayModelIdentity(val model: String, val provider: String)
 
