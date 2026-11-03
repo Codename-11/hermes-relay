@@ -908,6 +908,9 @@
     <string name="drawer_new_chat">Nuevo chat</string>
     <string name="drawer_search_placeholder">Buscar sesiones o id...</string>
     <string name="drawer_search_sessions">Buscar sesiones</string>
+    <string name="drawer_search_sort_relevant">Más relevantes</string>
+    <string name="drawer_search_sort_recent">Más recientes</string>
+    <string name="drawer_search_semantically_similar">Semánticamente similares</string>
     <string name="drawer_pin_sidebar">Fijar barra lateral de sesiones</string>
     <string name="drawer_unpin_sidebar">Desfijar barra lateral de sesiones</string>
     <string name="drawer_activity_working">En curso</string>
@@ -4329,4 +4332,5 @@
     <string name="voice_settings_host_barge_in_desc">Controla las interrupciones en el modo de voz del host Hermes, no el micrófono de este teléfono. Usa Interrupción en el teléfono en Listening.</string>
     <string name="voice_settings_speak_tool_updates">Leer avisos de herramientas</string>
     <string name="voice_settings_speak_tool_updates_desc">Los avisos predefinidos de herramientas están en inglés. Desactiva esta opción para oír las respuestas sin estos avisos. Solo la respuesta final también los silencia.</string>
+    <string name="drawer_searching_sessions">Buscando…</string>
 </resources>

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Session drawer search asks the gateway for message-body matches. Fuzzy search is always used; semantic ranking is added only when the host has an embedding model configured. Hits can show gateway snippets, a semantically-similar label for embedding-only matches, and a most-relevant / most-recent sort toggle.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
