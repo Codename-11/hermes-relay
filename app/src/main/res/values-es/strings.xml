@@ -705,6 +705,8 @@
     <string name="chat_settings_back">Atrás</string>
     <string name="chat_settings_smooth_auto_scroll">Desplazamiento automático suave</string>
     <string name="chat_settings_smooth_auto_scroll_desc">Siga nuevos mensajes mientras transmite. Desplácese hacia arriba para hacer una pausa; toque la flecha o desplácese hacia abajo para continuar.</string>
+    <string name="chat_settings_collapse_reasoning">Contraer el razonamiento por defecto</string>
+    <string name="chat_settings_collapse_reasoning_desc">El razonamiento en vivo sigue disponible, pero empieza contraído. Toca un bloque para leerlo.</string>
     <string name="chat_settings_thinking_indicator">indicador de pensamiento</string>
     <string name="chat_settings_thinking_indicator_desc">La animación se muestra en una burbuja de respuesta mientras Hermes está funcionando.</string>
     <string name="chat_settings_dots">Puntos</string>
