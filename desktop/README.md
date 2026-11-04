@@ -744,6 +744,12 @@ Precedence for credentials: `--token` → `HERMES_RELAY_TOKEN` → `--code` → 
 
 ## Troubleshooting
 
+- **Instant `0xC0000409` before help/version on Windows 26200.8875** —
+  [the targeted startup comparison](../docs/windows-startup-probe.md) separates
+  the official executable, Bun startup, and Relay startup. This remains an
+  affected-OS investigation; the diagnostic candidates are not replacement
+  releases.
+
 Activity labels describe the backend recorded for each event: `cua` and the
 historical snapshot value `cua_driver` display as **CUA**, `system_capture` as
 **System capture**, and `legacy_compat` as **Compatibility**. Entries without

@@ -85,6 +85,15 @@ restore the recorded plugin path and service configuration and verify Dashboard,
 Gateway, Relay health, connected clients, and session continuity. Never point a
 managed plugin symlink through a dirty development checkout.
 
+## Windows startup diagnostics
+
+The separate `windows-startup-probe` PR label produces an inspectable Windows
+diagnostic bundle for #496. It compares pinned Bun runtimes and Relay builds
+from the same beta.8 source; it is not a release candidate or an installer.
+See [Windows startup comparison](windows-startup-probe.md) for artifact
+provenance, verification, retention, and reporter instructions. This label does
+not build Android or Plugin candidates or send updater notifications.
+
 ## Release candidates
 
 Use an RC only after release scope is frozen and the affected surface's version
