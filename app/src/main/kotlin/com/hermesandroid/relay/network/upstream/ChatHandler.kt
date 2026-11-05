@@ -13,6 +13,9 @@ import com.hermesandroid.relay.data.MessageRole
 import com.hermesandroid.relay.data.MoaReference
 import com.hermesandroid.relay.data.RealtimeTurnTrace
 import com.hermesandroid.relay.data.ToolCall
+import com.hermesandroid.relay.data.appendThinkingDelta
+import com.hermesandroid.relay.data.sealThinkingSegment
+import com.hermesandroid.relay.data.openThinkingSegmentIndex
 import com.hermesandroid.relay.data.isImageGenerationToolName
 import com.hermesandroid.relay.data.VoiceIntentTrace
 import com.hermesandroid.relay.network.shared.LocalDispatchResult
@@ -3028,8 +3031,12 @@ class ChatHandler {
                             startedAt = System.currentTimeMillis(),
                             runId = runId ?: calls[genIdx].runId,
                             provenance = provenance ?: calls[genIdx].provenance,
+                            thinkingSegment = openThinkingSegmentIndex(msg.thinkingSegments),
                         )
-                        msg.copy(toolCalls = calls)
+                        msg.copy(
+                            toolCalls = calls,
+                            thinkingSegments = sealThinkingSegment(msg.thinkingSegments),
+                        )
                     } else {
                         msg.copy(
                             toolCalls = msg.toolCalls + ToolCall(
@@ -3041,7 +3048,9 @@ class ChatHandler {
                                 isComplete = false,
                                 runId = runId,
                                 provenance = provenance,
+                                thinkingSegment = openThinkingSegmentIndex(msg.thinkingSegments),
                             ),
+                            thinkingSegments = sealThinkingSegment(msg.thinkingSegments),
                         )
                     }
                 }
@@ -3530,6 +3539,7 @@ class ChatHandler {
                     if (msg.matchesIdentity(messageId)) {
                         msg.copy(
                             thinkingContent = msg.thinkingContent + delta,
+                            thinkingSegments = appendThinkingDelta(msg.thinkingSegments, delta),
                             isThinkingStreaming = true
                         )
                     } else msg
@@ -3540,6 +3550,7 @@ class ChatHandler {
                     role = MessageRole.ASSISTANT,
                     content = "",
                     thinkingContent = delta,
+                    thinkingSegments = listOf(delta),
                     isThinkingStreaming = true,
                     timestamp = System.currentTimeMillis(),
                     isStreaming = true,

@@ -738,6 +738,8 @@
     <string name="chat_settings_back">Voltar</string>
     <string name="chat_settings_smooth_auto_scroll">Rolagem automática suave</string>
     <string name="chat_settings_smooth_auto_scroll_desc">Acompanhe as novas mensagens durante a transmissão. Role para cima para pausar; toque na seta ou volte ao fim para continuar.</string>
+    <string name="chat_settings_collapse_reasoning">Recolher o raciocínio por padrão</string>
+    <string name="chat_settings_collapse_reasoning_desc">O raciocínio ao vivo continua disponível, mas começa recolhido. Toque em um bloco para ler.</string>
     <string name="chat_settings_thinking_indicator">Indicador de pensamento</string>
     <string name="chat_settings_thinking_indicator_desc">A animação exibida em um balão de resposta enquanto o Hermes trabalha.</string>
     <string name="chat_settings_dots">Pontos</string>
