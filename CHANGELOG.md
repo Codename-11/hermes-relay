@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Forward structured model reasoning deltas to mobile chat stream via tool progress events.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
