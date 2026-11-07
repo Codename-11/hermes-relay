@@ -4560,3 +4560,31 @@ vault or display-installation interfaces. Those requests receive `-32601`.
 Legacy notification fixtures remain separate from current upstream scenarios.
 The current contract has both source checks and provider-free execution against
 an unmodified pinned upstream request registry.
+
+## ADR 78 — Edge gates are met with a per-connection service token
+
+**Status:** Proposed (2026-10-19).
+
+A dashboard can sit behind an HTTP gate that answers unauthenticated requests
+with a redirect to its own login page; Cloudflare Access over a tunnel is the
+common case. A native client cannot complete that login, so every surface failed
+at the same place: the route probe reported no reachable endpoint, dashboard
+sign-in never started, and the gateway socket never upgraded.
+
+A connection may now carry an optional service-token pair, stored encrypted in
+the connection's existing token store and surfaced in the Access tab as
+configured or not configured. The pair is added as `CF-Access-Client-Id` and
+`CF-Access-Client-Secret` only for that connection's exact dashboard origin —
+scheme, host and port — on the shared client the probe, dashboard REST, media
+fetches and the `/api/ws` upgrade all use. Fallback routes and redirect targets
+on other origins never receive it, and the secret is never written to the
+serialized connection record.
+
+Saving or clearing the credential retires the connection's cached clients, so
+the next request and the next socket carry the new headers without restarting
+the app. A malformed value degrades to an unauthenticated request rather than
+failing an unrelated call.
+
+This is not an identity mechanism: the edge records the token, not the person,
+and the dashboard's own sign-in still runs behind it. A VPN or overlay route
+does not meet the gate at all and needs no credential.

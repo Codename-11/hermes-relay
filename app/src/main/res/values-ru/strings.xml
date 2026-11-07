@@ -4377,4 +4377,20 @@
     <string name="voice_settings_host_barge_in_desc">Управляет прерываниями в голосовом режиме хоста Hermes, но не микрофоном этого телефона. Используйте Прерывание на телефоне на вкладке Listening.</string>
     <string name="voice_settings_speak_tool_updates">Озвучивать уведомления инструментов</string>
     <string name="voice_settings_speak_tool_updates_desc">Встроенные уведомления инструментов звучат на английском. Отключите их, чтобы слышать ответы ассистента без этих уведомлений. Режим «Только финальный ответ» также отключает их озвучивание.</string>
+    <string name="edge_auth_title">Аутентификация на периметре</string>
+    <string name="edge_auth_description">Если перед панелью стоит шлюз вроде Cloudflare Access, укажите здесь его сервисный токен. Приложение отправляет его только на этот сервер.</string>
+    <string name="edge_auth_status">Учётные данные шлюза</string>
+    <string name="edge_auth_configured">Настроено</string>
+    <string name="edge_auth_not_configured">Не настроено</string>
+    <string name="edge_auth_set_up">Настроить</string>
+    <string name="edge_auth_replace">Заменить</string>
+    <string name="edge_auth_remove">Удалить</string>
+    <string name="edge_auth_dialog_title">Сервисный токен шлюза</string>
+    <string name="edge_auth_dialog_body">Вставьте Client ID и Client secret токена. Они хранятся на этом устройстве в зашифрованном виде.</string>
+    <string name="edge_auth_client_id">Client ID</string>
+    <string name="edge_auth_client_secret">Client secret</string>
+    <string name="edge_auth_save">Сохранить</string>
+    <string name="edge_auth_cancel">Отмена</string>
+    <string name="edge_auth_save_failed">Не удалось сохранить учётные данные.</string>
+    <string name="cw_edge_gate_http">Доступен, но шлюз доступа ответил HTTP %1$d. Сохраните это подключение, затем добавьте сервисный токен шлюза в разделе «Доступ».</string>
 </resources>

@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -69,6 +70,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -93,6 +95,7 @@ import com.hermesandroid.relay.network.shared.EndpointSurface
 import com.hermesandroid.relay.viewmodel.RelayUiState
 import com.hermesandroid.relay.viewmodel.StandardVoiceAvailability
 import com.hermesandroid.relay.viewmodel.asBadgeState
+import kotlinx.coroutines.launch
 import java.net.URI
 
 /**
@@ -1434,6 +1437,183 @@ fun ActiveCardSecurityPosture(
             text = stringResource(R.string.active_section_credentials_encrypted),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        activeConnection?.let { connection ->
+            EdgeAuthGateSection(
+                connectionViewModel = connectionViewModel,
+                connectionId = connection.id,
+                configured = connection.edgeAuthConfigured,
+            )
+        }
+    }
+}
+
+/**
+ * Optional credential for an HTTP gate standing in front of the dashboard —
+ * in practice a Cloudflare Access service token, which is what makes a
+ * default `cloudflared` + Access deployment usable from this app: the edge
+ * redirects every unauthenticated request to its login page, which a native
+ * client cannot complete.
+ *
+ * Only presence is shown here. The values live in the connection's encrypted
+ * store and are never read back into UI state.
+ */
+@Composable
+private fun EdgeAuthGateSection(
+    connectionViewModel: ConnectionViewModel,
+    connectionId: String,
+    configured: Boolean,
+) {
+    var editing by rememberSaveable { mutableStateOf(false) }
+    var clientId by rememberSaveable { mutableStateOf("") }
+    var clientSecret by rememberSaveable { mutableStateOf("") }
+    var revealSecret by rememberSaveable { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val saveFailed = stringResource(R.string.edge_auth_save_failed)
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = stringResource(R.string.edge_auth_title),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = stringResource(R.string.edge_auth_description),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            shape = appearanceRoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            SecurityFactRow(
+                icon = Icons.Filled.Shield,
+                label = stringResource(R.string.edge_auth_status),
+                value = stringResource(
+                    if (configured) R.string.edge_auth_configured else R.string.edge_auth_not_configured,
+                ),
+                positive = configured,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = {
+                    error = null
+                    editing = true
+                },
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(
+                    stringResource(
+                        if (configured) R.string.edge_auth_replace else R.string.edge_auth_set_up,
+                    ),
+                )
+            }
+            if (configured) {
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            val result = connectionViewModel.clearEdgeAuthCredential(connectionId)
+                            busy = false
+                            result.exceptionOrNull()?.let { error = it.message ?: saveFailed }
+                        }
+                    },
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(stringResource(R.string.edge_auth_remove))
+                }
+            }
+        }
+        error?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+
+    if (editing) {
+        AlertDialog(
+            onDismissRequest = { editing = false },
+            title = { Text(stringResource(R.string.edge_auth_dialog_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = stringResource(R.string.edge_auth_dialog_body),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedTextField(
+                        value = clientId,
+                        onValueChange = { clientId = it },
+                        label = { Text(stringResource(R.string.edge_auth_client_id)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value = clientSecret,
+                        onValueChange = { clientSecret = it },
+                        label = { Text(stringResource(R.string.edge_auth_client_secret)) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        visualTransformation = if (revealSecret) {
+                            VisualTransformation.None
+                        } else {
+                            PasswordVisualTransformation()
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        trailingIcon = {
+                            IconButton(onClick = { revealSecret = !revealSecret }) {
+                                Icon(
+                                    imageVector = if (revealSecret) {
+                                        Icons.Filled.VisibilityOff
+                                    } else {
+                                        Icons.Filled.Visibility
+                                    },
+                                    contentDescription = null,
+                                )
+                            }
+                        },
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            busy = true
+                            val result = connectionViewModel.saveEdgeAuthCredential(
+                                connectionId = connectionId,
+                                clientId = clientId,
+                                clientSecret = clientSecret,
+                            )
+                            busy = false
+                            result.fold(
+                                onSuccess = {
+                                    editing = false
+                                    clientId = ""
+                                    clientSecret = ""
+                                    error = null
+                                },
+                                onFailure = { error = it.message ?: saveFailed },
+                            )
+                        }
+                    },
+                    enabled = !busy && clientId.isNotBlank() && clientSecret.isNotBlank(),
+                ) {
+                    Text(stringResource(R.string.edge_auth_save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { editing = false }) {
+                    Text(stringResource(R.string.edge_auth_cancel))
+                }
+            },
         )
     }
 }

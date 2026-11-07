@@ -20,11 +20,15 @@ import com.hermesandroid.relay.network.upstream.ServerCapabilities
 import com.hermesandroid.relay.network.upstream.resolveStreamingEndpointPreference
 import com.hermesandroid.relay.network.upstream.trustedDashboardBearerAuthOrNull
 import com.hermesandroid.relay.network.shutdownOffMainThread
+import com.hermesandroid.relay.network.shared.EdgeAuthCredential
+import com.hermesandroid.relay.network.shared.EdgeAuthInterceptor
+import com.hermesandroid.relay.network.shared.sameEdgeAuthScope
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 internal fun reconcileGatewayAvailability(
     current: GatewayAvailability,
@@ -123,6 +127,13 @@ class UpstreamTransportController(
                 tokenStoreKey = tokenStoreKey,
             )
         },
+    /**
+     * Edge-gate credential (Cloudflare Access service token) for a connection,
+     * or null when none is configured. Read lazily per client build so saving a
+     * credential takes effect on the next reconnect without restarting the app.
+     */
+    private val edgeAuthProvider: (connectionId: String, url: String) -> EdgeAuthCredential? =
+        { _, _ -> null },
 ) {
 
     // --- Per-connection dashboard cookie stores ----------------------------
@@ -195,11 +206,63 @@ class UpstreamTransportController(
         connectionId: String?,
         url: String,
         base: okhttp3.OkHttpClient,
-    ): okhttp3.OkHttpClient = com.hermesandroid.relay.network.upstream.dashboardClientWithHttpConsent(
-        pinnedClientProvider(url, base) ?: base,
-        url,
-        connectionId?.let(dashboardHttpConsentOriginsProvider).orEmpty(),
-    )
+    ): okhttp3.OkHttpClient {
+        val consented = com.hermesandroid.relay.network.upstream.dashboardClientWithHttpConsent(
+            pinnedClientProvider(url, base) ?: base,
+            url,
+            connectionId?.let(dashboardHttpConsentOriginsProvider).orEmpty(),
+        )
+        // An edge gate (Cloudflare Access) answers every request with its login
+        // page until the service-token headers are present, including the WS
+        // upgrade this client is reused for. Scope the credential to this exact
+        // origin so a fallback route on another host never receives it. The
+        // credential is resolved per request, not welded in here: a client built
+        // before the token was saved (very common — the probe happens first)
+        // would otherwise never carry it.
+        val owner = connectionId ?: return consented
+        return consented.newBuilder()
+            .addInterceptor(
+                EdgeAuthInterceptor { target -> edgeAuthProvider(owner, target.toString()) },
+            )
+            .build()
+    }
+
+    /**
+     * Drop every cached client belonging to [connectionId] after its edge
+     * credential changed. Live sockets and warm TLS connections were built
+     * without (or with an old) credential; rebuilding them makes the next
+     * request and the next `/api/ws` upgrade carry the new headers.
+     */
+    @Synchronized
+    fun invalidateEdgeAuthTransports(connectionId: String) {
+        dashboardRestHttpClients.keys
+            .filter { it.first == connectionId }
+            .forEach { key ->
+                dashboardRestHttpClients.remove(key)?.let(::disposeDashboardHttpClient)
+            }
+        dashboardHttpClientCache
+            ?.takeIf { it.first == connectionId }
+            ?.third
+            ?.let(::disposeDashboardHttpClient)
+        if (dashboardHttpClientCache?.first == connectionId) {
+            dashboardHttpClientCache = null
+        }
+        dashboardSessionClientCache
+            ?.takeIf { it.first == connectionId }
+            ?.third
+            ?.shutdown()
+        if (dashboardSessionClientCache?.first == connectionId) {
+            dashboardSessionClientCache = null
+        }
+        gatewayClientCache
+            ?.takeIf { it.first == connectionId }
+            ?.third
+            ?.shutdown()
+        if (gatewayClientCache?.first == connectionId) {
+            gatewayClientCache = null
+        }
+        disposeConnectionRouteClients(connectionId)
+    }
 
     private fun bearerAuthForTrustedDashboard(
         connectionId: String,

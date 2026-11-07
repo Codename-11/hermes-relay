@@ -273,6 +273,22 @@ Pair with `hermes pair --mode auto --dashboard-url https://<your-trycloudflare-u
 path is accepted only for legacy compatibility and is labeled that way in the
 Dashboard.
 
+### Behind Cloudflare Access
+
+A tunnel is often paired with Cloudflare Access in front of it. Access answers
+every unauthenticated request with a redirect to its own login page, including
+the WebSocket upgrade, which a native client cannot complete. Add a service token
+to that Access application, then enter its client ID and client secret in
+**Settings → Connections → [connection] → Access → Edge authentication**. The
+app stores the pair encrypted on the device and sends it on the probe, dashboard
+REST, media and gateway socket requests for that connection's dashboard origin
+only.
+
+The credential authenticates the device to the edge, not the person, and the
+Dashboard's own sign-in still applies behind it. Nothing is sent on routes to
+other origins, so a LAN fallback stays unauthenticated. A VPN or overlay route
+does not meet the gate at all and needs no service token.
+
 ### Self-hosted WireGuard
 
 High-level: stand up WireGuard on the relay host, add your phone as a
