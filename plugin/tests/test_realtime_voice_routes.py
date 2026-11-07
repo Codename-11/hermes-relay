@@ -350,7 +350,7 @@ class RealtimeVoiceRoutesTests(AioHTTPTestCase):
 
 
 class RealtimeVoiceAuthStoreTests(unittest.TestCase):
-    def test_reads_hermes_xai_oauth_credential_pool(self) -> None:
+    def test_does_not_read_hermes_xai_oauth_credential_pool(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             auth_path = os.path.join(tmpdir, "auth.json")
             with open(auth_path, "w", encoding="utf-8") as fh:
@@ -381,11 +381,7 @@ class RealtimeVoiceAuthStoreTests(unittest.TestCase):
                 RelayConfig(realtime_voice_xai_oauth_path=auth_path)
             )
 
-        self.assertIsNotNone(token)
-        assert token is not None
-        self.assertEqual(token.access_token, "pool-token")
-        self.assertEqual(token.base_url, "https://api.x.ai/v1")
-        self.assertIn("Hermes auth credential_pool.xai-oauth", token.source)
+        self.assertIsNone(token)
 
 
 class RealtimeVoiceConfigTests(unittest.TestCase):

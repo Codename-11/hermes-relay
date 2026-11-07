@@ -209,7 +209,7 @@ class RealtimeAgentBrokerHelperTests(unittest.TestCase):
 
             self.assertIsNone(realtime_voice._read_relay_xai_oauth_token(config))
 
-    def test_relay_xai_oauth_accepts_fresh_hermes_provider_token(self) -> None:
+    def test_relay_xai_oauth_does_not_read_fresh_hermes_provider_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             auth_path = os.path.join(tmpdir, "auth.json")
             with open(auth_path, "w", encoding="utf-8") as handle:
@@ -229,14 +229,12 @@ class RealtimeAgentBrokerHelperTests(unittest.TestCase):
                 )
             config = RelayConfig(realtime_voice_xai_oauth_path=auth_path)
 
-            token = realtime_voice._read_relay_xai_oauth_token(config)
+            with patch("pathlib.Path.read_text", side_effect=AssertionError("must not read auth store")):
+                token = realtime_voice._read_relay_xai_oauth_token(config)
 
-        self.assertIsNotNone(token)
-        assert token is not None
-        self.assertEqual(token.access_token, "fresh-token")
-        self.assertIn("Hermes auth providers.xai-oauth", token.source)
+        self.assertIsNone(token)
 
-    def test_relay_xai_oauth_falls_back_to_fresh_hermes_credential_pool_token(self) -> None:
+    def test_relay_xai_oauth_does_not_fall_back_to_hermes_credential_pool(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             relay_home = os.path.join(tmpdir, "relay")
             hermes_home = os.path.join(tmpdir, "hermes")
@@ -279,10 +277,7 @@ class RealtimeAgentBrokerHelperTests(unittest.TestCase):
             ):
                 token = realtime_voice._read_relay_xai_oauth_token(RelayConfig())
 
-        self.assertIsNotNone(token)
-        assert token is not None
-        self.assertEqual(token.access_token, "fresh-pool-token")
-        self.assertIn("Hermes auth credential_pool.xai-oauth", token.source)
+        self.assertIsNone(token)
 
     def test_provider_safe_answer_summarizes_raw_tool_json(self) -> None:
         payload = {

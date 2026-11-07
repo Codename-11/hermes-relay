@@ -1241,3 +1241,24 @@ speaking.
 
 OpenAI's tolerance at the 900s scale remains unprobed (2026-05-24 ran only
 10/20/30s).
+
+### Hermes xAI subscription sign-in
+
+On Hermes builds supporting `xai-oauth` in `provider_request_capabilities()`,
+`xai_realtime` can use the selected profile's existing Hermes xAI sign-in.
+Explicit provider credentials and the separate voice-lab/Relay OAuth store keep
+precedence. Otherwise Hermes mints a new ephemeral secret for each upstream
+connection through `credentialed_provider_request`; plugin code never receives
+the Hermes OAuth token or reads Hermes's `auth.json`. An explicit Relay OAuth
+path pointing to `auth.json` is ignored; use the Hermes sign-in instead.
+
+Server sockets use `Authorization: Bearer <ephemeral secret>` at
+`wss://api.x.ai/v1/realtime`. Custom realtime URLs are refused for Hermes-minted
+secrets. Older Hermes builds retain the existing explicit-credential paths;
+failed mint requests are reported without retry or credential fallback.
+
+Select **Realtime Agent** and **xAI Grok Realtime** in the app's voice settings.
+Sal is configurable without code changes: set `realtime_voice.voice: sal` in the
+Relay config file (`RELAY_REALTIME_VOICE_CONFIG`, default
+`~/.hermes-relay/config.yaml`), or use the selected profile's realtime voice
+settings. `RELAY_REALTIME_VOICE_VOICE` overrides the Relay config default.
