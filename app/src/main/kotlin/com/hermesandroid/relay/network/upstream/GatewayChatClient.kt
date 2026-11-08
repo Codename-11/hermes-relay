@@ -124,8 +124,11 @@ class GatewayChatClient(
     /** Random source for ordinary reconnect full-jitter. */
     private val reconnectJitterUnit: () -> Double = { kotlin.random.Random.nextDouble() },
 ) : GatewayProfileEditorClient {
-    /** Existing upstream rich-chat vocabulary; do not invent a Relay-only source. */
-    private val sessionSource = "webui"
+    /** Existing upstream rich-chat vocabulary; do not invent a Relay-only source.
+     *  ``tui``, not ``webui``: Hermes treats ``webui`` as a third-party WebUI running its own agent on the
+     *  same state.db, so Desktop may only READ those chats (gateway/session_history_mount.py). A legacy
+     *  ``tui`` row is adopted as a writable Desktop conversation the first time Desktop opens it. */
+    private val sessionSource = "tui"
     @Volatile
     private var profileDescribeSupported: Boolean? = null
     @Volatile
