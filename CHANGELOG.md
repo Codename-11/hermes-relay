@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- Chats created by the app now carry the `tui` session source instead of `webui`, so a host running Hermes Desktop can continue them. `webui` marks a third-party WebUI that runs its own agent on the same state database, which upstream mounts read-only: those chats open in Desktop but cannot be continued there, and pin/archive/rename fail with `404 not_found` (#806). Existing chats keep their old label; only chats created after this release are affected.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
