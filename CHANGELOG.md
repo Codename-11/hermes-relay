@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 ### Fixed
 
 - Android Thread live proactive assistant bubbles adopt the gateway history message id (stable Compose key, badges kept) when the same final reloads from the server, and drop orphan duplicates after a turn settles or an offline buffer flush.
+- Android focused CI keeps pure-JVM suites (including ChatHandler) on the hard core gate and runs Robolectric/NATIVE suites in a separate advisory step so a GHA hang cannot time out the product regressions.
 
 ## [Android 1.19.0] - 2026-10-20
 

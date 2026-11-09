@@ -154,11 +154,11 @@ jobs:
   test:
     name: Test (Android)
     runs-on: ubuntu-latest
-    # Job budget is slightly above the step timeout so a stuck Gradle run fails
-    # the step (conclusion=failure) instead of cancelling the whole job. Job
-    # cancel bypasses continue-on-error and poisons Required checks as
+    # Job budget sits above both step timeouts so a stuck Gradle run fails the
+    # step (conclusion=failure) instead of cancelling the whole job. Job cancel
+    # bypasses continue-on-error and poisons Required checks as
     # ANDROID_RESULT=cancelled even when tests are advisory on dev.
-    timeout-minutes: 25
+    timeout-minutes: 30
     # Advisory on dev, strict on main. Evaluates to false (= strict) for
     # pushes to main and PRs whose base branch is main; true (= advisory)
     # for everything else (dev pushes, dev-targeted PRs, feature branches).
@@ -183,16 +183,17 @@ jobs:
       # split: run the stable connection slice plus focused Chat/Voice state,
       # parser, layout, and accessibility regressions for the active release.
       #
-      # Two steps: (1) core JVM/chat logic — hard gate, no GraphicsMode.NATIVE;
-      # (2) NATIVE graphics / screenshot / Roborazzi — separate worker. GHA hangs
-      # after "Failed to create image decoder" when NATIVE suites share the core
-      # Gradle JVM; keeping them out of core lets the gate finish. Step timeouts
-      # stay under the job budget so stuck runners exit failure (continue-on-error
-      # applies) rather than job-level cancel that fails Required checks as
-      # ANDROID_RESULT=cancelled. On non-main, the UI slice is step-level advisory
+      # Two steps: (1) pure-JVM core — hard gate, no Robolectric/NATIVE; (2)
+      # Robolectric + GraphicsMode.NATIVE + Roborazzi — separate worker. GHA has
+      # hung for 8+ silent minutes inside Robolectric/notification/viewmodel
+      # suites (and after "Failed to create image decoder" on NATIVE) when they
+      # share the core Gradle JVM; keeping them out of core lets ChatHandler and
+      # other pure-JVM regressions finish. Step timeouts stay under the job
+      # budget so stuck runners exit failure (continue-on-error applies) rather
+      # than job-level cancel. On non-main, the UI slice is step-level advisory
       # so a GHA-only hang does not red android / Test when core already passed.
       - name: Run focused Android unit tests (core)
-        timeout-minutes: 12
+        timeout-minutes: 15
         run: |
           ./gradlew :app:testSideloadDebugUnitTest \
             --tests com.hermesandroid.relay.network.ArchitectureBoundaryTest \
@@ -210,32 +211,20 @@ jobs:
             --tests com.hermesandroid.relay.ui.components.GatewayRoutesAccessPresentationTest \
             --tests com.hermesandroid.relay.ui.screens.ConnectionDetailPresentationTest \
             --tests com.hermesandroid.relay.viewmodel.ConnectionSwitchTest \
-            --tests com.hermesandroid.relay.util.ServerAddressTest \
-            --tests com.hermesandroid.relay.util.IssueReportAndDiagnosticsTest \
             --tests com.hermesandroid.relay.data.AppLanguageTest \
             --tests com.hermesandroid.relay.viewmodel.ChatStreamRecoveryTest \
-            --tests com.hermesandroid.relay.viewmodel.ChatViewModelGatewayInboundTurnTest \
             --tests com.hermesandroid.relay.data.ChatUnreadStoreTest \
             --tests com.hermesandroid.relay.data.ChatTurnCheckpointStoreTest \
-            --tests com.hermesandroid.relay.notifications.ChatNotificationIntentTest \
-            --tests com.hermesandroid.relay.notifications.TurnCompleteNotifierTest \
-            --tests com.hermesandroid.relay.notifications.InteractionRequestNotifierTest \
-            --tests com.hermesandroid.relay.ui.ChatNotificationNavigationTest \
-            --tests com.hermesandroid.relay.viewmodel.ConnectionViewModelChatAlertsTest \
             --tests com.hermesandroid.relay.ui.components.ProfileShelfPolicyTest \
-            --tests com.hermesandroid.relay.viewmodel.VoiceInboundCompletionTest \
             --tests com.hermesandroid.relay.wake.WakeWordCoreTest \
             --tests com.hermesandroid.relay.wake.WakeWordRecognitionTest \
-            --tests com.hermesandroid.relay.wake.WakeWordServiceHandoffTest \
             --tests com.hermesandroid.relay.voice.VoiceOutputFallbackTest \
-            --tests com.hermesandroid.relay.audio.RealtimePcmPlayerWriteTest \
             --tests com.hermesandroid.relay.voice.StandardVoiceTurnPlaybackTest \
             --tests com.hermesandroid.relay.voice.VoiceFilePlaybackCompletionTest \
             --tests com.hermesandroid.relay.voice.AgentAudioCompletionDecisionTest \
             --tests com.hermesandroid.relay.voice.LegacyTtsTimingTest \
             --tests com.hermesandroid.relay.data.BargeInPreferencesTest \
             --tests com.hermesandroid.relay.data.VoicePreferencesRepositoryTest \
-            --tests com.hermesandroid.relay.viewmodel.ChatViewModelRealtimeTurnTest \
             --tests com.hermesandroid.relay.network.relay.RealtimeVoiceEventParsingTest \
             --tests com.hermesandroid.relay.voice.VoiceCommandInterpreterTest \
             --tests com.hermesandroid.relay.data.VoiceModePresetTest \
@@ -246,14 +235,26 @@ jobs:
             --tests com.hermesandroid.relay.ui.screens.ChatUnreadStateTest \
             --console=plain
 
-      # GraphicsMode.NATIVE + Roborazzi share a worker JVM; GHA has seen
-      # multi-minute hangs after "Failed to create image decoder" with no
-      # assertion failure. Keep every NATIVE suite here so core can green.
+      # Robolectric + GraphicsMode.NATIVE + Roborazzi. GHA has hung for multi-minute
+      # stretches with no assertion failure inside these suites; isolate so core
+      # can still green the job on dev PRs.
       - name: Run focused Android unit tests (UI / Robolectric)
-        timeout-minutes: 10
+        timeout-minutes: 12
         continue-on-error: ${{ github.ref != 'refs/heads/main' && github.base_ref != 'main' }}
         run: |
           ./gradlew :app:testSideloadDebugUnitTest \
+            --tests com.hermesandroid.relay.util.ServerAddressTest \
+            --tests com.hermesandroid.relay.util.IssueReportAndDiagnosticsTest \
+            --tests com.hermesandroid.relay.viewmodel.ChatViewModelGatewayInboundTurnTest \
+            --tests com.hermesandroid.relay.notifications.ChatNotificationIntentTest \
+            --tests com.hermesandroid.relay.notifications.TurnCompleteNotifierTest \
+            --tests com.hermesandroid.relay.notifications.InteractionRequestNotifierTest \
+            --tests com.hermesandroid.relay.ui.ChatNotificationNavigationTest \
+            --tests com.hermesandroid.relay.viewmodel.ConnectionViewModelChatAlertsTest \
+            --tests com.hermesandroid.relay.viewmodel.VoiceInboundCompletionTest \
+            --tests com.hermesandroid.relay.wake.WakeWordServiceHandoffTest \
+            --tests com.hermesandroid.relay.audio.RealtimePcmPlayerWriteTest \
+            --tests com.hermesandroid.relay.viewmodel.ChatViewModelRealtimeTurnTest \
             --tests com.hermesandroid.relay.ui.components.EndpointsCardCompactLayoutTest \
             --tests com.hermesandroid.relay.notifications.ReplyNotificationIdentityTest \
             --tests com.hermesandroid.relay.ui.ChatNotificationNavigationUiTest \
