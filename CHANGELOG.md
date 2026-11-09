@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android screenshot errors identify expired screen-capture consent and provide actionable renewal instructions without exposing private relay errors.
+
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
