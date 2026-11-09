@@ -111,6 +111,14 @@ fun MessageBubble(
     modifier: Modifier = Modifier,
     maxBubbleWidth: Dp = 300.dp,
     showThinking: Boolean = true,
+    /**
+     * Hide only the message-level thinking block. Set false when the chat
+     * renders a live turn's reasoning itself, split into per-step blocks, so
+     * the same text is not drawn twice.
+     */
+    showThinkingBlock: Boolean = true,
+    /** Seed reasoning disclosures closed; see [ThinkingBlock.collapsedByDefault]. */
+    collapseReasoningByDefault: Boolean = false,
     showAgentIdentity: Boolean = true,
     showTimestamps: Boolean = true,
     showWorkingStatus: Boolean = true,
@@ -388,12 +396,14 @@ fun MessageBubble(
         }
 
         // Thinking block (above the bubble, only for assistant messages)
-        if (!isUser && showThinking && message.thinkingContent.isNotBlank()) {
+        if (!isUser && showThinking && showThinkingBlock && message.thinkingContent.isNotBlank()) {
             ThinkingBlock(
                 thinkingContent = message.thinkingContent,
                 isStreaming = message.isThinkingStreaming,
                 timestamp = message.timestamp,
                 petObstacleKey = "chat-thinking:${message.uiKey}",
+                stateKey = "thinking:${message.uiKey}",
+                collapsedByDefault = collapseReasoningByDefault,
                 modifier = Modifier
                     .widthIn(max = maxBubbleWidth)
                     .padding(bottom = 4.dp)

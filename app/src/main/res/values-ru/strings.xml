@@ -754,6 +754,8 @@
     <string name="chat_settings_back">Назад</string>
     <string name="chat_settings_smooth_auto_scroll">Плавная автопрокрутка</string>
     <string name="chat_settings_smooth_auto_scroll_desc">Следуйте за новыми сообщениями во время потоковой передачи. Прокрутите вверх, чтобы приостановить; коснитесь стрелки или прокрутите вниз, чтобы возобновить.</string>
+    <string name="chat_settings_collapse_reasoning">Сворачивать рассуждения по умолчанию</string>
+    <string name="chat_settings_collapse_reasoning_desc">Живые рассуждения остаются доступны, но начинаются свёрнутыми. Нажмите на блок, чтобы прочитать.</string>
     <string name="chat_settings_thinking_indicator">Индикатор размышлений</string>
     <string name="chat_settings_thinking_indicator_desc">Анимация, отображаемая в пузыре ответа, пока Гермес работает.</string>
     <string name="chat_settings_dots">Точки</string>
