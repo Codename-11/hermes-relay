@@ -71,4 +71,31 @@ class ProactiveMessageNotifierTest {
             manager.activeNotifications.map { it.id },
         )
     }
+
+    @Test
+    fun `cancelForChat drops every proactive banner for that conversation only`() {
+        ProactiveMessageNotifier.notify(context, "Hermes", "a", "message-1", "session-a")
+        ProactiveMessageNotifier.notify(context, "Hermes", "b", "message-2", "session-a")
+        ProactiveMessageNotifier.notify(context, "Hermes", "c", "message-3", "session-b")
+
+        ProactiveMessageNotifier.cancelForChat(context, "session-a")
+
+        assertEquals(
+            listOf(ProactiveMessageNotifier.notificationIdFor("message-3", "session-b")),
+            manager.activeNotifications.map { it.id }.sorted(),
+        )
+    }
+
+    @Test
+    fun `cancelForChat treats blank chat as the default phone conversation`() {
+        ProactiveMessageNotifier.notify(context, "Hermes", "home", "message-home", null)
+        ProactiveMessageNotifier.notify(context, "Hermes", "other", "message-other", "thread-1")
+
+        ProactiveMessageNotifier.cancelForChat(context, "phone")
+
+        assertEquals(
+            listOf(ProactiveMessageNotifier.notificationIdFor("message-other", "thread-1")),
+            manager.activeNotifications.map { it.id },
+        )
+    }
 }

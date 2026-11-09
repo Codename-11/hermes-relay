@@ -141,6 +141,7 @@ import com.hermesandroid.relay.notifications.cachedReplyAvatar
 import com.hermesandroid.relay.notifications.ChatNotificationTarget
 import com.hermesandroid.relay.notifications.TurnCompleteNotifier
 import com.hermesandroid.relay.notifications.InteractionRequestNotifier
+import com.hermesandroid.relay.notifications.ProactiveMessageNotifier
 import com.hermesandroid.relay.reliability.ReliabilityCenter
 import com.hermesandroid.relay.reliability.SessionResetEvidence
 import com.hermesandroid.relay.ui.components.ServerImageResult
@@ -4653,10 +4654,12 @@ class ChatViewModel : ViewModel() {
     /**
      * Render an inbound agent message inline in the open Thread when it belongs
      * there (the unified-Threads live path) — wired to the proactive handler's
-     * `injectIntoThread`. Returns true when shown in-thread, so the handler
-     * suppresses the notification + inbox entry. Matches the open Thread (or a
-     * pending "+ New Thread" draft) by chat_id, falling back to "accept" when
-     * either side has no parseable chat_id (the single home thread).
+     * `injectIntoThread`. Always inserts when the Thread matches; returns true
+     * only when the chat is on-screen in the foreground so the handler can
+     * suppress the OS notification (you're already looking at it). Matches the
+     * open Thread (or a pending "+ New Thread" draft) by chat_id, falling back
+     * to "accept" when either side has no parseable chat_id (the single home
+     * thread).
      */
     fun injectThreadMessage(msg: ProactiveMessage): Boolean {
         val handler = chatHandler ?: return false
@@ -4666,7 +4669,7 @@ class ChatViewModel : ViewModel() {
                 handler.addAgentThreadMessage(
                     msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
                 )
-                return true
+                return isConversationOnScreen()
             }
         }
         // A freshly-created thread whose real session we're still switching to:
@@ -4678,7 +4681,7 @@ class ChatViewModel : ViewModel() {
                 handler.addAgentThreadMessage(
                     msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
                 )
-                return true
+                return isConversationOnScreen()
             }
         }
         val activeId = handler.currentSessionId.value ?: return false
@@ -4694,8 +4697,12 @@ class ChatViewModel : ViewModel() {
         handler.addAgentThreadMessage(
             msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
         )
-        return true
+        return isConversationOnScreen()
     }
+
+    /** True when Chat is visible and the process is foreground — safe to skip OS notify. */
+    private fun isConversationOnScreen(): Boolean =
+        chatVisible && AppForegroundTracker.isForeground.value
 
     fun realtimeAgentContextMessages(maxMessages: Int = 14): List<RealtimeConversationContextMessage> {
         val handler = chatHandler ?: return emptyList()
@@ -6139,6 +6146,9 @@ class ChatViewModel : ViewModel() {
             .filter { (it.chatId ?: "phone") == normalizedChatId }
             .sortedBy { it.receivedAt }
         if (ordered.isEmpty()) return
+
+        // Opening the Thread means the user has seen those messages — clear tray.
+        appContext?.let { ProactiveMessageNotifier.cancelForChat(it, normalizedChatId) }
 
         exitProvisionalThread()
         recordPreResetEvidence(handler, "open_proactive_thread")
@@ -7705,11 +7715,20 @@ class ChatViewModel : ViewModel() {
         val context = appContext ?: return
         val binding = conversationBinding.value
         val sessionId = chatHandler?.currentSessionId?.value
+        pendingThread?.chatId?.let { ProactiveMessageNotifier.cancelForChat(context, it) }
         if (_isLoadingHistory.value || binding.sessionId != sessionId) return
         val target = ChatNotificationTarget.from(binding.contextKey, sessionId) ?: return
         pendingReplyNotifications.remove(target)
         TurnCompleteNotifier.cancel(context, target)
         InteractionRequestNotifier.cancelConversation(context, target)
+        // Threads / proactive banners: cancel by phone chat_id (session id,
+        // learned mapping, or default "phone" for unmarked home DMs).
+        ProactiveMessageNotifier.cancelForChat(context, sessionId)
+        threadChatIds[sessionId]?.let { ProactiveMessageNotifier.cancelForChat(context, it) }
+        val active = chatHandler?.sessions?.value?.firstOrNull { it.sessionId == sessionId }
+        if (active?.source == "phone" && threadChatIds[sessionId] == null) {
+            ProactiveMessageNotifier.cancelForChat(context, ProactiveMessageNotifier.DEFAULT_CHAT_ID)
+        }
         viewModelScope.launch(start = CoroutineStart.UNDISPATCHED) {
             runCatching { chatUnreadStore?.markRead(requireNotNull(binding.contextKey), target.sessionId) }
         }

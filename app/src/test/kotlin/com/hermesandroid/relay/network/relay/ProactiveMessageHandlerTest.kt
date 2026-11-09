@@ -94,6 +94,36 @@ class ProactiveMessageHandlerTest {
     }
 
     @Test
+    fun `default surfacing suppresses notification when matching Thread is open`() {
+        val persisted = mutableListOf<ProactiveMessage>()
+        val handler = ProactiveMessageHandler(context, toInbox = persisted::add).apply {
+            injectIntoThread = { true }
+        }
+
+        handler.onMessage(messageEnvelope(surfacing = null))
+
+        verify(exactly = 0) {
+            ProactiveMessageNotifier.notify(any(), any(), any(), any(), any())
+        }
+        assertEquals(null, persisted.single().notificationId)
+    }
+
+    @Test
+    fun `default surfacing notifies when matching Thread is not open`() {
+        val persisted = mutableListOf<ProactiveMessage>()
+        val handler = ProactiveMessageHandler(context, toInbox = persisted::add).apply {
+            injectIntoThread = { false }
+        }
+
+        handler.onMessage(messageEnvelope(surfacing = null))
+
+        verify(exactly = 1) {
+            ProactiveMessageNotifier.notify(context, "Hermes", "ready", "m-1", "phone")
+        }
+        assertEquals(42, persisted.single().notificationId)
+    }
+
+    @Test
     fun `queued delivery is persisted with provenance and summarized once`() {
         val persisted = mutableListOf<ProactiveMessage>()
         val summaries = mutableListOf<Int>()
@@ -115,7 +145,7 @@ class ProactiveMessageHandlerTest {
     }
 
     private fun messageEnvelope(
-        surfacing: String,
+        surfacing: String?,
         queuedDelivery: Boolean = false,
     ) = Envelope(
         channel = "proactive",
@@ -125,7 +155,7 @@ class ProactiveMessageHandlerTest {
             put("chat_id", JsonPrimitive("phone"))
             put("text", JsonPrimitive("ready"))
             put("title", JsonPrimitive("Hermes"))
-            put("surfacing", JsonPrimitive(surfacing))
+            if (surfacing != null) put("surfacing", JsonPrimitive(surfacing))
             if (queuedDelivery) put("queued_delivery", JsonPrimitive(true))
         },
     )
