@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+### Fixed
+- CI: raise Android unit-test job timeout to 30m so cold focused runs finish before cancel; include SessionDrawerPolicyTest in the focused lane.
+
 
 ### Added
 
