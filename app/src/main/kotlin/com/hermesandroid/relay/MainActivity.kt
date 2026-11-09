@@ -24,6 +24,9 @@ import com.hermesandroid.relay.bridge.UnattendedAccessManager
 import com.hermesandroid.relay.data.BuildFlavor
 import com.hermesandroid.relay.ui.RelayApp
 import com.hermesandroid.relay.util.NavRouteRequest
+import com.hermesandroid.relay.util.NewChatLaunch
+import com.hermesandroid.relay.util.NewChatLaunchRequests
+import com.hermesandroid.relay.util.parseNewChatLaunch
 import com.hermesandroid.relay.util.SharedContentRequest
 import com.hermesandroid.relay.util.extractSharedContent
 import com.hermesandroid.relay.viewmodel.ConnectionViewModel
@@ -129,6 +132,9 @@ class MainActivity : AppCompatActivity() {
         // into the SharedFlow here.
         consumeNavRouteIntent(intent)
         consumeSharedContentIntent(intent)
+        // A recreated activity (process death, Recents relaunch) is handed the
+        // original launch intent again; it must not open a second new chat.
+        if (savedInstanceState == null) consumeNewChatIntent(intent)
         val consumedAssistantActivation =
             com.hermesandroid.relay.assistant.AssistantSessionProtocol.consumeActivation(
                 this,
@@ -156,6 +162,7 @@ class MainActivity : AppCompatActivity() {
         setIntent(intent)
         consumeNavRouteIntent(intent)
         consumeSharedContentIntent(intent)
+        consumeNewChatIntent(intent)
         com.hermesandroid.relay.assistant.AssistantSessionProtocol.consumeActivation(this, intent)
         // === END PHASE3-safety-rails-followup ===
     }
@@ -167,6 +174,31 @@ class MainActivity : AppCompatActivity() {
             // A configuration recreation reuses this Intent. Once queued, the
             // notification must not redirect the user a second time.
             intent.removeExtra(EXTRA_NAV_ROUTE)
+        }
+    }
+
+    /**
+     * Explicit "new chat" launch (widget, shortcut, automation). The request is
+     * queued for RelayApp, which resolves the gateway/profile against the
+     * configured connections. Extras are read untyped so a wrong-typed value is
+     * rejected instead of being mistaken for "not specified".
+     */
+    @Suppress("DEPRECATION") // untyped Bundle.get: a wrong-typed extra must be detectable
+    private fun consumeNewChatIntent(intent: Intent?) {
+        intent ?: return
+        if (intent.action != NewChatLaunch.ACTION_NEW_CHAT) return
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val extras = intent.extras
+        val parsed = parseNewChatLaunch(
+            action = intent.action,
+            gatewayExtra = extras?.takeIf { it.containsKey(NewChatLaunch.EXTRA_GATEWAY_URL) }
+                ?.let { it.get(NewChatLaunch.EXTRA_GATEWAY_URL) ?: "" },
+            profileExtra = extras?.takeIf { it.containsKey(NewChatLaunch.EXTRA_PROFILE) }
+                ?.let { it.get(NewChatLaunch.EXTRA_PROFILE) ?: "" },
+        )
+        if (NewChatLaunchRequests.tryRequest(parsed)) {
+            // Configuration changes reuse this Intent; queue it once.
+            intent.action = null
         }
     }
 

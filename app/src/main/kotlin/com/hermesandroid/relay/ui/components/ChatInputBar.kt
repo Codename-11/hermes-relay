@@ -62,6 +62,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.res.stringResource
@@ -195,6 +196,8 @@ fun ChatInputBar(
     busyAction: BusyMessageAction? = null,
     correctionAvailable: Boolean = true,
     onBusyActionChange: (BusyMessageAction) -> Unit = {},
+    /** Lets the host focus the text field (and raise the keyboard) on an explicit launch. */
+    composerFocusRequester: FocusRequester? = null,
 ) {
     val canSubmit = enabled && submitEnabled && trailing in setOf(
         ChatInputTrailing.SEND,
@@ -379,6 +382,10 @@ fun ChatInputBar(
                             .fillMaxWidth()
                             .heightIn(min = 30.dp)
                             .padding(horizontal = 10.dp, vertical = 2.dp)
+                            .then(
+                                composerFocusRequester?.let { Modifier.focusRequester(it) }
+                                    ?: Modifier,
+                            )
                             // Keep directional keys inside the editor. Compose's
                             // BasicTextField owns normal caret/selection movement;
                             // cancelling focus traversal prevents a boundary arrow
