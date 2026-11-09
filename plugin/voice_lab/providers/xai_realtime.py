@@ -20,6 +20,7 @@ from ..transport import (
     merge_transport_headers,
     resolve_voice_transport_options,
 )
+from .xai_hermes import check_secret_destination, mint_client_secret
 from .base import (
     ProviderInfo,
     ProviderRunError,
@@ -104,7 +105,7 @@ class XAIRealtimeProvider(VoiceProvider):
         if not auth_token:
             raise ProviderUnavailable(
                 "xai_realtime requires XAI_API_KEY/VOICE_TOOLS_XAI_KEY, an "
-                "ephemeral xAI token, or the lab-owned xAI OAuth login. For "
+                "ephemeral xAI token, a Hermes xAI sign-in, or the lab-owned xAI OAuth login. For "
                 "SuperGrok/Premium+ subscription auth, run "
                 "`python -m plugin.voice_lab auth --provider grok` or "
                 "`./scripts/voice-lab.ps1 -Mode auth -Provider grok`."
@@ -115,6 +116,7 @@ class XAIRealtimeProvider(VoiceProvider):
         sample_rate = _int_option(options, "sample_rate", DEFAULT_SAMPLE_RATE)
         timeout = _float_option(options, "timeout", DEFAULT_TIMEOUT_SECONDS)
         url_base = (_option(options, "url") or auth_token.websocket_url or DEFAULT_URL).rstrip("/")
+        check_secret_destination(url_base, auth_token.source)
         url = f"{url_base}?model={model}"
 
         request.output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -435,7 +437,8 @@ def _resolve_auth_token(options: dict[str, Any]) -> AuthToken | None:
             source=oauth.source,
             websocket_url=_websocket_url_from_base(oauth.base_url),
         )
-    return None
+    secret = mint_client_secret()
+    return AuthToken(value=secret, source="hermes:xai-oauth") if secret else None
 
 
 def _websocket_url_from_base(value: Any) -> str | None:
