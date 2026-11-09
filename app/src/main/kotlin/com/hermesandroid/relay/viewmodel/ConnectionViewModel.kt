@@ -1046,6 +1046,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
 
         // Chat scroll behavior
         private val KEY_SMOOTH_AUTO_SCROLL = booleanPreferencesKey("smooth_auto_scroll")
+        private val KEY_COLLAPSE_REASONING = booleanPreferencesKey("collapse_reasoning_by_default")
         private val KEY_CLOSE_DRAWER_ON_SEND = booleanPreferencesKey("close_drawer_on_send")
         private val KEY_SESSIONS_SIDEBAR_PINNED =
             booleanPreferencesKey("sessions_sidebar_pinned")
@@ -3102,6 +3103,22 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             getApplication<Application>().relayDataStore.edit { prefs ->
                 prefs[KEY_SMOOTH_AUTO_SCROLL] = enabled
+            }
+        }
+    }
+
+    // Seed reasoning disclosures collapsed. The stream keeps arriving and the
+    // block can still be opened by tapping it; this only changes the initial
+    // state, so a long live turn does not push the reply off screen. Matches
+    // the desktop default. Local-only display pref.
+    val collapseReasoningByDefault: StateFlow<Boolean> = application.relayDataStore.data
+        .map { it[KEY_COLLAPSE_REASONING] ?: true }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setCollapseReasoningByDefault(enabled: Boolean) {
+        viewModelScope.launch {
+            getApplication<Application>().relayDataStore.edit { prefs ->
+                prefs[KEY_COLLAPSE_REASONING] = enabled
             }
         }
     }

@@ -177,6 +177,35 @@ fun ChatSettingsScreen(
 
                     HorizontalDivider()
 
+                    // Reasoning disclosure default. Live reasoning still
+                    // streams and can still be opened; this only decides
+                    // whether a block starts open.
+                    val collapseReasoningDefault by
+                        connectionViewModel.collapseReasoningByDefault.collectAsState()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.chat_settings_collapse_reasoning),
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            Text(
+                                text = stringResource(R.string.chat_settings_collapse_reasoning_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = collapseReasoningDefault,
+                            onCheckedChange = { connectionViewModel.setCollapseReasoningByDefault(it) }
+                        )
+                    }
+
+                    HorizontalDivider()
+
                     // Thinking indicator style — the in-bubble "working"
                     // animation shown while a reply streams. Live preview on the
                     // right reflects the current choice.
