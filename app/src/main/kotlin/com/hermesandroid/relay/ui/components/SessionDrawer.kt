@@ -82,6 +82,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -108,8 +109,11 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.hermesandroid.relay.R
 import com.hermesandroid.relay.data.AgentDisplay
@@ -323,6 +327,10 @@ fun SessionDrawerContent(
     onTogglePin: (() -> Unit)? = null,
     /** Whether the sidebar pin is currently active (drives the control's state). */
     pinned: Boolean = false,
+    /** Gateway message-body hits for the current query. Empty when the query is blank. */
+    contentSearchSessions: List<ChatSession> = emptyList(),
+    contentSearchPending: Boolean = false,
+    onSearchQueryChange: (String) -> Unit = {},
 ) {
     var renameDialogTarget by remember { mutableStateOf<Pair<ProfileSessionRow, Boolean>?>(null) }
     var newThreadDialog by remember { mutableStateOf(false) }
@@ -339,6 +347,9 @@ fun SessionDrawerContent(
     var viewOptions by remember { mutableStateOf(SessionDrawerViewOptions()) }
     val listState = rememberLazyListState()
     val trimmedQuery = query.trim()
+    LaunchedEffect(trimmedQuery) { onSearchQueryChange(trimmedQuery) }
+    val contentMatchIds = contentSearchSessions.mapTo(mutableSetOf()) { it.sessionId }
+    val contentHitOrder = contentSearchSessions.map { it.sessionId }.distinct()
     // Threads affordance shows when the capability is active OR there's already at least one
     // agent Thread (source=phone) in the list. If the filter is on Threads but they've
     // vanished, fall back to All so the drawer never gets stuck on an empty hidden filter.
@@ -354,7 +365,8 @@ fun SessionDrawerContent(
             source = "phone",
         )
     }
-    val scopedRows = (sessions + provisionalSessions).map { ProfileSessionRow(activeProfileName, it) }
+    val scopedRows = mergeContentSearchSessions(sessions + provisionalSessions, contentSearchSessions)
+        .map { ProfileSessionRow(activeProfileName, it) }
     val sourceRows = if (showAllProfiles) allProfileSessions else scopedRows
     val scopedActivityStates = scopedSessionActivityStates(
         rows = sourceRows,
@@ -375,39 +387,64 @@ fun SessionDrawerContent(
         .distinct()
         .filter { sourceBadge(it) != null }
         .sorted()
-    val categoryRows = sourceRows
-        .asSequence()
-        .filter { row ->
-            val session = row.session
-            when (activeFilter) {
-                SessionDrawerFilter.All -> !session.archived
-                SessionDrawerFilter.Threads ->
-                    isThreadSource(session.source) &&
-                        !session.archived
-                SessionDrawerFilter.Pinned ->
-                    session.pinned && !session.archived
-                SessionDrawerFilter.Archive -> session.archived
-            }
+    val categoryRows by remember(
+        sourceRows,
+        activeFilter,
+        hiddenSources,
+        trimmedQuery,
+        contentMatchIds,
+    ) {
+        derivedStateOf {
+            sourceRows
+                .asSequence()
+                .filter { row ->
+                    val session = row.session
+                    when (activeFilter) {
+                        SessionDrawerFilter.All -> !session.archived
+                        SessionDrawerFilter.Threads ->
+                            isThreadSource(session.source) &&
+                                !session.archived
+                        SessionDrawerFilter.Pinned ->
+                            session.pinned && !session.archived
+                        SessionDrawerFilter.Archive -> session.archived
+                    }
+                }
+                .filter { row ->
+                    // Source visibility (default hides cron+webhook) — only on the "All"
+                    // view; Threads/Pinned/Archive show their full set.
+                    if (activeFilter != SessionDrawerFilter.All) return@filter true
+                    val src = row.session.source?.trim()?.lowercase()
+                    src == null || src !in hiddenSources
+                }
+                .filter { row ->
+                    val session = row.session
+                    val needle = trimmedQuery
+                    needle.isBlank() ||
+                        session.sessionId in contentMatchIds ||
+                        row.profile.contains(needle, ignoreCase = true) ||
+                        session.sessionId.contains(needle, ignoreCase = true) ||
+                        session.title.orEmpty().contains(needle, ignoreCase = true) ||
+                        session.model.orEmpty().contains(needle, ignoreCase = true) ||
+                        sessionWorkLabels(session).any { it.contains(needle, ignoreCase = true) }
+                }
+                .toList()
         }
-        .filter { row ->
-            // Source visibility (default hides cron+webhook) — only on the "All"
-            // view; Threads/Pinned/Archive show their full set.
-            if (activeFilter != SessionDrawerFilter.All) return@filter true
-            val src = row.session.source?.trim()?.lowercase()
-            src == null || src !in hiddenSources
-        }
-        .filter { row ->
-            val session = row.session
-            val needle = trimmedQuery
-            needle.isBlank() ||
-                row.profile.contains(needle, ignoreCase = true) ||
-                session.sessionId.contains(needle, ignoreCase = true) ||
-                session.title.orEmpty().contains(needle, ignoreCase = true) ||
-                session.model.orEmpty().contains(needle, ignoreCase = true) ||
-                sessionWorkLabels(session).any { it.contains(needle, ignoreCase = true) }
-        }
-        .toList()
-    val visibleRows = filterAndSortSessionRows(categoryRows, viewOptions, scopedActivityStates)
+    }
+    val sortedRows = filterAndSortSessionRows(categoryRows, viewOptions, scopedActivityStates)
+    // Gateway ranked hits must stay in rank order unless the user picks "most recent".
+    var searchSort by rememberSaveable { mutableStateOf(SessionSearchSort.Relevant.name) }
+    val searchSortMode = runCatching { SessionSearchSort.valueOf(searchSort) }
+        .getOrDefault(SessionSearchSort.Relevant)
+    val visibleRows = if (trimmedQuery.isNotBlank() && contentHitOrder.isNotEmpty()) {
+        orderRowsForContentSearch(sortedRows, contentHitOrder, searchSortMode)
+    } else {
+        sortedRows
+    }
+    val searchPresentation = sessionDrawerSearchPresentation(
+        query = trimmedQuery,
+        contentSearchPending = contentSearchPending,
+        visibleMatchCount = visibleRows.size,
+    )
     val groupedRows = groupSessionRows(visibleRows, viewOptions.grouping, scopedActivityStates)
     LaunchedEffect(
         listState,
@@ -695,6 +732,34 @@ fun SessionDrawerContent(
                     },
                     placeholder = { Text(stringResource(R.string.drawer_search_placeholder)) },
                 )
+                if (trimmedQuery.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        FilterChip(
+                            selected = searchSortMode == SessionSearchSort.Relevant,
+                            onClick = { searchSort = SessionSearchSort.Relevant.name },
+                            label = {
+                                Text(
+                                    stringResource(R.string.drawer_search_sort_relevant),
+                                    style = relayMetadataStyle(),
+                                )
+                            },
+                        )
+                        FilterChip(
+                            selected = searchSortMode == SessionSearchSort.Recent,
+                            onClick = { searchSort = SessionSearchSort.Recent.name },
+                            label = {
+                                Text(
+                                    stringResource(R.string.drawer_search_sort_recent),
+                                    style = relayMetadataStyle(),
+                                )
+                            },
+                        )
+                    }
+                }
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -858,6 +923,25 @@ fun SessionDrawerContent(
                         Text(stringResource(R.string.drawer_refresh_sessions))
                     }
                 }
+            }
+        } else if (searchPresentation == SessionDrawerSearchPresentation.Searching) {
+            // Gateway content search in flight — spinner, never empty flash or full recent dump.
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp,
+                )
+                Text(
+                    text = stringResource(R.string.drawer_searching_sessions),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         } else if (visibleRows.isEmpty()) {
             Column(
@@ -1653,7 +1737,7 @@ private fun SessionItem(
         ) {
             Text(
                 text = session.title ?: untitledLabel,
-                fontWeight = if (unread) androidx.compose.ui.text.font.FontWeight.SemiBold else null,
+                fontWeight = if (unread) FontWeight.SemiBold else null,
                 style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1663,6 +1747,41 @@ private fun SessionItem(
                     MaterialTheme.colorScheme.onSurface
                 }
             )
+            val (snippetPlain, highlightRanges) = remember(session.searchSnippet) {
+                searchSnippetDisplay(session.searchSnippet)
+            }
+            if (isSemanticOnlyMatch(session.matchKind)) {
+                Text(
+                    text = stringResource(R.string.drawer_search_semantically_similar),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            } else if (snippetPlain.isNotBlank()) {
+                val highlightColor = MaterialTheme.colorScheme.primary
+                val muted = MaterialTheme.colorScheme.onSurfaceVariant
+                val annotated = remember(snippetPlain, highlightRanges, highlightColor, muted) {
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = muted)) { append(snippetPlain) }
+                        highlightRanges.forEach { range ->
+                            addStyle(
+                                SpanStyle(color = highlightColor, fontWeight = FontWeight.SemiBold),
+                                range.first,
+                                range.last + 1,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    text = annotated,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
             val workBadges = sessionWorkBadges(session).filterNot {
                 hideProjectBadge && it.kind == SessionWorkBadgeKind.PROJECT
             }

@@ -977,6 +977,8 @@ fun ChatScreen(
     val chatMode by connectionViewModel.chatMode.collectAsState()
     val error by chatViewModel.error.collectAsState()
     val sessions by chatViewModel.sessions.collectAsState()
+    val contentSearchHits by chatViewModel.contentSearchHits.collectAsState()
+    val contentSearchPending by chatViewModel.contentSearchPending.collectAsState()
     val backgroundSessionActivityStates by
         chatViewModel.backgroundSessionActivityStates.collectAsState()
     val serverAutoTitles by chatViewModel.serverAutoTitles.collectAsState()
@@ -2812,6 +2814,9 @@ fun ChatScreen(
                 // where the pin can take effect (wide layout).
                 onTogglePin = if (isWideLayout && sessionsHistoryAllowed) toggleSessionsSidebarPin else null,
                 pinned = isPinnedSidebar,
+                contentSearchSessions = contentSearchHits,
+                contentSearchPending = contentSearchPending,
+                onSearchQueryChange = chatViewModel::searchSessionContents,
             )
         }
         // A pinned sidebar behaves as an always-open drawer: entering the

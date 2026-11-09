@@ -222,6 +222,9 @@ data class SessionItem(
     val title: String? = null,
     /** Upstream's first-user-message label when no persisted title exists. */
     val preview: String? = null,
+    /** Content-search lane: fts | expanded | semantic | title | id. */
+    @SerialName("match_kind")
+    val matchKind: String? = null,
     val model: String? = null,
     val source: String? = null,
     /** Owning profile on the cross-profile `/api/profiles/sessions` endpoint. */

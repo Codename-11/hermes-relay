@@ -1187,6 +1187,9 @@
     <string name="drawer_new_chat">New Chat</string>
     <string name="drawer_search_placeholder">Search sessions or id...</string>
     <string name="drawer_search_sessions">Search sessions</string>
+    <string name="drawer_search_sort_relevant">Most relevant</string>
+    <string name="drawer_search_sort_recent">Most recent</string>
+    <string name="drawer_search_semantically_similar">Semantically similar</string>
     <string name="drawer_pin_sidebar">Pin sessions sidebar</string>
     <string name="drawer_unpin_sidebar">Unpin sessions sidebar</string>
     <string name="drawer_activity_working">Working</string>
@@ -4696,4 +4699,5 @@
     <string name="voice_settings_host_barge_in_desc">Controls interruption in Hermes host voice mode. It does not control this phone\'s microphone. Use Phone interruption on Listening.</string>
     <string name="voice_settings_speak_tool_updates">Speak tool updates</string>
     <string name="voice_settings_speak_tool_updates_desc">Built-in tool updates are English. Turn off to hear assistant replies without these updates. Final answer only also keeps them silent.</string>
+    <string name="drawer_searching_sessions">Searching…</string>
 </resources>

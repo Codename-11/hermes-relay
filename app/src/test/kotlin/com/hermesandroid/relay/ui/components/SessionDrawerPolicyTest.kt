@@ -238,6 +238,137 @@ class SessionDrawerPolicyTest {
         )
     }
 
+    @Test
+    fun `content search hits append sessions the loaded list does not have`() {
+        val loaded = listOf(ChatSession(sessionId = "loaded", title = "Loaded", model = null))
+        val hit = chatSessionFromSearchHit("body-hit", null, "matched inside a message", null, "cli")
+        val merged = mergeContentSearchSessions(loaded, listOf(hit))
+        assertEquals(listOf("loaded", "body-hit"), merged.map { it.sessionId })
+        // Body snippets stay on searchSnippet — they must not steal the title slot.
+        assertEquals(null, merged[1].title)
+        assertEquals("matched inside a message", merged[1].searchSnippet)
+        assertTrue(sessionMatchesContentSearch("body-hit", merged.map { it.sessionId }.toSet()))
+    }
+
+    @Test
+    fun `blank query is idle search presentation`() {
+        assertEquals(
+            SessionDrawerSearchPresentation.Idle,
+            sessionDrawerSearchPresentation(query = "  ", contentSearchPending = false, visibleMatchCount = 12),
+        )
+    }
+
+    @Test
+    fun `pending gateway search shows searching even when list is empty`() {
+        assertEquals(
+            SessionDrawerSearchPresentation.Searching,
+            sessionDrawerSearchPresentation(query = "logseq", contentSearchPending = true, visibleMatchCount = 0),
+        )
+    }
+
+    @Test
+    fun `settled search with no matches is empty not idle full list`() {
+        assertEquals(
+            SessionDrawerSearchPresentation.Empty,
+            sessionDrawerSearchPresentation(query = "logseq", contentSearchPending = false, visibleMatchCount = 0),
+        )
+    }
+
+    @Test
+    fun `settled search with matches is results`() {
+        assertEquals(
+            SessionDrawerSearchPresentation.Results,
+            sessionDrawerSearchPresentation(query = "logseq", contentSearchPending = false, visibleMatchCount = 4),
+        )
+    }
+
+    @Test
+    fun `content hit order beats updated sort when searching`() {
+        val recent = row("default", "recent", updatedAt = 3000L)
+        val olderHit = row("default", "hit-a", updatedAt = 1000L)
+        val midHit = row("default", "hit-b", updatedAt = 2000L)
+        val ordered = orderRowsForContentSearch(
+            rows = listOf(recent, olderHit, midHit),
+            contentHitOrder = listOf("hit-a", "hit-b"),
+        )
+        assertEquals(listOf("hit-a", "hit-b", "recent"), ordered.map { it.session.sessionId })
+    }
+
+    @Test
+    fun `dedupe search hits keep first gateway rank`() {
+        val hits = listOf(
+            ChatSession(sessionId = "a", title = "first", model = null),
+            ChatSession(sessionId = "b", title = "second", model = null),
+            ChatSession(sessionId = "a", title = "dup", model = null),
+        )
+        val deduped = dedupeContentSearchHits(hits)
+        assertEquals(listOf("a", "b"), deduped.map { it.sessionId })
+        assertEquals("first", deduped.first().title)
+    }
+
+    @Test
+    fun `recent sort reorders gateway hits by activity without dropping them`() {
+        val recent = row("default", "recent", updatedAt = 3000L)
+        val olderHit = row("default", "hit-a", updatedAt = 1000L)
+        val midHit = row("default", "hit-b", updatedAt = 2000L)
+        val ordered = orderRowsForContentSearch(
+            rows = listOf(recent, olderHit, midHit),
+            contentHitOrder = listOf("hit-a", "hit-b"),
+            sort = SessionSearchSort.Recent,
+        )
+        assertEquals(listOf("hit-b", "hit-a", "recent"), ordered.map { it.session.sessionId })
+    }
+
+    @Test
+    fun `snippet display strips highlight markers and reports ranges`() {
+        val (plain, ranges) = searchSnippetDisplay("try the >>>logseq<<< plugin")
+        assertEquals("try the logseq plugin", plain)
+        assertEquals(1, ranges.size)
+        assertEquals("logseq", plain.substring(ranges[0]))
+    }
+
+    @Test
+    fun `semantic only match kind is detected`() {
+        assertTrue(isSemanticOnlyMatch("semantic"))
+        assertFalse(isSemanticOnlyMatch("fts"))
+        assertFalse(isSemanticOnlyMatch(null))
+    }
+
+    @Test
+    fun `search hit keeps snippet off the title slot`() {
+        val hit = chatSessionFromSearchHit(
+            sessionId = "s1",
+            title = "Logseq notes",
+            preview = "try the >>>logseq<<< plugin",
+            model = null,
+            source = "cli",
+            matchKind = "fts",
+        )
+        assertEquals("Logseq notes", hit.title)
+        assertEquals("try the >>>logseq<<< plugin", hit.searchSnippet)
+        assertEquals("fts", hit.matchKind)
+    }
+
+    @Test
+    fun `merge overlays snippet onto loaded session row`() {
+        val loaded = listOf(ChatSession(sessionId = "s1", title = "Logseq notes", model = null))
+        val hits = listOf(
+            chatSessionFromSearchHit(
+                sessionId = "s1",
+                title = null,
+                preview = ">>>logseq<<< daily",
+                model = null,
+                source = null,
+                matchKind = "expanded",
+            ),
+        )
+        val merged = mergeContentSearchSessions(loaded, hits)
+        assertEquals(1, merged.size)
+        assertEquals("Logseq notes", merged[0].title)
+        assertEquals(">>>logseq<<< daily", merged[0].searchSnippet)
+        assertEquals("expanded", merged[0].matchKind)
+    }
+
     private fun row(
         profile: String,
         id: String,
