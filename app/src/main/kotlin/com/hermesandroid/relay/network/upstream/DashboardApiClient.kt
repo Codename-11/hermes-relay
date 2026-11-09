@@ -628,14 +628,35 @@ class DashboardApiClient(
      * dynamic/custom-provider catalogs on demand without probing every
      * provider during normal picker opens.
      */
-    suspend fun getModelOptions(refresh: Boolean = false): Result<JsonObject> =
-        getJsonObject(
-            if (refresh) {
-                "/api/model/options?refresh=1&include_unconfigured=1"
-            } else {
-                "/api/model/options?include_unconfigured=1"
-            },
-        )
+    suspend fun getModelOptions(
+        refresh: Boolean = false,
+        profile: String? = null,
+        includeUnconfigured: Boolean = true,
+    ): Result<JsonObject> {
+        val query = buildList {
+            if (refresh) add("refresh=1")
+            add("include_unconfigured=${if (includeUnconfigured) 1 else 0}")
+            profile?.trim()?.takeIf(String::isNotEmpty)?.let {
+                add("profile=${URLEncoder.encode(it, Charsets.UTF_8.name())}")
+            }
+        }.joinToString("&")
+        return getJsonObject("/api/model/options?$query")
+    }
+
+    /**
+     * The dashboard supports a real profile-scoped model inventory, unlike
+     * gateway model.options on connections not yet bound to a live session.
+     * Never guess provider identities from the other profiles' default models.
+     */
+    suspend fun getProfilePickerModelOptions(
+        profile: String?,
+        refresh: Boolean = false,
+    ): Result<GatewayModelOptions> =
+        getModelOptions(refresh = refresh, profile = profile, includeUnconfigured = false)
+            .mapCatching { payload ->
+                parseGatewayModelOptionsPayload(payload)
+                    ?: error("Dashboard returned an invalid model inventory")
+            }
 
     /**
      * Assign the main model in `~/.hermes/config.yaml` (new sessions only).
