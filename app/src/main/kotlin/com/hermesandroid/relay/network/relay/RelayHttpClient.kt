@@ -1100,6 +1100,89 @@ class RelayHttpClient(
     }
 
     /**
+     * Register (or clear) a BYO FCM device token on the relay.
+     *
+     * POST /push/token — empty [token] clears the registration for this device.
+     */
+    suspend fun registerPushToken(
+        token: String,
+        platform: String = "android",
+        projectId: String = "",
+        includePreview: Boolean = true,
+    ): Result<Unit> = withContext(Dispatchers.IO) {
+        val relayUrl = relayUrlProvider()?.trim().orEmpty()
+        if (relayUrl.isEmpty()) {
+            return@withContext Result.failure(IllegalStateException("Relay URL not configured"))
+        }
+        val sessionToken = sessionTokenProvider()
+        if (sessionToken.isNullOrBlank()) {
+            return@withContext Result.failure(
+                IllegalStateException("Relay not paired — session token missing"),
+            )
+        }
+        val httpBase = relayHttpBaseOrNull(relayUrl)
+            ?: return@withContext Result.failure(IOException("Invalid relay URL"))
+        val url = try {
+            "$httpBase/push/token".toHttpUrl()
+        } catch (e: IllegalArgumentException) {
+            return@withContext Result.failure(IOException("Invalid relay URL: ${e.message}"))
+        }
+        val bodyJson = buildString {
+            append('{')
+            append("\"token\":").append(jsonString(token))
+            append(",\"platform\":").append(jsonString(platform))
+            if (projectId.isNotBlank()) {
+                append(",\"project_id\":").append(jsonString(projectId))
+            }
+            if (token.isNotBlank()) {
+                append(",\"include_preview\":").append(if (includePreview) "true" else "false")
+            }
+            append('}')
+        }
+        val request = Request.Builder()
+            .url(url)
+            .post(bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType()))
+            .relaySessionCredential(sessionToken, isDashboardRelayIngressUrl(relayUrl))
+            .header("Accept", "application/json")
+            .build()
+        try {
+            callClient(relayUrl).newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val reason = when (response.code) {
+                        401, 403 -> "Unauthorized — re-pair with the relay"
+                        in 500..599 -> "Relay error (HTTP ${response.code})"
+                        else -> "HTTP ${response.code}: ${response.message.ifBlank { "request failed" }}"
+                    }
+                    return@withContext Result.failure(IOException(reason))
+                }
+                Result.success(Unit)
+            }
+        } catch (e: IOException) {
+            Log.w(TAG, "registerPushToken failed: ${e.message}")
+            Result.failure(e)
+        } catch (e: Exception) {
+            Log.w(TAG, "registerPushToken unexpected error: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    private fun jsonString(value: String): String =
+        buildString {
+            append('"')
+            value.forEach { c ->
+                when (c) {
+                    '\\' -> append("\\\\")
+                    '"' -> append("\\\"")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    else -> if (c.code < 0x20) append("\\u%04x".format(c.code)) else append(c)
+                }
+            }
+            append('"')
+        }
+
+    /**
      * Reduce this bearer session's TTL or grants. Omitted grants are preserved;
      * any lifetime or grant expansion requires fresh operator-approved pairing.
      * Durations are measured from server receipt, and zero means never-expire.

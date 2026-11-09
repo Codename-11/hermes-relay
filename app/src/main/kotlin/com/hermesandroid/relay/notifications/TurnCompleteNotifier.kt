@@ -15,6 +15,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.hermesandroid.relay.MainActivity
 import com.hermesandroid.relay.R
+import com.hermesandroid.relay.data.hideNotificationContentBlocking
 
 /** One reply slot per durable conversation, routed to its exact owner. */
 object TurnCompleteNotifier {
@@ -67,8 +68,17 @@ object TurnCompleteNotifier {
         val conversation = identity?.conversationTitle?.takeIf { it.isNotBlank() }
             ?: "…${target.sessionId.takeLast(12)}"
         val title = "$agent · ${conversation.take(100)}"
-        val collapsed = responseText.take(120)
-        val expanded = responseText.take(400)
+        val hideContent = context.hideNotificationContentBlocking()
+        val collapsed = if (hideContent) {
+            context.getString(R.string.notification_content_hidden)
+        } else {
+            responseText.take(120)
+        }
+        val expanded = if (hideContent) {
+            context.getString(R.string.notification_content_hidden)
+        } else {
+            responseText.take(400)
+        }
 
         val publicVersion = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -77,8 +87,8 @@ object TurnCompleteNotifier {
             .build()
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(title)
-            .setLargeIcon(avatar)
+            .setContentTitle(if (hideContent) "Hermes replied" else title)
+            .setLargeIcon(if (hideContent) null else avatar)
             .setContentText(collapsed)
             .setStyle(NotificationCompat.BigTextStyle().bigText(expanded))
             .setContentIntent(tapPending)
