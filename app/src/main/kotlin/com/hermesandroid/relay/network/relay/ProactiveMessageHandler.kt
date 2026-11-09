@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 /**
@@ -139,6 +140,7 @@ class ProactiveMessageHandler(
     private fun parse(payload: JsonObject): ProactiveMessage? {
         val text = payload["text"]?.jsonPrimitive?.contentOrNull
         if (text.isNullOrBlank()) return null
+        val metadata = payload["metadata"]?.jsonObject
         return ProactiveMessage(
             messageId = payload["message_id"]?.jsonPrimitive?.contentOrNull,
             chatId = payload["chat_id"]?.jsonPrimitive?.contentOrNull,
@@ -148,6 +150,7 @@ class ProactiveMessageHandler(
             sentAt = payload["sent_at"]?.jsonPrimitive?.contentOrNull?.toLongOrNull(),
             replyTo = payload["reply_to"]?.jsonPrimitive?.contentOrNull,
             arrivedWhileAway = payload["queued_delivery"]?.jsonPrimitive?.booleanOrNull == true,
+            interim = metadata.isInterimSend(),
         )
     }
 
@@ -197,4 +200,21 @@ data class ProactiveMessage(
     val arrivedWhileAway: Boolean = false,
     /** Exact Android notification slot when this delivery posted one. */
     val notificationId: Int? = null,
+    /**
+     * True when the Mac marked this send as mid-turn (status / progress /
+     * non-conversational). Busy chrome must stay armed until a non-interim
+     * final or an explicit settle.
+     */
+    val interim: Boolean = false,
 )
+
+/** Read gateway interim markers from proactive `metadata` (public + internal keys). */
+internal fun JsonObject?.isInterimSend(): Boolean {
+    if (this == null) return false
+    fun flag(key: String): Boolean =
+        this[key]?.jsonPrimitive?.booleanOrNull == true
+    return flag("interim") ||
+        flag("_interim_send") ||
+        flag("non_conversational") ||
+        this["status_key"]?.jsonPrimitive?.contentOrNull?.isNotBlank() == true
+}
