@@ -164,6 +164,84 @@ class ConnectionManagerRouteTest {
     }
 
     @Test
+    fun `onAvailable keeps higher-priority briefly then demotes when it stays dead`() {
+        // Leave-home shape: high-priority LAN dies, low-priority Tailscale is
+        // healthy, VPN onAvailable re-resolves. Hysteresis must not pin the
+        // dead LAN forever — after NETWORK_LOSS_GRACE_MS the manager demotes.
+        val lanServer = MockWebServer().apply {
+            dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse =
+                    if (request.path?.endsWith("/health") == true || request.path == "/api/status" ||
+                        request.path == "/api/health"
+                    ) {
+                        MockResponse().setResponseCode(200)
+                    } else {
+                        MockResponse().setResponseCode(404)
+                    }
+            }
+            start()
+        }
+        val tsServer = MockWebServer().apply {
+            dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse =
+                    if (request.path?.endsWith("/health") == true || request.path == "/api/status" ||
+                        request.path == "/api/health"
+                    ) {
+                        MockResponse().setResponseCode(200)
+                    } else {
+                        MockResponse().setResponseCode(404)
+                    }
+            }
+            start()
+        }
+        try {
+            val lan = EndpointCandidate(
+                role = "plugin_proxy",
+                priority = 0,
+                api = ApiEndpoint(host = lanServer.hostName, port = lanServer.port, tls = false),
+                dashboard = DashboardEndpoint("http://${lanServer.hostName}:${lanServer.port}"),
+                relay = RelayEndpoint(url = "ws://${lanServer.hostName}:${lanServer.port}"),
+            )
+            val tailscale = EndpointCandidate(
+                role = "tailscale",
+                priority = 1,
+                api = ApiEndpoint(host = tsServer.hostName, port = tsServer.port, tls = false),
+                dashboard = DashboardEndpoint("http://${tsServer.hostName}:${tsServer.port}"),
+                relay = RelayEndpoint(url = "ws://${tsServer.hostName}:${tsServer.port}"),
+            )
+            val before = registeredCallbacks()
+            val manager = buildManager { listOf(lan, tailscale) }
+
+            val first = runBlocking { manager.refreshActiveEndpoint() }
+            assertEquals("plugin_proxy", first?.role)
+
+            // LAN dies; Tailscale stays up. onAvailable simulates VPN/cell churn
+            // that cancels onLost grace in production.
+            lanServer.shutdown()
+            val callback = (registeredCallbacks() - before).single()
+            callback.onAvailable(ShadowNetwork.newInstance(202))
+
+            // Within the hysteresis window the dead higher-priority route is kept.
+            Thread.sleep(1_000)
+            assertEquals(
+                "hysteresis must still hold the higher-priority role briefly",
+                "plugin_proxy",
+                manager.activeEndpoint.value?.role,
+            )
+
+            val demoted = runBlocking {
+                withTimeout(20_000) {
+                    manager.activeEndpoint.first { it?.role == "tailscale" }
+                }
+            }
+            assertEquals("tailscale", demoted?.role)
+        } finally {
+            runCatching { lanServer.shutdown() }
+            runCatching { tsServer.shutdown() }
+        }
+    }
+
+    @Test
     fun `refreshActiveEndpoint returns stale cached winner unless clearProbeCache`() {
         val manager = buildManager { listOf(candidate()) }
 
