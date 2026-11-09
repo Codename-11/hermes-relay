@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.assistant
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.speech.RecognizerIntent
 import android.text.InputType
@@ -26,8 +27,17 @@ class AssistantScreenContextTest {
     @Test
     fun webSearchClassifier_acceptsOnlyRecognizerAction() {
         assertTrue(isAssistantWebSearchAction(RecognizerIntent.ACTION_WEB_SEARCH))
+        assertFalse(isAssistantWebSearchAction(Intent.ACTION_VOICE_COMMAND))
         assertFalse(isAssistantWebSearchAction("android.intent.action.ASSIST"))
         assertFalse(isAssistantWebSearchAction(null))
+    }
+
+    @Test
+    fun bluetoothVoiceCommandClassifier_rejectsWebSearchAndAssist() {
+        assertTrue(isAssistantVoiceCommandAction(Intent.ACTION_VOICE_COMMAND))
+        assertFalse(isAssistantVoiceCommandAction(RecognizerIntent.ACTION_WEB_SEARCH))
+        assertFalse(isAssistantVoiceCommandAction(Intent.ACTION_ASSIST))
+        assertFalse(isAssistantVoiceCommandAction(null))
     }
 
     @Test

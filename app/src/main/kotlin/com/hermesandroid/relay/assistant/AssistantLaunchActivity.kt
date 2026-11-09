@@ -11,10 +11,17 @@ import android.speech.RecognizerIntent
 import android.view.WindowManager
 import java.lang.ref.WeakReference
 
-/** Strict trampoline for firmware assistant buttons that emit ACTION_WEB_SEARCH. */
-class AssistantLaunchActivity : Activity() {
+/** Strict assistant trampoline. Protected WEB_SEARCH and public Bluetooth actions
+ *  have separate manifest activities so the public entry cannot request screen content.
+ */
+open class AssistantLaunchActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private val launchTimeout = Runnable { finish() }
+
+    protected open fun acceptsLaunchAction(action: String?): Boolean =
+        isAssistantWebSearchAction(action)
+
+    protected open val captureScreenContext: Boolean = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,7 +41,7 @@ class AssistantLaunchActivity : Activity() {
     }
 
     private fun handleIntent(launchIntent: Intent?) {
-        if (isAssistantWebSearchAction(launchIntent?.action) &&
+        if (acceptsLaunchAction(launchIntent?.action) &&
             AssistantRole.status(this) == AssistantRoleStatus.Selected
         ) {
             activeActivity = WeakReference(this)
@@ -42,7 +49,7 @@ class AssistantLaunchActivity : Activity() {
             handler.postDelayed(launchTimeout, LAUNCH_TIMEOUT_MS)
             HermesVoiceInteractionService.requestAssistantSession(
                 manualMic = false,
-                captureScreenContext = true,
+                captureScreenContext = captureScreenContext,
             )
         } else {
             finish()
@@ -74,6 +81,17 @@ class AssistantLaunchActivity : Activity() {
         }
     }
 }
+
+/** The public headset entry cannot accept WEB_SEARCH or request screen context. */
+class BluetoothVoiceCommandActivity : AssistantLaunchActivity() {
+    override fun acceptsLaunchAction(action: String?): Boolean =
+        isAssistantVoiceCommandAction(action)
+
+    override val captureScreenContext: Boolean = false
+}
+
+internal fun isAssistantVoiceCommandAction(action: String?): Boolean =
+    action == Intent.ACTION_VOICE_COMMAND
 
 internal fun isAssistantWebSearchAction(action: String?): Boolean =
     action == RecognizerIntent.ACTION_WEB_SEARCH
