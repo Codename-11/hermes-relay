@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Chat messages and the composer follow the direction of their text: Arabic and other right-to-left paragraphs, headings and list items read right-to-left and align right on any system language, while code stays left-to-right.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
