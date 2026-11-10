@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Cold open resumes a chat only if it was active in the last 2 hours.** Otherwise Android opens a blank draft; older threads remain in the session drawer. Explicit New chat, drawer picks, and deep links are unchanged.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added

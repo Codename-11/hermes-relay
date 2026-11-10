@@ -17,6 +17,7 @@ import com.hermesandroid.relay.data.ProfilePresentationPolicy
 import com.hermesandroid.relay.data.ProfilePresentationStore
 import com.hermesandroid.relay.data.ProfileSelectionStore
 import com.hermesandroid.relay.data.ProfileSessionStore
+import com.hermesandroid.relay.data.SessionResumePolicy
 import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardProfileScope
@@ -136,6 +137,8 @@ class ProfileController(
     private val setLastSessionId: (String?) -> Unit,
     /** Legacy default (untransported) session id for the server-default profile. */
     private val legacyDefaultSessionId: suspend () -> String?,
+    /** Legacy default session activity ms for the server-default profile. */
+    private val legacyDefaultSessionActivityMs: suspend () -> Long? = { null },
     /** Rebuilds the per-profile chat API client. */
     private val rebuildChatApiClient: suspend () -> Unit,
     /** Optional Relay client used only for importing an icon from the host. */
@@ -1578,6 +1581,7 @@ class ProfileController(
     fun refreshLastSessionForProfile(
         connectionId: String?,
         profileName: String?,
+        nowMs: Long = System.currentTimeMillis(),
     ) {
         val generation = sessionRestoreGeneration.incrementAndGet()
         setLastSessionId(null)
@@ -1594,19 +1598,31 @@ class ProfileController(
         val scopeKey = SessionScopeKey(connectionId, sessionProfileName, transport)
         if (scopeKey in freshDraftScopes) return
         scope.launch {
-            val profileScoped = profileSessionStore
-                .sessionIdFlow(connectionId, sessionProfileName, transport)
+            val pointer = profileSessionStore
+                .sessionPointerFlow(connectionId, sessionProfileName, transport)
                 .first()
             // Default profile shares the launch DB across both transports, so a
             // pre-transport (untransported) pointer is still resumable — surface
             // it as the fallback only for the server-default context.
-            val legacyDefault = if (
-                sessionProfileName == null
-            ) {
+            val legacyDefault = if (sessionProfileName == null) {
                 legacyDefaultSessionId()
             } else {
                 null
             }
+            val legacyActivity = if (sessionProfileName == null) {
+                legacyDefaultSessionActivityMs()
+            } else {
+                null
+            }
+            val candidateId = pointer?.sessionId ?: legacyDefault
+            val candidateActivity = pointer?.lastActivityAtMs ?: legacyActivity
+            // Apply the 2h activity TTL. Do not write the pointer back — restore
+            // must not refresh the activity clock.
+            val restored = SessionResumePolicy.sessionIdToRestore(
+                savedSessionId = candidateId,
+                lastActivityAtMs = candidateActivity,
+                nowMs = nowMs,
+            )
             if (
                 sessionRestoreGeneration.get() == generation &&
                 scopeKey !in freshDraftScopes &&
@@ -1614,7 +1630,7 @@ class ProfileController(
                 selectionIdentityProfileName() == sessionProfileName &&
                 activeSessionTransport() == transport
             ) {
-                setLastSessionId(profileScoped ?: legacyDefault)
+                setLastSessionId(restored)
             }
         }
     }

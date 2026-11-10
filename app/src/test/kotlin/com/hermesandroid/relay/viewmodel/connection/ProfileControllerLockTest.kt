@@ -4,6 +4,7 @@ import android.content.Context
 import com.hermesandroid.relay.auth.AuthManager
 import com.hermesandroid.relay.data.AgentDisplay
 import com.hermesandroid.relay.data.Profile
+import com.hermesandroid.relay.data.SessionResumePolicy
 import com.hermesandroid.relay.data.SessionTransport
 import com.hermesandroid.relay.network.upstream.DashboardApiClient
 import com.hermesandroid.relay.network.upstream.DashboardProfileScope
@@ -121,6 +122,7 @@ class ProfileControllerLockTest {
             automaticTransportProvider = { SessionTransport.GATEWAY },
             setLastSessionId = { lastSessionIds += it },
             legacyDefaultSessionId = { null },
+            legacyDefaultSessionActivityMs = { null },
             rebuildChatApiClient = { },
             gatewayClientProvider = { gatewayClient },
         )
@@ -128,7 +130,10 @@ class ProfileControllerLockTest {
         // Guarantee a clean lock slot — the underlying "profile_selections"
         // DataStore is name-scoped and could carry residual state across runs in
         // the same JVM.
-        runBlocking { controller.profileLockStore.clear(connectionId) }
+        runBlocking {
+            controller.profileLockStore.clear(connectionId)
+            controller.profileSessionStore.clearConnection(connectionId)
+        }
     }
 
     @Test
@@ -299,7 +304,10 @@ class ProfileControllerLockTest {
         scope.cancel()
         // Start each run from clean lock state — the DataStore file is shared by
         // the app-internal store name across tests in the same JVM.
-        runBlocking { controller.profileLockStore.clear(connectionId) }
+        runBlocking {
+            controller.profileLockStore.clear(connectionId)
+            controller.profileSessionStore.clearConnection(connectionId)
+        }
     }
 
     // --- await helpers ------------------------------------------------------
@@ -307,6 +315,21 @@ class ProfileControllerLockTest {
     private fun <T> awaitFlow(flow: StateFlow<T>, predicate: (T) -> Boolean): T =
         runBlocking {
             withTimeout(5_000) { flow.first { predicate(it) } }
+        }
+
+    private fun awaitLastSession(predicate: (String?) -> Boolean): String? =
+        runBlocking {
+            withTimeout(5_000) {
+                while (true) {
+                    val latest: String? = lastSessionIds.lastOrNull()
+                    if (lastSessionIds.isNotEmpty() && predicate(latest)) {
+                        return@withTimeout latest
+                    }
+                    kotlinx.coroutines.delay(10)
+                }
+                @Suppress("UNREACHABLE_CODE")
+                null
+            }
         }
 
     private fun awaitLocked(token: String?) =
@@ -322,6 +345,67 @@ class ProfileControllerLockTest {
             }
             true
         }
+    }
+
+    // --- last-session resume TTL --------------------------------------------
+
+    @Test
+    fun refreshLastSession_resumesWhenActivityWithinTwoHours() {
+        val now = 1_700_000_000_000L
+        controller.selectProfile(mizu)
+        awaitSelected("mizu")
+        runBlocking {
+            controller.profileSessionStore.setSessionId(
+                connectionId,
+                "mizu",
+                SessionTransport.SSE,
+                "mizu-session",
+                lastActivityAtMs = now - 30 * 60 * 1000L,
+            )
+        }
+        lastSessionIds.clear()
+
+        controller.refreshLastSessionForProfile(connectionId, "mizu", nowMs = now)
+
+        assertEquals("mizu-session", awaitLastSession { it == "mizu-session" })
+    }
+
+    @Test
+    fun refreshLastSession_opensBlankWhenActivityStale() {
+        val now = 1_700_000_000_000L
+        controller.selectProfile(mizu)
+        awaitSelected("mizu")
+        runBlocking {
+            controller.profileSessionStore.setSessionId(
+                connectionId,
+                "mizu",
+                SessionTransport.SSE,
+                "mizu-session",
+                lastActivityAtMs = now - SessionResumePolicy.RESUME_TTL_MS,
+            )
+        }
+        lastSessionIds.clear()
+
+        controller.refreshLastSessionForProfile(connectionId, "mizu", nowMs = now)
+
+        // Starts with null clear, then stays blank after the async restore.
+        assertNull(awaitLastSession { lastSessionIds.isNotEmpty() && it == null })
+        Thread.sleep(100)
+        assertNull(lastSessionIds.lastOrNull())
+    }
+
+    @Test
+    fun refreshLastSession_opensBlankWhenActivityUnknown() {
+        val now = 1_700_000_000_000L
+        controller.selectProfile(mizu)
+        awaitSelected("mizu")
+        // No pointer at all → blank draft.
+        lastSessionIds.clear()
+        controller.refreshLastSessionForProfile(connectionId, "mizu", nowMs = now)
+        assertNull(awaitLastSession { lastSessionIds.isNotEmpty() })
+        Thread.sleep(50)
+        assertTrue(lastSessionIds.isNotEmpty())
+        assertNull(lastSessionIds.last())
     }
 
     // --- lockProfile(profile) -----------------------------------------------
