@@ -11,6 +11,14 @@ Run `hermes pair` to generate a QR code for pairing clients.
 import logging
 
 from .tools.android_tool import _SCHEMAS, _HANDLERS, _check_requirements
+from .tools.android_phone_status import (
+    _SCHEMAS as _PHONE_STATUS_SCHEMAS,
+    _HANDLERS as _PHONE_STATUS_HANDLERS,
+)
+from .tools.android_notifications import (
+    _SCHEMAS as _NOTIFICATIONS_SCHEMAS,
+    _HANDLERS as _NOTIFICATIONS_HANDLERS,
+)
 from .tools.desktop_tool import (
     _SCHEMAS as _DESKTOP_SCHEMAS,
     _HANDLERS as _DESKTOP_HANDLERS,
@@ -26,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 def register(ctx):
     """Called by hermes-agent plugin loader. Registers tools and CLI commands."""
-    # Register 14 android_* tools
+    # Register the core Android bridge tools.
     for tool_name, schema in _SCHEMAS.items():
         ctx.register_tool(
             name=tool_name,
@@ -35,6 +43,22 @@ def register(ctx):
             handler=_HANDLERS[tool_name],
             check_fn=(lambda: True) if tool_name == "android_setup" else _check_requirements,
         )
+
+    # These tools read the Relay's loopback-only status/notification caches.
+    # Keep them discoverable even when the phone is disconnected; the tools
+    # themselves return a structured error or empty result in that case.
+    for schemas, handlers in (
+        (_PHONE_STATUS_SCHEMAS, _PHONE_STATUS_HANDLERS),
+        (_NOTIFICATIONS_SCHEMAS, _NOTIFICATIONS_HANDLERS),
+    ):
+        for tool_name, schema in schemas.items():
+            ctx.register_tool(
+                name=tool_name,
+                toolset="android",
+                schema=schema,
+                handler=handlers[tool_name],
+                check_fn=lambda: True,
+            )
 
     # Register 5 desktop_* tools (Phase B client-side tool routing).
     # Per-tool check_fn closure so the relay ping is scoped to THIS tool,
