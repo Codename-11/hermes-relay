@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Deleting, renaming, archiving, and pinning sessions work on current Hermes servers that require an edit revision, with a fallback for older servers.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
