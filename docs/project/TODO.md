@@ -4,6 +4,14 @@ Open items that don't fit a formal Phase plan but shouldn't be lost. Items move 
 
 For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisions.md`.
 
+## Windows Insider startup crash (#496)
+
+Run the [pinned startup comparison](../windows-startup-probe.md) on the affected
+Windows 26200.8875 revision. The hash-matching official desktop beta.8 still
+crashes there before help/version. Keep the release Bun pin unchanged until the
+runtime comparison supplies matching evidence; successful probes on a newer
+Windows revision do not certify a fix.
+
 ## Optional Dashboard transport support for CLI+UI
 
 The normal CLI+UI computer-connector flow uses Relay pairing and local per-host
