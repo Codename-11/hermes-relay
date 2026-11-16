@@ -983,7 +983,9 @@ class GatewayChatClientTest {
         assertEquals("jsonrpc:\"srq-second\"", r.interactions.last().requestId)
         client.clearSession()
         assertTrue(client.respondAsk(r.interactions.last(), "once").isFailure)
-        assertEquals(1, harness.serverResponses.size)
+        val response = harness.serverResponses.poll(5, TimeUnit.SECONDS)
+        assertEquals(JsonPrimitive("srq-first"), response?.get("id"))
+        assertTrue(harness.serverResponses.isEmpty())
     }
 
     @Test
@@ -4286,6 +4288,7 @@ class GatewayChatClientTest {
         )
 
         waitUntil { client.serverReasoningEffort.value == "max" }
+        waitUntil { client.serverReasoningIdentity.value?.effort == "max" }
         assertEquals(
             GatewayModelIdentity(model = "deepseek-v3", provider = "opencode"),
             client.serverModelIdentity.value,

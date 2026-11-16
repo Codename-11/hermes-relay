@@ -426,10 +426,13 @@ fun ChatInputBar(
                         ),
                         textStyle = MaterialTheme.typography.bodyLarge.copy(
                             color = MaterialTheme.colorScheme.onSurface,
+                            textDirection = androidx.compose.ui.text.style.TextDirection.ContentOrLtr,
+                            textAlign = if (isRtlText(value)) androidx.compose.ui.text.style.TextAlign.Right
+                                else androidx.compose.ui.text.style.TextAlign.Left,
                         ),
                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                         decorationBox = { inner ->
-                            Box(Modifier.fillMaxWidth()) {
+                            Box(Modifier.fillMaxWidth(), propagateMinConstraints = true) {
                                 if (value.isEmpty()) {
                                     Text(
                                         text = placeholder,

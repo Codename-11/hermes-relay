@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -228,10 +229,19 @@ class GitStateWriteViewModelTest {
         // Drain the two refreshDetail reads (status + branches) so the next
         // takeRequest() sees only the pull POST.
         repeat(2) { server.takeRequest() }
+        // A request being accepted does not mean its response has been applied.
+        // Wait for the refreshed status before starting the next mutation.
+        withTimeout(5_000) {
+            vm.detail.filterIsInstance<GitRepoDetailState.Ready>()
+                .first { it.status.counts.staged == 0 }
+        }
+        yield()
 
         enqueuePostSuccess("xyz")
         vm.pull("origin", "main")
-        withTimeout(5_000) { vm.mutation.filterIsInstance<GitMutationState.Success>().first() }
+        withTimeout(5_000) {
+            vm.mutation.filterIsInstance<GitMutationState.Success>().first { it.label == "pull" }
+        }
         assertTrue(server.takeRequest().path!!.contains("/git/pull"))
     }
 
