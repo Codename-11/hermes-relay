@@ -4631,6 +4631,7 @@ class ChatViewModel : ViewModel() {
         val handler = chatHandler ?: return false
         if (handler.currentSessionId.value == null) return false
         handler.addProactiveMessage(text)
+        updateCurrentSessionActivity(isStreaming = false, needsInput = false)
         return true
     }
 
@@ -4648,6 +4649,11 @@ class ChatViewModel : ViewModel() {
             MessageDeliveryStatus.DELIVERED
         }
         chatHandler?.updateDeliveryStatus(clientMsgId, resolved)
+        // Failed phone send never gets an inject — drop local working chrome.
+        if (resolved == MessageDeliveryStatus.FAILED) {
+            chatHandler?.settlePhoneTurnWorking()
+            updateCurrentSessionActivity(isStreaming = false, needsInput = false)
+        }
     }
 
     /**
@@ -4661,12 +4667,27 @@ class ChatViewModel : ViewModel() {
     fun injectThreadMessage(msg: ProactiveMessage): Boolean {
         val handler = chatHandler ?: return false
         val msgChatId = msg.chatId?.takeIf { it.isNotBlank() }
+        fun acceptInject(): Boolean {
+            val turnContinues =
+                handler.isPhoneTurnInFlight() &&
+                    (msg.interim || looksLikePhoneTurnStatus(msg.text))
+            handler.addAgentThreadMessage(
+                msg.text,
+                msg.messageId,
+                msg.title,
+                msg.arrivedWhileAway,
+                turnContinues = turnContinues,
+            )
+            // Keep session activity busy through interim status; clear on final.
+            updateCurrentSessionActivity(
+                isStreaming = turnContinues || handler.isStreaming.value,
+                needsInput = false,
+            )
+            return true
+        }
         pendingThread?.let { pending ->
             if (msgChatId == null || msgChatId == pending.chatId) {
-                handler.addAgentThreadMessage(
-                    msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
-                )
-                return true
+                return acceptInject()
             }
         }
         // A freshly-created thread whose real session we're still switching to:
@@ -4675,10 +4696,7 @@ class ChatViewModel : ViewModel() {
         // set, so the very first reply doesn't fall through to a notification.
         creatingThread?.let { creating ->
             if (msgChatId == null || msgChatId == creating.chatId) {
-                handler.addAgentThreadMessage(
-                    msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
-                )
-                return true
+                return acceptInject()
             }
         }
         val activeId = handler.currentSessionId.value ?: return false
@@ -4691,10 +4709,7 @@ class ChatViewModel : ViewModel() {
         val belongs = knownChatId == null || msgChatId == null || knownChatId == msgChatId
         if (!belongs) return false
         if (msgChatId != null) threadChatIds[activeId] = msgChatId
-        handler.addAgentThreadMessage(
-            msg.text, msg.messageId, msg.title, msg.arrivedWhileAway,
-        )
-        return true
+        return acceptInject()
     }
 
     fun realtimeAgentContextMessages(maxMessages: Int = 14): List<RealtimeConversationContextMessage> {
@@ -9177,6 +9192,10 @@ class ChatViewModel : ViewModel() {
                     .toSet()
                 creatingThread = CreatingThread(pending.chatId, pending.name, knownIds)
                 send(textTransport.message, pending.chatId, null, messageId)
+                // Proactive path has no gateway deltas — arm local busy chrome.
+                handler.activeAgentName = currentAgentDisplayName()
+                handler.beginPhoneTurnWorking(handler.activeAgentName)
+                updateCurrentSessionActivity(isStreaming = true, needsInput = false)
                 switchToCreatedThread()
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
@@ -9197,6 +9216,11 @@ class ChatViewModel : ViewModel() {
             if (send != null) {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.SENDING)
                 send(textTransport.message, threadChatIds[activeThread.sessionId], null, messageId)
+                // Proactive path has no gateway deltas — arm local busy chrome
+                // (header streaming label, Stop, thinking dots) until inject.
+                handler.activeAgentName = currentAgentDisplayName()
+                handler.beginPhoneTurnWorking(handler.activeAgentName)
+                updateCurrentSessionActivity(isStreaming = true, needsInput = false)
             } else {
                 handler.updateDeliveryStatus(messageId, MessageDeliveryStatus.FAILED)
             }
@@ -12463,3 +12487,46 @@ private fun String.limitPreview(maxChars: Int): String {
     if (length <= maxChars) return this
     return take(maxChars.coerceAtLeast(80)).trimEnd() + "..."
 }
+
+/**
+ * Heuristic for mid-turn phone status bubbles that arrived without
+ * `metadata.interim` (older hosts / plain send). Keeps busy chrome armed.
+ *
+ * Must stay **narrow**: bare substring matches like `working\b` / `tool\b`
+ * falsely classify final replies ("Not working — idle…", "tool card shipped")
+ * as interim and leave Stop / streaming stuck after the Mac turn ends.
+ * Prefer whole-line / lead-in status shapes ending with ellipsis.
+ */
+internal fun looksLikePhoneTurnStatus(text: String): Boolean {
+    val t = text.trim()
+    if (t.isEmpty() || t.length > 160) return false
+    // Finals are multi-line or multi-clause; status is one short bubble.
+    if (t.contains('\n')) return false
+    if (sentenceEndCount(t) >= 2) return false
+    return PHONE_TURN_STATUS_RE.containsMatchIn(t)
+}
+
+private fun sentenceEndCount(text: String): Int =
+    Regex("""[.!?]""").findAll(text).count()
+
+/**
+ * Whole-line / lead-in mid-turn shapes only. Do not match vocabulary inside
+ * ordinary replies ("not working", "compaction tool card", "progress later").
+ */
+private val PHONE_TURN_STATUS_RE = Regex(
+    pattern = listOf(
+        // Lead-in only — never match vocabulary mid-sentence ("Not working…").
+        """^(still\s+)?working\b""",
+        """^(compact(ing)?|compress(ing)?|summariz\w*)\b""",
+        """^progress\b""",
+        """^thinking\b""",
+        """^(recalling|recall|hindsight)\b""",
+        """^running\s+tool\b""",
+        """^tool\b""",
+        """^⏳""",
+        """^⟳""",
+        // Explicit mid-turn phrase anywhere only when whole bubble is that phrase + ellipsis.
+        """^still\s+working\b.*([…\u2026]|\.\.\.)\s*$""",
+    ).joinToString("|"),
+    option = RegexOption.IGNORE_CASE,
+)
