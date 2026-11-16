@@ -60,6 +60,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="*/*" />
             </intent-filter>
+            <!-- Explicit new-chat launch for widgets, shortcuts, and automation.
+                 Optional extras name the gateway URL and agent profile; the
+                 request only opens an empty chat and never sends. See
+                 user-docs/guide/new-chat-intent.md. -->
+            <intent-filter>
+                <action android:name="com.hermesandroid.relay.action.NEW_CHAT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
             <!-- The loopback native-PKCE result page uses this fixed, tokenless
                  link only to bring the installed flavor back to the foreground.
                  MainActivity intentionally does not interpret the URI as an auth
