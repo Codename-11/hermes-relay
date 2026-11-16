@@ -315,9 +315,12 @@ keeping route ownership explicit:
   owner; Stop/session-switch cancels the initial request, pending delay, and
   replacement together. A second drain or any post-event failure remains an
   explicit retry so the client cannot duplicate an admitted turn.
-- Android currently preserves its explicit `source: webui` session field for
-  wire and history compatibility only. Current official Desktop does not treat
-  `webui` as a rich-chat prompt hint; upstream removed that unused path at the
-  verified `b20cc5f` snapshot. Hermes has no stable `android` or mobile platform
-  hint, so Android must not claim Desktop parity or invent one. The upstream
-  platform-hint follow-up is tracked in `docs/project/TODO.md`.
+- Android sends `source: tui` on session create and resume: an existing
+  local-history source, not a Relay-only invention. Upstream mounts a `webui`
+  row read-only (it names a third-party WebUI running its own agent on the same
+  `state.db`), so a Desktop host could open those chats but never continue them,
+  and sidebar mutations failed `404 not_found` (#806). A `tui` row with no route
+  is adopted as a writable Desktop conversation on first open, with
+  `created_source` keeping provenance. Hermes still has no stable `android` or
+  mobile platform hint, so Android must not claim Desktop parity or invent one;
+  the platform-hint follow-up stays tracked in `docs/project/TODO.md`.
