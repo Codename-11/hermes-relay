@@ -34,6 +34,8 @@ requires_env:
     url: "https://elevenlabs.io/app/settings/api-keys"
     secret: true
 provides_tools:
+  - android_phone_status
+  - android_notifications_recent
   - android_ping
   - android_read_screen
   - android_find_nodes

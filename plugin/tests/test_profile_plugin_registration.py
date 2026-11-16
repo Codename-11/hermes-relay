@@ -6,6 +6,8 @@ from typing import Any
 
 import plugin
 from plugin.tools.android_tool import _SCHEMAS as ANDROID_SCHEMAS
+from plugin.tools.android_phone_status import _SCHEMAS as PHONE_STATUS_SCHEMAS
+from plugin.tools.android_notifications import _SCHEMAS as NOTIFICATIONS_SCHEMAS
 from plugin.tools.desktop_tool import _SCHEMAS as DESKTOP_SCHEMAS
 from plugin.tools.relay_plugin_tool import _SCHEMAS as RELAY_SCHEMAS
 
@@ -65,8 +67,11 @@ def test_registration_catalog_is_complete_and_toolsets_are_tierable(monkeypatch)
 
     plugin.register(ctx)
 
-    expected = set(ANDROID_SCHEMAS) | set(DESKTOP_SCHEMAS) | set(RELAY_SCHEMAS)
+    expected = (set(ANDROID_SCHEMAS) | set(PHONE_STATUS_SCHEMAS) | set(NOTIFICATIONS_SCHEMAS) | set(DESKTOP_SCHEMAS) | set(RELAY_SCHEMAS))
     assert set(ctx.tools) == expected
+    for name in ("android_phone_status", "android_notifications_recent"):
+        assert ctx.tools[name]["check_fn"]() is True
+        assert ctx.tools[name]["toolset"] == "android"
     assert {item["toolset"] for item in ctx.tools.values()} == {
         "android",
         "desktop",
@@ -101,3 +106,16 @@ def test_disabling_secondary_profile_unloads_only_its_registrations(monkeypatch)
     assert set(secondary.tools) == set(root.tools)
     assert len(secondary.tools) == len(set(secondary.tools))
     assert set(secondary.prompt_sections) == set(root.prompt_sections)
+
+
+def test_manifest_matches_registered_tool_catalog() -> None:
+    """No tool is orphaned by a manifest/registry registration mismatch."""
+    from pathlib import Path
+    import yaml
+
+    ctx = _OwnedContext("default")
+    plugin.register(ctx)
+    manifest = yaml.safe_load((Path(__file__).parents[1] / "plugin.yaml").read_text())
+    declared = manifest["provides_tools"]
+    assert len(declared) == len(set(declared))
+    assert set(declared) == set(ctx.tools)
