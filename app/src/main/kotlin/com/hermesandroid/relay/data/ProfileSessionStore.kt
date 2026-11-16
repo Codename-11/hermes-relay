@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
@@ -50,6 +51,12 @@ enum class SessionTransport(val key: String) {
     }
 }
 
+/** Persisted last-session pointer for one connection/profile/transport scope. */
+data class StoredSessionPointer(
+    val sessionId: String,
+    val lastActivityAtMs: Long?,
+)
+
 /**
  * Per-connection, per-Hermes-profile, per-transport last active chat session.
  *
@@ -66,6 +73,10 @@ enum class SessionTransport(val key: String) {
  * changed in this release, so pre-existing (untransported) slots are not read —
  * a one-time drop of the "last session" pointer that also clears the exact stale
  * cross-transport ids that caused mid-conversation forks.
+ *
+ * **Activity timestamp.** Each slot also stores [StoredSessionPointer.lastActivityAtMs]
+ * so cold open can refuse to restore threads quieter than
+ * [SessionResumePolicy.RESUME_TTL_MS].
  */
 class ProfileSessionStore(
     private val dataStore: DataStore<Preferences>,
@@ -74,6 +85,7 @@ class ProfileSessionStore(
 
     companion object {
         private const val PREFIX = "profile_session__"
+        private const val ACTIVITY_PREFIX = "profile_session_activity__"
 
         private fun keyName(
             connectionId: String,
@@ -82,28 +94,56 @@ class ProfileSessionStore(
         ): String =
             "$PREFIX${connectionId}__${AgentDisplay.profileSessionKey(profileName)}__${transport.key}"
 
+        private fun activityKeyName(
+            connectionId: String,
+            profileName: String?,
+            transport: SessionTransport,
+        ): String =
+            "$ACTIVITY_PREFIX${connectionId}__${AgentDisplay.profileSessionKey(profileName)}__${transport.key}"
+
         private fun keyFor(
             connectionId: String,
             profileName: String?,
             transport: SessionTransport,
         ) = stringPreferencesKey(keyName(connectionId, profileName, transport))
 
-        private fun connectionPrefix(connectionId: String): String =
-            "$PREFIX${connectionId}__"
+        private fun activityKeyFor(
+            connectionId: String,
+            profileName: String?,
+            transport: SessionTransport,
+        ) = longPreferencesKey(activityKeyName(connectionId, profileName, transport))
+
+        private fun connectionPrefixes(connectionId: String): List<String> =
+            listOf(
+                "$PREFIX${connectionId}__",
+                "$ACTIVITY_PREFIX${connectionId}__",
+            )
     }
 
+    /**
+     * Persist or clear the last-session pointer.
+     *
+     * A non-null [sessionId] stamps [lastActivityAtMs], defaulting to now when
+     * the caller omits it (send / explicit selection paths). Restore paths must
+     * not call this — reading must not refresh the activity clock.
+     */
     suspend fun setSessionId(
         connectionId: String,
         profileName: String?,
         transport: SessionTransport,
         sessionId: String?,
+        lastActivityAtMs: Long? = null,
     ) {
         dataStore.edit { prefs ->
-            val key = keyFor(connectionId, profileName, transport)
+            val idKey = keyFor(connectionId, profileName, transport)
+            val activityKey = activityKeyFor(connectionId, profileName, transport)
             if (sessionId.isNullOrBlank()) {
-                prefs.remove(key)
+                prefs.remove(idKey)
+                prefs.remove(activityKey)
             } else {
-                prefs[key] = sessionId
+                prefs[idKey] = sessionId
+                prefs[activityKey] = lastActivityAtMs?.takeIf { it > 0L }
+                    ?: System.currentTimeMillis()
             }
         }
     }
@@ -117,11 +157,27 @@ class ProfileSessionStore(
         return dataStore.data.map { prefs -> prefs[key] }
     }
 
+    fun sessionPointerFlow(
+        connectionId: String,
+        profileName: String?,
+        transport: SessionTransport,
+    ): Flow<StoredSessionPointer?> {
+        val idKey = keyFor(connectionId, profileName, transport)
+        val activityKey = activityKeyFor(connectionId, profileName, transport)
+        return dataStore.data.map { prefs ->
+            val id = prefs[idKey]?.takeIf { it.isNotBlank() } ?: return@map null
+            StoredSessionPointer(
+                sessionId = id,
+                lastActivityAtMs = prefs[activityKey],
+            )
+        }
+    }
+
     suspend fun clearConnection(connectionId: String) {
-        val prefix = connectionPrefix(connectionId)
+        val prefixes = connectionPrefixes(connectionId)
         dataStore.edit { prefs ->
             prefs.asMap().keys
-                .filter { it.name.startsWith(prefix) }
+                .filter { key -> prefixes.any { key.name.startsWith(it) } }
                 .forEach { prefs.remove(it) }
         }
     }
