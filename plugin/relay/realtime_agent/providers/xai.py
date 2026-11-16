@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
@@ -17,6 +18,7 @@ from ....voice_lab.auth import (
     load_voice_lab_env_file,
     read_xai_oauth_token,
 )
+from ....voice_lab.providers.xai_hermes import check_secret_destination, mint_client_secret
 from ....voice_lab.providers.base import ProviderRunError, ProviderUnavailable
 from ....voice_lab.transport import (
     merge_transport_headers,
@@ -98,7 +100,7 @@ class XAIRealtimeAgentProvider:
         self,
         config: RealtimeAgentSessionConfig,
     ) -> "XAIRealtimeAgentConnection":
-        auth = _resolve_auth_token(config.provider_options)
+        auth = await asyncio.to_thread(_resolve_auth_token, config.provider_options, config.profile)
         if auth is None:
             raise ProviderUnavailable(
                 "xAI Realtime auth is not configured. Configure relay-side "
@@ -116,6 +118,7 @@ class XAIRealtimeAgentProvider:
             or os.getenv("XAI_REALTIME_URL")
             or DEFAULT_URL
         ).rstrip("/")
+        check_secret_destination(base_url, auth.source)
         model = urllib.parse.quote(config.model or DEFAULT_MODEL, safe="")
         url = f"{base_url}?model={model}"
         transport = resolve_voice_transport_options(
@@ -574,7 +577,7 @@ def _default_instructions(config: RealtimeAgentSessionConfig) -> str:
     )
 
 
-def _resolve_auth_token(options: dict[str, Any]) -> AuthToken | None:
+def _resolve_auth_token(options: dict[str, Any], profile: str | None = None) -> AuthToken | None:
     for name in ("api_key", "xai_api_key", "client_secret", "oauth_access_token"):
         explicit = _option(options, name)
         if explicit:
@@ -604,7 +607,8 @@ def _resolve_auth_token(options: dict[str, Any]) -> AuthToken | None:
             source=oauth.source,
             websocket_url=_websocket_url_from_base(oauth.base_url),
         )
-    return None
+    secret = mint_client_secret(profile)
+    return AuthToken(value=secret, source="hermes:xai-oauth") if secret else None
 
 
 def _websocket_url_from_base(value: Any) -> str | None:

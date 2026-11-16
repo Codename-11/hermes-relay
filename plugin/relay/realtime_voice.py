@@ -683,17 +683,9 @@ def _xai_auth_path(config: RelayConfig) -> Path:
 
 
 def _xai_auth_paths(config: RelayConfig) -> list[Path]:
-    paths = [_xai_auth_path(config)]
-    hermes_home = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes")))
-    paths.append(hermes_home / "auth.json")
-    unique: list[Path] = []
-    seen: set[str] = set()
-    for path in paths:
-        key = str(path.expanduser())
-        if key not in seen:
-            seen.add(key)
-            unique.append(path.expanduser())
-    return unique
+    # Hermes owns its auth store. Only the separate relay-owned store is readable here.
+    path = _xai_auth_path(config).expanduser()
+    return [] if path.resolve().name == "auth.json" else [path]
 
 
 def _read_relay_xai_oauth_token(config: RelayConfig) -> _RelayXAIToken | None:
@@ -737,46 +729,11 @@ def _xai_option_auth(config: RelayConfig) -> XAIOptionAuth | None:
 
 
 def _xai_oauth_token_candidates(store: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    """Return supported xAI OAuth token payload shapes without exposing values."""
-    candidates: list[tuple[str, dict[str, Any]]] = []
+    """Only the separate relay-owned OAuth store shapes, never Hermes provider/pool rows."""
     tokens = store.get("tokens")
     if isinstance(tokens, dict):
-        candidates.append(("relay xai oauth store", tokens))
-
-    credential_pool = store.get("credential_pool")
-    if isinstance(credential_pool, dict):
-        pool_items = credential_pool.get("xai-oauth")
-        if isinstance(pool_items, list):
-            for item in pool_items:
-                if isinstance(item, dict):
-                    candidates.append(("Hermes auth credential_pool.xai-oauth", item))
-
-    providers = store.get("providers")
-    if isinstance(providers, dict):
-        provider = providers.get("xai-oauth")
-        if isinstance(provider, dict):
-            provider_tokens = provider.get("tokens")
-            if isinstance(provider_tokens, dict):
-                candidates.append(
-                    (
-                        "Hermes auth providers.xai-oauth",
-                        _xai_oauth_tokens_with_context(provider_tokens, provider),
-                    )
-                )
-
-    candidates.append(("relay xai oauth root", store))
-    return candidates
-
-
-def _xai_oauth_tokens_with_context(
-    tokens: dict[str, Any],
-    context: dict[str, Any],
-) -> dict[str, Any]:
-    payload = dict(tokens)
-    for key in ("last_refresh", "issued_at", "created_at", "refreshed_at", "base_url"):
-        if key not in payload and context.get(key) is not None:
-            payload[key] = context[key]
-    return payload
+        return [("relay xai oauth store", tokens)]
+    return [("relay xai oauth root", store)]
 
 
 def _xai_oauth_expires_at_ms(tokens: dict[str, Any]) -> int | None:
