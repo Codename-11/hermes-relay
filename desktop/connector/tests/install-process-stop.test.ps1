@@ -10,7 +10,7 @@ if (-not $InstallerSource) {
 $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseInput($InstallerSource,[ref]$tokens,[ref]$parseErrors)
 if ($parseErrors.Count) { throw 'Installer parsing failed' }
-foreach ($name in @('Get-ConnectorBinaryProcesses','Stop-RemainingConnectorProcesses')) {
+foreach ($name in @('Get-ConnectorBinaryProcesses','Stop-RemainingConnectorProcesses','Replace-ConnectorBinary','Get-ConnectorTaskManagementSddl')) {
     $node=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
     if (-not $node) { throw ('Missing installer function '+$name) }
     . ([ScriptBlock]::Create($node.Extent.Text))
@@ -96,10 +96,13 @@ $temporary=Join-Path ([IO.Path]::GetTempPath()) ('connector-replace-test-'+[Guid
 try {
     [IO.Directory]::CreateDirectory($temporary)|Out-Null
     $target=Join-Path $temporary 'before.txt'
-    $candidate=Join-Path $temporary 'candidate.txt'
+    $candidate=$target+'.new'
     [IO.File]::WriteAllText($target,'before')
     [IO.File]::WriteAllText($candidate,'after')
-    [IO.File]::Replace($candidate,$target,[NullString]::Value)
+    $cli=$target;$hadCli=$true;$manifest=@{sha256=(Get-FileHash -LiteralPath $candidate -Algorithm SHA256).Hash}
+    Replace-ConnectorBinary
+    # Consumed-source confirmation is safe and idempotent for exact bytes.
+    Replace-ConnectorBinary
     Assert-Case ([IO.File]::ReadAllText($target) -ceq 'after') 'Existing-target replacement failed'
 } finally {
     # Windows scanners may briefly retain File.Replace's own ~RF temp file.
@@ -109,4 +112,12 @@ try {
         catch { if ((Get-Date) -ge $deadline) { throw }; Start-Sleep -Milliseconds 200 }
     }
 }
-@{passed=6;installer_parse_errors=0;scope='mocked process closure and temporary-file replacement'}|ConvertTo-Json -Compress
+$sid=New-Object Security.Principal.SecurityIdentifier('S-1-5-21-1-2-3-1001')
+$before='D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;S-1-5-21-1-2-3-1001)'
+$after=Get-ConnectorTaskManagementSddl $before $sid
+$descriptor=New-Object Security.AccessControl.RawSecurityDescriptor($after)
+$system=@($descriptor.DiscretionaryAcl|Where-Object {$_.SecurityIdentifier.Value -eq 'S-1-5-18'})
+$administrators=@($descriptor.DiscretionaryAcl|Where-Object {$_.SecurityIdentifier.Value -eq 'S-1-5-32-544'})
+Assert-Case ($system.Count -eq 1 -and $administrators.Count -eq 1) 'Task ACL must retain SYSTEM and Administrators'
+Assert-Case ((Get-ConnectorTaskManagementSddl $after $sid) -ceq $after) 'Task management grant must be idempotent'
+@{passed=8;installer_parse_errors=0;scope='mocked process closure, task ACL and temporary-file replacement'}|ConvertTo-Json -Compress

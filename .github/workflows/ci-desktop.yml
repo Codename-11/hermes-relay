@@ -80,6 +80,11 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Test connector installation safeguards (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./connector/tests/install-process-stop.test.ps1
+
       - name: --version
         run: node bin/hermes-relay.js --version
 

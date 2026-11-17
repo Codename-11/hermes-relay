@@ -19,7 +19,14 @@ confirmed upgrade. Windows permission and session restrictions still apply.
 The connector does not start recording or a voice conversation on installation.
 
 Installation uses `%USERPROFILE%\.hermes`, saves the CLI under `bin`, and creates
-one startup task for the current user. The task runs at sign-in and checks once
+one startup task for the current user. The new task runs with Limited rights
+and explicitly grants that exact user permission to pause, resume and update
+it, retaining the existing SYSTEM, Administrators and other task permissions.
+Even an elevated migration starts the new daemon through that Limited task so
+the normal user can stop it afterward.
+Older tasks created with administrator-only management permissions may require
+one elevated installation under the same Windows user to migrate. Their task
+permissions are not broadened. The task runs at sign-in and checks once
 per minute to restart a stopped process. The daemon also reconnects after network
 interruptions. The connector requires that user to be signed in; it is not a
 system service and does not run on the Windows sign-in screen.

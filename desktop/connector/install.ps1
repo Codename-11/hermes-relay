@@ -46,9 +46,11 @@ finally { $hashAlgorithm.Dispose() }
 $taskName = 'HermesRelay-Connector-' + $homeHash
 $wrapperPath = Join-Path $homeDir 'run-connector.ps1'
 $controlPath = Join-Path $homeDir 'connector-control.ps1'
+$readyPath = Join-Path $homeDir 'connector-install-ready'
 $backup = Join-Path $homeDir ('connector-backup-' + (Get-Date -Format yyyyMMdd-HHmmss) + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
 New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 $lock = [IO.File]::Open((Join-Path $homeDir 'connector-install.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+Remove-Item -LiteralPath $readyPath -Force -ErrorAction SilentlyContinue
 $oldEnvironment = @{}
 foreach ($key in @('USERPROFILE','HOME','HERMES_RELAY_HOST_ACCESS_POLICY_PATH','HERMES_RELAY_TOKEN','HERMES_RELAY_URL','HERMES_RELAY_CODE')) {
     $oldEnvironment[$key] = [Environment]::GetEnvironmentVariable($key,'Process')
@@ -57,6 +59,7 @@ $hadCli = Test-Path -LiteralPath $cli
 $replaced = $false
 $authorized = $false
 $newTaskRegistered = $false
+$taskReady = $false
 $trayStopped = $false
 $runRemoved = $false
 $oldDaemon = $null
@@ -118,6 +121,93 @@ function Stop-RemainingConnectorProcesses {
         finally { if ($process) { $process.Dispose() } }
     }
     if (@(Get-ConnectorBinaryProcesses).Count) { throw '此安装路径仍有进程占用，已保留原安装。请先结束该连接器后重试。' }
+}
+function Replace-ConnectorBinary {
+    $candidate = $cli+'.new'
+    $deadline = (Get-Date).AddSeconds(10)
+    while ($true) {
+        if (-not (Test-Path -LiteralPath $candidate)) {
+            # A consumed source is never replayed. Confirm exact bytes before
+            # accepting a completed replacement whose API reported an error.
+            if ((Test-Path -LiteralPath $cli) -and (Get-FileHash -LiteralPath $cli -Algorithm SHA256).Hash -ieq $manifest.sha256) { return }
+            throw '候选安装文件已不存在，停止替换。原安装快照已保留，请重新运行安装包。'
+        }
+        if (@(Get-ConnectorBinaryProcesses).Count) { throw '此安装路径重新出现进程占用，已停止替换并保留原安装。' }
+        try {
+            if ($hadCli) { [IO.File]::Replace($candidate,$cli,[NullString]::Value) }
+            else { [IO.File]::Move($candidate,$cli) }
+            return
+        } catch {
+            $cause = $_.Exception
+            while ($cause.InnerException) { $cause = $cause.InnerException }
+            $code = $cause.HResult -band 0xffff
+            if ($cause -isnot [IO.IOException] -or $code -notin @(32,33)) { throw }
+            if ((Get-Date) -ge $deadline) { throw '安装文件持续被占用，已停止替换并保留原安装。请稍后重试。' }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+}
+function Get-ConnectorTaskManagementSddl([string]$sddl,[Security.Principal.SecurityIdentifier]$sid) {
+    $descriptor = New-Object Security.AccessControl.RawSecurityDescriptor($sddl)
+    if (-not $descriptor.DiscretionaryAcl) { throw '连接器自启任务的权限结构无效。' }
+    $full = [int][Security.AccessControl.FileSystemRights]::FullControl
+    foreach ($ace in $descriptor.DiscretionaryAcl) {
+        if ($ace -is [Security.AccessControl.CommonAce] -and $ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and
+            $ace.SecurityIdentifier -eq $sid -and ($ace.AccessMask -band $full) -eq $full) { return $sddl }
+    }
+    # Preserve every existing ACE, including SYSTEM, Administrators and denies.
+    # Insert after explicit deny entries rather than overriding their ordering.
+    $index = 0
+    for ($i=0;$i -lt $descriptor.DiscretionaryAcl.Count;$i++) {
+        $ace = $descriptor.DiscretionaryAcl[$i]
+        if ($ace -is [Security.AccessControl.CommonAce] -and -not $ace.IsInherited -and $ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessDenied) { $index=$i+1 }
+    }
+    $entry = New-Object Security.AccessControl.CommonAce([Security.AccessControl.AceFlags]::None,[Security.AccessControl.AceQualifier]::AccessAllowed,$full,$sid,$false,$null)
+    $descriptor.DiscretionaryAcl.InsertAce($index,$entry)
+    return $descriptor.GetSddlForm([Security.AccessControl.AccessControlSections]::Access)
+}
+function Grant-ConnectorTaskManagement {
+    # This helper may grant management only for this exact Limited task. It is
+    # never used on the legacy tasks or on a task running with highest rights.
+    if ($taskName -notmatch '^HermesRelay-Connector-[A-Fa-f0-9]{12}$') { throw '连接器自启任务名称无效。' }
+    $scheduler = New-Object -ComObject 'Schedule.Service'
+    $scheduler.Connect()
+    $task = $scheduler.GetFolder('\').GetTask($taskName)
+    $definition = $task.Definition
+    if ($task.Path -ine ('\'+$taskName) -or $definition.Principal.RunLevel -ne 0 -or $definition.Principal.LogonType -ne 3) { throw '拒绝修改不属于当前普通用户连接器的任务权限。' }
+    $principal = [string]$definition.Principal.UserId
+    if ($principal -match '^S-1-') { $principalSid = (New-Object Security.Principal.SecurityIdentifier($principal)).Value }
+    else { $principalSid = (New-Object Security.Principal.NTAccount($principal)).Translate([Security.Principal.SecurityIdentifier]).Value }
+    if ($principalSid -cne $userSid) { throw '连接器自启任务所属用户不匹配。' }
+    $expectedExecutable = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $expectedArguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+$wrapperPath+'"'
+    if ($definition.Actions.Count -ne 1) { throw '连接器自启任务操作不匹配。' }
+    $action = $definition.Actions.Item(1)
+    if ($action.Type -ne 0 -or [IO.Path]::GetFullPath([string]$action.Path) -ine [IO.Path]::GetFullPath($expectedExecutable) -or $action.Arguments -cne $expectedArguments) { throw '连接器自启任务路径不匹配。' }
+    $sid = New-Object Security.Principal.SecurityIdentifier($userSid)
+    $before = $task.GetSecurityDescriptor(4)
+    $updated = Get-ConnectorTaskManagementSddl $before $sid
+    if ($updated -cne $before) { $task.SetSecurityDescriptor($updated,0x10) }
+    $readback = $task.GetSecurityDescriptor(4)
+    if ((Get-ConnectorTaskManagementSddl $readback $sid) -cne $readback) { throw '无法验证当前用户的连接器任务管理权限。' }
+}
+function Start-ConnectorScheduledDaemon {
+    # The installer keeps its exclusive lock to exclude another upgrade. This
+    # credential-free marker authorizes only the fully prepared task's final
+    # activation to proceed while that lock is held.
+    [IO.File]::WriteAllText($readyPath,[string]$PID,[Text.Encoding]::ASCII)
+    try {
+        Enable-ScheduledTask -TaskName $taskName -TaskPath '\' | Out-Null
+        Start-ScheduledTask -TaskName $taskName -TaskPath '\'
+        $deadline = (Get-Date).AddSeconds(45)
+        do {
+            $status = Read-ConnectorStatus
+            if ($status -and $status.alive -and $status.state -eq 'connected' -and $status.configured_url -ceq $remote -and
+                $status.access_mode -eq 'full_access' -and -not $status.voice_url -and $status.privilege -eq 'user') { return $status }
+            Start-Sleep -Milliseconds 500
+        } while ((Get-Date) -lt $deadline)
+        throw '普通用户后台任务未能完成连接，正在检查恢复。'
+    } finally { Remove-Item -LiteralPath $readyPath -Force -ErrorAction SilentlyContinue }
 }
 function Task-IsOwned($task) {
     $owner = [string]$task.Principal.UserId
@@ -196,8 +286,7 @@ try {
     # Copy beside the old binary first; Windows rejects replacement if any old
     # executable owner remains. No validation websocket is opened until stop.
     Copy-Item -LiteralPath $payload -Destination ($cli+'.new') -Force
-    if ($hadCli) { [IO.File]::Replace(($cli+'.new'),$cli,[NullString]::Value) }
-    else { [IO.File]::Move(($cli+'.new'),$cli) }
+    Replace-ConnectorBinary
     $replaced = $true
     & $cli connector --setup $setupPath --grant-tools
     if ($LASTEXITCODE -ne 0) { throw '连接授权失败。检查网络或从下载页领取新的安装包。' }
@@ -214,7 +303,8 @@ $env:HERMES_RELAY_URL = $null
 $cli = __CLI__
 $lock = $null
 try {
-    $lock = [IO.File]::Open(__LOCK__,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+    try { $lock = [IO.File]::Open(__LOCK__,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) }
+    catch [IO.IOException] { if (-not (Test-Path -LiteralPath __READY__)) { exit 1 } }
     $raw = (& $cli daemon status --json 2>$null | Out-String)
     $status = $null
     if ($raw.Trim().StartsWith('{')) { $status = $raw | ConvertFrom-Json }
@@ -222,7 +312,7 @@ try {
     & $cli daemon start --no-voice --remote __REMOTE__ *> $null
 } catch { exit 1 } finally { if ($lock) { $lock.Dispose() } }
 '@
-    $wrapper = $wrapper.Replace('__PROFILE__',(Quote-Literal $profileRoot)).Replace('__POLICY__',(Quote-Literal $env:HERMES_RELAY_HOST_ACCESS_POLICY_PATH)).Replace('__CLI__',(Quote-Literal $cli)).Replace('__LOCK__',(Quote-Literal (Join-Path $homeDir 'connector-install.lock'))).Replace('__REMOTE__',(Quote-Literal $remote))
+    $wrapper = $wrapper.Replace('__PROFILE__',(Quote-Literal $profileRoot)).Replace('__POLICY__',(Quote-Literal $env:HERMES_RELAY_HOST_ACCESS_POLICY_PATH)).Replace('__CLI__',(Quote-Literal $cli)).Replace('__LOCK__',(Quote-Literal (Join-Path $homeDir 'connector-install.lock'))).Replace('__REMOTE__',(Quote-Literal $remote)).Replace('__READY__',(Quote-Literal $readyPath))
     [IO.File]::WriteAllText($wrapperPath,$wrapper.Replace("`r`n","`n").Replace("`n","`r`n"),$utf8Bom)
     $control = @'
 param([ValidateSet('Status','Stop')][string]$Action = 'Status')
@@ -253,13 +343,9 @@ if ($Action -eq 'Stop') {
     $settings.Enabled = $false
     Register-ScheduledTask -TaskName $taskName -TaskPath '\' -Action $action -Trigger $triggers -Principal $principal -Settings $settings -Description 'Relay 后台连接器，登录自启及进程恢复' -Force | Out-Null
     $newTaskRegistered = $true
-    & $cli daemon start --no-voice --remote $remote
-    $startExit = $LASTEXITCODE
-    $status = Read-ConnectorStatus
-    if ($startExit -ne 0 -or -not $status.alive -or $status.state -ne 'connected' -or $status.configured_url -cne $remote -or $status.access_mode -ne 'full_access' -or $status.voice_url) {
-        throw '后台进程未能完成安全连接，正在检查恢复。'
-    }
-    Enable-ScheduledTask -TaskName $taskName -TaskPath '\' | Out-Null
+    Grant-ConnectorTaskManagement
+    $taskReady = $true
+    $status = Start-ConnectorScheduledDaemon
     # One-use invitation is removed only after credentials and startup succeed.
     Remove-Item -LiteralPath $setupPath -Force
     Write-Host '安装完成。以后自动后台连接，无需配对码，也没有托盘弹窗。'
@@ -290,9 +376,9 @@ if ($Action -eq 'Stop') {
         } catch { $rollbackErrors += '新授权快照' }
         try {
             $status = Read-ConnectorStatus
-            if (-not $status -or -not $status.alive) { & $cli daemon start --no-voice --remote $remote | Out-Null }
+            if ((-not $status -or -not $status.alive -or $status.state -ne 'connected') -and $taskReady) { $status = Start-ConnectorScheduledDaemon }
             $status = Read-ConnectorStatus
-            if ($status -and $status.alive -and $status.state -eq 'connected' -and $status.access_mode -eq 'full_access' -and -not $status.voice_url) {
+            if ($status -and $status.alive -and $status.state -eq 'connected' -and $status.access_mode -eq 'full_access' -and -not $status.voice_url -and $status.privilege -eq 'user') {
                 Write-Warning '安装未完成；已保留新授权并恢复新版后台连接。自启任务仍需检查或重新安装。'
             } else {
                 Write-Warning '安装未完成；已保留新版程序及新授权，后台连接尚未恢复。请检查网络后重新运行安装器。'
@@ -340,6 +426,7 @@ if ($Action -eq 'Stop') {
     throw $failure
 } finally {
     Remove-Item -LiteralPath ($cli+'.new') -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $readyPath -Force -ErrorAction SilentlyContinue
     foreach ($key in $oldEnvironment.Keys) { [Environment]::SetEnvironmentVariable($key,$oldEnvironment[$key],'Process') }
     $lock.Dispose()
 }
