@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Fixed
 
+- Desktop daemons retry transient startup connection failures, preserve desktop tools when the optional chat channel fails, and record terminal status before exiting.
 - Long tools and provider waits stay active. Missing completion events recover from server state, including work started by another client, without sending Stop.
 - Oversized history responses retry with smaller pages while keeping the latest 500 messages in order. Individual messages above the safety limit show an explicit error.
 - Reopening a conversation includes messages archived by context compaction instead of showing only its summary and recent tail.
