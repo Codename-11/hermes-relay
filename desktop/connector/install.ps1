@@ -45,6 +45,9 @@ try { $homeHash = ([BitConverter]::ToString($hashAlgorithm.ComputeHash([Text.Enc
 finally { $hashAlgorithm.Dispose() }
 $taskName = 'HermesRelay-Connector-' + $homeHash
 $wrapperPath = Join-Path $homeDir 'run-connector.ps1'
+$launcherPath = Join-Path $homeDir 'relay-connector-hidden.vbs'
+$launcherExecutable = Join-Path $env:WINDIR 'System32\wscript.exe'
+if (-not (Test-Path -LiteralPath $launcherExecutable)) { throw 'Windows 后台脚本启动器不可用，已保留原安装。' }
 $controlPath = Join-Path $homeDir 'connector-control.ps1'
 $readyPath = Join-Path $homeDir 'connector-install-ready'
 $backup = Join-Path $homeDir ('connector-backup-' + (Get-Date -Format yyyyMMdd-HHmmss) + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
@@ -64,13 +67,85 @@ $trayStopped = $false
 $runRemoved = $false
 $oldDaemon = $null
 $taskBackups = @()
-$mutatedFiles = @('remote-sessions.json','desktop-host-access.json','desktop-device-id','run-connector.ps1','connector-control.ps1','Stop.cmd','Status.cmd')
+$mutatedFiles = @('remote-sessions.json','desktop-host-access.json','desktop-device-id','run-connector.ps1','relay-connector-hidden.vbs','connector-control.ps1','Stop.cmd','Status.cmd')
 $existingFiles = @{}
 $tray = Join-Path $binDir 'hermes-relay-tray.exe'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $runValue = $null
 $utf8Bom = New-Object Text.UTF8Encoding($true)
 function Quote-Literal([string]$value) { return "'" + $value.Replace("'","''") + "'" }
+function Invoke-ConnectorHiddenCli {
+    param([string]$Executable,[string]$Arguments,[int]$TimeoutMilliseconds = 10000)
+    # Both console layers must be suppressed before process creation. The
+    # watchdog's hidden PowerShell window alone does not hide a CUI executable.
+    $info = New-Object Diagnostics.ProcessStartInfo
+    $info.FileName = $Executable
+    $info.Arguments = $Arguments
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = New-Object Text.UTF8Encoding($false)
+    $info.StandardErrorEncoding = New-Object Text.UTF8Encoding($false)
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $info
+    try {
+        if (-not $process.Start()) { throw '后台连接命令未能启动。' }
+        # Drain both streams concurrently; sequential ReadToEnd can deadlock
+        # when either pipe fills. Never include captured stderr in errors.
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutMilliseconds)) {
+            try { $process.Kill() } catch {}
+            [void]$process.WaitForExit(2000)
+            throw '后台连接命令超时。'
+        }
+        $readers = [Threading.Tasks.Task[]]@($stdout,$stderr)
+        if (-not [Threading.Tasks.Task]::WaitAll($readers,2000)) { throw '后台连接命令输出未能完成。' }
+        return [pscustomobject]@{ExitCode=$process.ExitCode;StandardOutput=$stdout.Result}
+    } finally { $process.Dispose() }
+}
+function Get-ConnectorProcessSnapshot {
+    param([int]$ProcessId)
+    $process = $null
+    try {
+        $process = [Diagnostics.Process]::GetProcessById($ProcessId)
+        if ($process.HasExited) { return @{State='gone'} }
+        $image = [string]$process.MainModule.FileName
+        if (-not $image) { return @{State='unknown'} }
+        return @{State='alive';ExecutablePath=$image}
+    } catch [ArgumentException] { return @{State='gone'} }
+    catch { return @{State='unknown'} }
+    finally { if ($process) { $process.Dispose() } }
+}
+function Get-ConnectorDaemonState {
+    param([string]$StatusPath,[string]$Executable)
+    # Never launch another CLI/PowerShell just to inspect this local process.
+    # Missing initial state permits first startup; unreadable existing state
+    # and inaccessible processes fail closed until the next watchdog tick.
+    try { [void][IO.File]::GetAttributes($StatusPath) }
+    catch [IO.FileNotFoundException] { return 'missing' }
+    catch [IO.DirectoryNotFoundException] { return 'missing' }
+    catch { return 'unknown' }
+    try {
+        $status = [IO.File]::ReadAllText($StatusPath) | ConvertFrom-Json
+        $daemonProcessId = 0
+        if ([string]$status.pid -notmatch '^[1-9][0-9]{0,9}$' -or
+            -not [int]::TryParse([string]$status.pid,[ref]$daemonProcessId)) { return 'unknown' }
+        $snapshot = Get-ConnectorProcessSnapshot $daemonProcessId
+        if ($snapshot.State -eq 'gone') { return 'gone' }
+        if ($snapshot.State -ne 'alive' -or -not $snapshot.ExecutablePath) { return 'unknown' }
+        if ([IO.Path]::GetFullPath([string]$snapshot.ExecutablePath) -ine [IO.Path]::GetFullPath($Executable)) { return 'recycled' }
+        return 'alive'
+    } catch { return 'unknown' }
+}
+function Get-ConnectorLauncherContent([string]$PowerShellPath,[string]$ScriptPath) {
+    # WScript is a GUI subsystem executable, so Task Scheduler never creates a
+    # console before PowerShell has a chance to apply its WindowStyle switch.
+    $command = '"'+$PowerShellPath+'" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+$ScriptPath+'"'
+    return 'Option Explicit'+"`r`n"+'Dim shell, result'+"`r`n"+'Set shell = CreateObject("WScript.Shell")'+"`r`n"+'result = shell.Run("'+$command.Replace('"','""')+'", 0, True)'+"`r`n"+'WScript.Quit result'+"`r`n"
+}
 function Read-ConnectorStatus {
     if (-not (Test-Path -LiteralPath $cli)) { return $null }
     # No running daemon is a normal status exit code, not an install failure.
@@ -179,8 +254,8 @@ function Grant-ConnectorTaskManagement {
     if ($principal -match '^S-1-') { $principalSid = (New-Object Security.Principal.SecurityIdentifier($principal)).Value }
     else { $principalSid = (New-Object Security.Principal.NTAccount($principal)).Translate([Security.Principal.SecurityIdentifier]).Value }
     if ($principalSid -cne $userSid) { throw '连接器自启任务所属用户不匹配。' }
-    $expectedExecutable = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $expectedArguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+$wrapperPath+'"'
+    $expectedExecutable = $launcherExecutable
+    $expectedArguments = '//B //Nologo "'+$launcherPath+'"'
     if ($definition.Actions.Count -ne 1) { throw '连接器自启任务操作不匹配。' }
     $action = $definition.Actions.Item(1)
     if ($action.Type -ne 0 -or [IO.Path]::GetFullPath([string]$action.Path) -ine [IO.Path]::GetFullPath($expectedExecutable) -or $action.Arguments -cne $expectedArguments) { throw '连接器自启任务路径不匹配。' }
@@ -311,14 +386,17 @@ $lock = $null
 try {
     try { $lock = [IO.File]::Open(__LOCK__,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None) }
     catch [IO.IOException] { if (-not (Test-Path -LiteralPath __READY__)) { exit 1 } }
-    $raw = (& $cli daemon status --json 2>$null | Out-String)
-    $status = $null
-    if ($raw.Trim().StartsWith('{')) { $status = $raw | ConvertFrom-Json }
-    if ($status -and $status.alive) { exit 0 }
-    & $cli daemon start --no-voice --remote __REMOTE__ *> $null
+    $state = Get-ConnectorDaemonState __STATUS__ $cli
+    if ($state -eq 'alive') { exit 0 }
+    if ($state -eq 'unknown') { exit 1 }
+    $result = Invoke-ConnectorHiddenCli $cli ('daemon start --no-voice --remote '+__REMOTE__) 35000
+    if ($result.ExitCode -ne 0) { exit 1 }
 } catch { exit 1 } finally { if ($lock) { $lock.Dispose() } }
 '@
-    $wrapper = $wrapper.Replace('__PROFILE__',(Quote-Literal $profileRoot)).Replace('__POLICY__',(Quote-Literal $env:HERMES_RELAY_HOST_ACCESS_POLICY_PATH)).Replace('__CLI__',(Quote-Literal $cli)).Replace('__LOCK__',(Quote-Literal (Join-Path $homeDir 'connector-install.lock'))).Replace('__REMOTE__',(Quote-Literal $remote)).Replace('__READY__',(Quote-Literal $readyPath))
+    $wrapper = $wrapper.Replace('__PROFILE__',(Quote-Literal $profileRoot)).Replace('__POLICY__',(Quote-Literal $env:HERMES_RELAY_HOST_ACCESS_POLICY_PATH)).Replace('__CLI__',(Quote-Literal $cli)).Replace('__LOCK__',(Quote-Literal (Join-Path $homeDir 'connector-install.lock'))).Replace('__REMOTE__',(Quote-Literal $remote)).Replace('__READY__',(Quote-Literal $readyPath)).Replace('__STATUS__',(Quote-Literal (Join-Path $homeDir 'daemon-status.json')))
+    foreach ($name in @('Get-ConnectorProcessSnapshot','Get-ConnectorDaemonState','Invoke-ConnectorHiddenCli')) {
+        $wrapper = 'function '+$name+' {'+(Get-Item ('Function:\'+$name)).ScriptBlock.ToString()+"}`r`n"+$wrapper
+    }
     [IO.File]::WriteAllText($wrapperPath,$wrapper.Replace("`r`n","`n").Replace("`n","`r`n"),$utf8Bom)
     $control = @'
 param([ValidateSet('Status','Stop')][string]$Action = 'Status')
@@ -341,7 +419,10 @@ if ($Action -eq 'Stop') {
     [IO.File]::WriteAllText($controlPath,$control.Replace("`r`n","`n").Replace("`n","`r`n"),$utf8Bom)
     Copy-Item -LiteralPath (Join-Path $stage 'Stop.cmd') -Destination $homeDir -Force
     Copy-Item -LiteralPath (Join-Path $stage 'Status.cmd') -Destination $homeDir -Force
-    $action = New-ScheduledTaskAction -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "'+$wrapperPath+'"')
+    $launcher = Get-ConnectorLauncherContent "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" $wrapperPath
+    # UTF-16 preserves arbitrary Windows profile names in the VBS source.
+    [IO.File]::WriteAllText($launcherPath,$launcher,[Text.Encoding]::Unicode)
+    $action = New-ScheduledTaskAction -Execute $launcherExecutable -Argument ('//B //Nologo "'+$launcherPath+'"')
     $triggers = @((New-ScheduledTaskTrigger -AtLogOn -User $user),(New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)))
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 1)

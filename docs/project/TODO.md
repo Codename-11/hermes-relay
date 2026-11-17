@@ -6,6 +6,13 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ## Desktop connectivity and management follow-ups
 
+- Preserve unknown Windows process-probe results in CLI daemon diagnostics.
+  The two-second PowerShell probe can time out on slow systems while the exact
+  daemon PID and executable are still alive; `daemon status --json` then reports
+  `alive: false`. Distinguish unknown from confirmed absence and cover slow probe
+  startup. The connector watchdog checks its own status PID and executable
+  directly in PowerShell to avoid this extra subprocess on its healthy path.
+
 - Restore native child stdout/stderr capture for detached Windows background jobs.
   Native Windows checks show that PowerShell scripts and Node programs can execute
   and return their real exit code while both logs remain empty, although cmd
