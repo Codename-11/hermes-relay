@@ -44,6 +44,8 @@ import {
   clearDaemonStatus,
   isDaemonProcessAlive,
   isPidAlive,
+  processOwnerIsAlive,
+  windowsProcessSnapshot,
   readDaemonStatus,
   writeDaemonStatus,
   type DaemonComputerGrantStatus,
@@ -96,6 +98,8 @@ const INCOMPLETE_LOCK_GRACE_MS = 1_000
 interface ProcessLockOwner {
   pid: number
   process_name: string
+  executable_path?: string
+  process_started_at?: number
   token: string
   created_at: number
   purpose: string
@@ -135,11 +139,7 @@ async function readProcessLockOwner(lockPath: string): Promise<ProcessLockOwner 
 }
 
 function processLockOwnerAlive(owner: ProcessLockOwner): boolean {
-  // PID liveness is deliberately authoritative here. Unlike status/stop, a
-  // conservative false positive only causes a bounded lock timeout; a false
-  // negative could let a second daemon start. It also avoids spawning tasklist
-  // or ps from the startup hot path (and executable-name truncation on Unix).
-  return isPidAlive(owner.pid)
+  return processOwnerIsAlive(owner)
 }
 
 async function releaseProcessLock(lockPath: string, token: string): Promise<void> {
@@ -164,8 +164,13 @@ async function acquireProcessLock(lockPath: string, options: ProcessLockOptions)
   const sleep = options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)))
   const ownerAlive = options.ownerAlive ?? processLockOwnerAlive
   const deadline = now() + options.timeoutMs
+  const processSnapshot = process.platform === 'win32' ? windowsProcessSnapshot(process.pid) : null
   const owner: ProcessLockOwner = {
     pid: process.pid,
+    executable_path: process.platform === 'win32'
+      ? processSnapshot?.state === 'alive' ? processSnapshot.executablePath ?? undefined : undefined
+      : process.execPath,
+    process_started_at: processSnapshot?.state === 'alive' ? processSnapshot.startedAt ?? undefined : undefined,
     process_name: path.basename(process.execPath),
     token: randomUUID(),
     created_at: now(),
