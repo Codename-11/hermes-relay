@@ -35,7 +35,7 @@ import { setupGracefulExit } from '../lib/gracefulExit.js'
 import { renderLogo } from '../lib/logo.js'
 import { asRpcResult, rpcErrorMessage } from '../lib/rpc.js'
 import { theme as makeTheme } from '../lib/theme.js'
-import { deleteSession, saveSession } from '../remoteSessions.js'
+import { saveSession } from '../remoteSessions.js'
 import { runRelayChatTurn, type RelayChatTurnHandle } from '../relayChat.js'
 import { CliRenderer } from '../renderer.js'
 import { SessionResumeDrain } from '../resumeDrain.js'
@@ -111,7 +111,8 @@ async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
       argCode,
       argToken,
       argPairQr,
-      nonInteractive
+      nonInteractive,
+      skipStoredSession: attempt > 0
     })
 
     const url = (creds.resolvedEndpoint?.relay.url ?? urlFlag)!.trim()
@@ -152,11 +153,7 @@ async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
       /* ignore */
     }
 
-    if (creds.sessionToken) {
-      // Stored token was rejected — purge so next run starts clean.
-      await deleteSession(url)
-    }
-
+    // A failed connection must not discard a saved pairing.
     if (attempt === 1 || nonInteractive) {
       throw new Error(`relay rejected credentials: ${outcome.reason}`)
     }

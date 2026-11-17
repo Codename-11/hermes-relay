@@ -89,6 +89,8 @@ VOICE_GRANT_KEYS: tuple[str, ...] = (
 
 # Pairing codes still expire after 10 minutes regardless of session TTL.
 _PAIRING_CODE_TTL = 600.0
+# Download invitations allow time for a large installer on a slow link.
+DESKTOP_INVITE_TTL_SECONDS = 60 * 60
 
 # Device refresh credentials survive normal relay restarts and updates. They
 # are only issued after a successful pair or an already-valid session reconnect,
@@ -290,6 +292,7 @@ class Session:
     ``"tui"``, and explicit ``"voice:*"`` capabilities.
     """
 
+    desktop_only: bool = field(default=False, kw_only=True)
     token: str
     device_name: str
     device_id: str
@@ -312,6 +315,9 @@ class Session:
             self.expires_at = self.created_at + DEFAULT_TTL_SECONDS
         if self.first_seen == 0.0:
             self.first_seen = self.created_at
+        if self.desktop_only:
+            self.grants = {"desktop": self.expires_at}
+            return
         if not self.grants:
             # Synthesize defaults from the realized expires_at so older
             # code paths that constructed Session directly still behave.
@@ -336,6 +342,8 @@ class Session:
         """True if the specified channel grant has expired. Unknown channels
         are reported as expired so callers don't accidentally allow traffic
         on a channel they never granted."""
+        if self.desktop_only and channel != "desktop":
+            return True
         exp = self.grants.get(channel)
         if exp is None:
             return True
@@ -391,6 +399,8 @@ class PairingMetadata:
     ttl_seconds: float | None = None
     grants: dict[str, float] | None = None
     transport_hint: str | None = None
+    desktop_only: bool = False
+    operator_replace_device_id: str | None = None
 
 
 @dataclass
@@ -417,7 +427,8 @@ class _PairingEntry:
 class PairingManager:
     """Manages short-lived pairing codes used for initial device authentication.
 
-    Codes are stored in-memory and expire after 10 minutes.
+    Codes are stored in-memory. Ordinary pairing codes expire after ten
+    minutes; high-entropy desktop download invitations expire after one hour.
     """
 
     def __init__(self) -> None:
@@ -431,6 +442,27 @@ class PairingManager:
         entry = _PairingEntry(code=code)
         self._codes[code.upper()] = entry
         logger.info("Generated pairing code %s (expires in 10m)", code)
+        return code
+
+    def generate_desktop_invite(self, operator_replace_device_id: str | None = None) -> str:
+        """Mint a high-entropy, one-use installation invite without logging it.
+
+        Used only by the local operator/download portal. Its one-hour life
+        is independent of the resulting revocable, desktop-only device session.
+        An operator replacement is bound to the exact supplied installation
+        identity; ordinary download invitations never replace an existing pair.
+        """
+        code = secrets.token_hex(32).upper()
+        created_at = time.time()
+        self._codes[code] = _PairingEntry(
+            code=code, created_at=created_at,
+            expires_at=created_at + DESKTOP_INVITE_TTL_SECONDS,
+            metadata=PairingMetadata(
+                ttl_seconds=0, transport_hint="wss", desktop_only=True,
+                operator_replace_device_id=operator_replace_device_id,
+            ),
+        )
+        logger.info("Created a one-use desktop installation invite")
         return code
 
     def register_code(
@@ -495,7 +527,10 @@ class PairingManager:
             return None
         if entry.is_expired:
             return None
-        logger.info("Pairing code %s consumed", normalized)
+        if entry.metadata.desktop_only:
+            logger.info("Desktop installation invite consumed")
+        else:
+            logger.info("Pairing code %s consumed", normalized)
         return entry.metadata
 
     def _cleanup(self) -> None:
@@ -537,6 +572,7 @@ def _session_to_json(session: Session) -> dict[str, Any]:
 
     payload = {
         "token": session.token,
+        "desktop_only": session.desktop_only,
         "device_name": session.device_name,
         "device_id": session.device_id,
         "created_at": session.created_at,
@@ -594,6 +630,7 @@ def _session_from_json(payload: dict[str, Any]) -> Session | None:
 
     return Session(
         token=token,
+        desktop_only=payload.get("desktop_only", False) is not False,
         device_name=device_name,
         device_id=device_id,
         created_at=created_at,
@@ -971,6 +1008,8 @@ class SessionManager:
         device_platform: str = "unknown",
         supervised_mode: SupervisedMode | None = None,
         issue_refresh_token: bool = False,
+        desktop_only: bool = False,
+        operator_replace_device_id: str | None = None,
     ) -> Session:
         """Create a new session for an authenticated device.
 
@@ -1009,10 +1048,36 @@ class SessionManager:
             :class:`Session` for inclusion in ``auth.ok``. This is an explicit
             pairing operation, so any older sessions and trusted-device
             credentials for the same non-empty ``device_id`` are replaced.
+        desktop_only:
+            Constrain this session to desktop tools and heartbeat traffic.
+            No trusted-device refresh credential is issued for this scope.
+        operator_replace_device_id:
+            Optional exact identity bound by a loopback operator invitation.
+            Only a matching desktop installation may replace its existing
+            sessions and trusted credentials; clients cannot set this policy.
         """
         if ttl_seconds is None:
             ttl_seconds = DEFAULT_TTL_SECONDS
         supervised_mode = supervised_mode or SupervisedMode()
+
+        if desktop_only:
+            if (
+                not isinstance(device_id, str) or not device_id
+                or len(device_id) > 256 or not device_id.isprintable()
+                or device_id != device_id.strip()
+                or device_id.casefold() in {"unknown", "none", "null"}
+            ):
+                raise ValueError("Desktop installation requires a stable device identity")
+            if operator_replace_device_id is not None and operator_replace_device_id != device_id:
+                raise ValueError("Installation invite is bound to another device identity")
+            self._cleanup()
+            identity_exists = any(s.device_id == device_id for s in self._sessions.values()) or any(
+                d.device_id == device_id for d in self._trusted_devices.values()
+            )
+            if operator_replace_device_id is None and identity_exists:
+                raise ValueError("Device identity is already paired; revoke it before installing again")
+        elif operator_replace_device_id is not None:
+            raise ValueError("Device replacement requires a desktop installation invite")
 
         now = time.time()
         if ttl_seconds == 0:
@@ -1022,7 +1087,7 @@ class SessionManager:
 
         resolved_grants = _materialize_grants(grants, float(ttl_seconds), now)
         refresh_token: str | None = None
-        if issue_refresh_token:
+        if issue_refresh_token and not desktop_only:
             # A fresh operator-approved pair repairs this device; it does not
             # authorize another indefinite row for the same app installation.
             # Keep different devices independent and leave legacy clients with
@@ -1078,6 +1143,7 @@ class SessionManager:
         token = str(uuid.uuid4())
         session = Session(
             token=token,
+            desktop_only=desktop_only,
             device_name=device_name,
             device_id=device_id,
             created_at=now,
@@ -1094,6 +1160,22 @@ class SessionManager:
             refresh_token=refresh_token,
         )
         self._sessions[token] = session
+        if desktop_only and operator_replace_device_id is not None:
+            # A loopback operator bound this one-use invite to one exact
+            # installation. Create its replacement before retiring authority;
+            # persist the new session and removals together.
+            replaced_sessions = [
+                existing_token for existing_token, existing in self._sessions.items()
+                if existing_token != token and existing.device_id == device_id
+            ]
+            for existing_token in replaced_sessions:
+                del self._sessions[existing_token]
+            replaced_devices = [
+                refresh_hash for refresh_hash, existing in self._trusted_devices.items()
+                if existing.device_id == device_id
+            ]
+            for refresh_hash in replaced_devices:
+                del self._trusted_devices[refresh_hash]
         logger.info(
             "Created session for device %s (%s), expires %s, transport=%s, surface=%s, form_factor=%s",
             device_name,
@@ -1123,6 +1205,8 @@ class SessionManager:
         This lets existing paired clients adopt trusted-device recovery on
         their next successful reconnect without forcing an immediate re-pair.
         """
+        if session.desktop_only:
+            raise ValueError("Desktop-only credentials cannot mint refresh authority")
         now = time.time()
         refresh_token = _generate_refresh_token()
         refresh_hash = _refresh_token_hash(refresh_token)
@@ -1283,7 +1367,7 @@ class SessionManager:
             session.supervised_mode = supervised_mode
             changed = True
 
-        for trusted in self._trusted_devices.values():
+        for trusted in (() if session.desktop_only else self._trusted_devices.values()):
             if trusted.device_id != session.device_id:
                 continue
             for field_name, candidate in updates.items():
@@ -1320,7 +1404,9 @@ class SessionManager:
         # older code path that predated the grants refactor. In-memory
         # state is wiped on every restart so in practice this only matters
         # if callers hand-build Session objects.
-        if not session.grants:
+        if session.desktop_only:
+            session.grants = {"desktop": session.expires_at}
+        elif not session.grants:
             if _is_never(session.expires_at):
                 ttl = 0.0
             else:
@@ -1352,7 +1438,7 @@ class SessionManager:
             revoked_devices = [
                 refresh_hash
                 for refresh_hash, trusted in self._trusted_devices.items()
-                if trusted.device_id == session.device_id
+                if not session.desktop_only and trusted.device_id == session.device_id
             ]
             for refresh_hash in revoked_devices:
                 del self._trusted_devices[refresh_hash]
@@ -1423,7 +1509,9 @@ class SessionManager:
         else:
             effective_ttl = max(session.expires_at - now, 0.0)
 
-        if grants is not None:
+        if session.desktop_only:
+            session.grants = {"desktop": session.expires_at}
+        elif grants is not None:
             # Caller provided fresh per-channel values; re-materialize
             # from scratch (uses defaults for channels the caller didn't
             # pass, same as create_session).

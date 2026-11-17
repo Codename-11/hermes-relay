@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Optional authenticated Windows connector downloads use individual, single-use installation invitations and revocable desktop-only authorizations.
+- A Chinese headless installer confirms host permissions once and restores the background connector after login or process failure.
+
+### Fixed
+
+- Desktop daemons retry transient startup connection failures, preserve desktop tools when the optional chat channel fails, and record terminal status before exiting.
+- Desktop heartbeats recover connections that stop responding and advertise tools again immediately after reconnecting.
+- Permanent device authorization replaces a previous finite expiry in saved sessions.
+- Windows background commands preserve quoted arguments, and daemon locks validate process identity before deciding whether a restart is blocked.
+- Desktop-only credentials cannot access server voice, media, profiles, or management routes.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added

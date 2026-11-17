@@ -226,7 +226,7 @@ export const saveSession = async (
       pairedAt: options.pairedAt ?? Math.floor(Date.now() / 1000),
       certPinSha256: isAlternateRoute ? prev?.cert_pin_sha256 ?? null : options.certPin ?? prev?.cert_pin_sha256 ?? null,
       grants: options.grants ?? prev?.grants ?? null,
-      ttlExpiresAt: options.ttlExpiresAt ?? prev?.ttl_expires_at ?? null,
+      ttlExpiresAt: options.ttlExpiresAt !== undefined ? options.ttlExpiresAt : prev?.ttl_expires_at ?? null,
       endpointRole: options.endpointRole ?? prev?.endpoint_role ?? null,
       routeCandidates: options.routeCandidates ?? prev?.route_candidates,
       preferSecureRoutes: options.preferSecureRoutes ?? prev?.prefer_secure_routes ?? false,

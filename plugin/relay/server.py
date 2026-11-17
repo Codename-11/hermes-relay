@@ -52,6 +52,7 @@ from pathlib import Path
 
 from . import __version__
 from .auth import (
+    DESKTOP_INVITE_TTL_SECONDS,
     _PAIRING_CODE_TTL,
     PairingManager,
     RateLimiter,
@@ -1029,6 +1030,7 @@ def _session_to_dict(session: Session, current_token: str | None) -> dict[str, A
         "token_prefix": session.token[:8],
         "device_name": session.device_name,
         "device_id": session.device_id,
+        "desktop_only": session.desktop_only,
         "created_at": session.created_at,
         "first_seen": session.first_seen,
         "last_seen": session.last_seen,
@@ -1071,12 +1073,59 @@ def _require_bearer_session(
             request.remote or "unknown",
         )
         raise web.HTTPUnauthorized(text="invalid or expired session token")
+    if session.desktop_only:
+        raise web.HTTPForbidden(text="Desktop connector credentials cannot manage server resources")
     return server, session
 
 
 def _require_loopback(request: web.Request) -> None:
     if request.remote not in ("127.0.0.1", "::1"):
         raise web.HTTPForbidden(reason="loopback only")
+
+
+async def handle_connector_invite(request: web.Request) -> web.Response:
+    """Mint a download invite, optionally bound to an operator-selected UUID.
+
+    Ordinary portal requests have no body. A local operator may explicitly
+    provide ``{"device_id": "<existing-installation-uuid>"}`` to replace that
+    installation's credentials only after its matching invite is redeemed.
+    """
+    _require_loopback(request)
+    if any(
+        name.lower() in {"origin", "referer", "forwarded", "x-real-ip"}
+        or name.lower().startswith(("x-forwarded-", "cf-", "x-hermes-proxy-"))
+        for name in request.headers
+    ):
+        raise web.HTTPForbidden(text="Local operator only")
+    server: RelayServer = request.app["server"]
+    port = server.config.port
+    if len(request.headers.getall("Host", [])) != 1 or request.host not in {
+        f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}",
+    }:
+        raise web.HTTPForbidden(text="Local operator host required")
+    body: dict[str, Any] = {}
+    if request.can_read_body:
+        try:
+            body = await request.json()
+        except (ValueError, UnicodeError) as exc:
+            raise web.HTTPBadRequest(text="Invalid operator invitation request") from exc
+        if not isinstance(body, dict) or set(body) - {"device_id"}:
+            raise web.HTTPBadRequest(text="Invalid operator invitation request")
+    replacement_id: str | None = None
+    if "device_id" in body:
+        replacement_id = body["device_id"]
+        try:
+            if not isinstance(replacement_id, str) or str(uuid.UUID(replacement_id)) != replacement_id:
+                raise ValueError("invalid UUID")
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text="Replacement requires an exact installation UUID") from exc
+        if not any(s.device_id == replacement_id for s in server.sessions.list_sessions()) and not (
+            server.sessions.has_trusted_device(replacement_id)
+        ):
+            raise web.HTTPNotFound(text="Installation identity is not paired")
+    code = server.pairing.generate_desktop_invite(operator_replace_device_id=replacement_id)
+    return web.json_response({"invite": code, "expires_in": DESKTOP_INVITE_TTL_SECONDS},
+                             headers={"Cache-Control": "no-store"})
 
 
 async def handle_sessions_list(request: web.Request) -> web.Response:
@@ -1955,24 +2004,7 @@ async def handle_media_get(request: web.Request) -> web.StreamResponse:
       → 401 missing/invalid bearer
       → 404 token not found / expired
     """
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise web.HTTPUnauthorized(
-            text="Authorization: Bearer <session_token> required",
-        )
-
-    bearer = auth_header[len("Bearer ") :].strip()
-    if not bearer:
-        raise web.HTTPUnauthorized(text="empty bearer token")
-
-    server: RelayServer = request.app["server"]
-    session = server.sessions.get_session(bearer)
-    if session is None:
-        logger.info(
-            "Media fetch rejected: invalid bearer token from %s",
-            request.remote or "unknown",
-        )
-        raise web.HTTPUnauthorized(text="invalid or expired session token")
+    server, _session = _require_bearer_session(request)
 
     token = request.match_info["token"]
     entry = await server.media.get(token)
@@ -2066,24 +2098,7 @@ async def handle_media_by_path(request: web.Request) -> web.StreamResponse:
     sensitivity bit (if any) must ride the query string. When truthy the
     response carries ``X-Media-Sensitive: 1``. Absent → not sensitive.
     """
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise web.HTTPUnauthorized(
-            text="Authorization: Bearer <session_token> required",
-        )
-
-    bearer = auth_header[len("Bearer ") :].strip()
-    if not bearer:
-        raise web.HTTPUnauthorized(text="empty bearer token")
-
-    server: RelayServer = request.app["server"]
-    session = server.sessions.get_session(bearer)
-    if session is None:
-        logger.info(
-            "Media by-path fetch rejected: invalid bearer from %s",
-            request.remote or "unknown",
-        )
-        raise web.HTTPUnauthorized(text="invalid or expired session token")
+    server, _session = _require_bearer_session(request)
 
     path = request.query.get("path", "").strip()
     if not path:
@@ -3885,6 +3900,9 @@ async def _broadcast_profiles_updated(
     for ws in list(server._clients):
         if ws.closed:
             continue
+        session = server.sessions.get_session(server._clients[ws])
+        if session is None or session.desktop_only:
+            continue
         try:
             await ws.send_str(blob)
         except ConnectionResetError:
@@ -4369,7 +4387,8 @@ def _build_auth_ok_payload(
     payload: dict[str, Any] = {
         "session_token": session.token,
         "server_version": __version__,
-        "profiles": server.config.profiles,
+        "profiles": [] if session.desktop_only else server.config.profiles,
+        "desktop_only": session.desktop_only,
         "expires_at": _norm(session.expires_at),
         "grants": {k: _norm(v) for k, v in session.grants.items()},
         "transport_hint": session.transport_hint,
@@ -4455,6 +4474,9 @@ async def _authenticate(
         await _send_system(ws, "auth.fail", {"reason": "Invalid message format"})
         raise _AuthFailed("invalid JSON")
 
+    if not isinstance(envelope, dict):
+        await _send_system(ws, "auth.fail", {"reason": "Invalid message format"})
+        raise _AuthFailed("invalid envelope")
     if envelope.get("channel") != "system" or envelope.get("type") != "auth":
         await _send_system(
             ws, "auth.fail", {"reason": "First message must be system/auth"}
@@ -4468,13 +4490,19 @@ async def _authenticate(
         payload = {}
     server._client_capabilities[ws] = _extract_client_capabilities(payload)
     pairing_code = payload.get("pairing_code", "")
+    if not isinstance(pairing_code, str):
+        pairing_code = ""
     session_token_attempt = payload.get("session_token", "")
+    if not isinstance(session_token_attempt, str):
+        session_token_attempt = ""
     refresh_token_attempt = str(payload.get("refresh_token", "") or "").strip()
     device_hostname = str(payload.get("device_hostname", "") or "").strip()
     device_name = str(
         payload.get("device_name") or device_hostname or "Unknown device"
     ).strip()
     device_id = payload.get("device_id", "unknown")
+    if not isinstance(device_id, str):
+        device_id = "unknown"
     client_surface = str(payload.get("client_surface", "unknown") or "unknown")
     device_form_factor = str(payload.get("device_form_factor", "unknown") or "unknown")
     device_model = str(payload.get("device_model", "unknown") or "unknown").strip()
@@ -4518,6 +4546,7 @@ async def _authenticate(
             )
             if (
                 not refresh_token_attempt
+                and not session.desktop_only
                 and device_id
                 and not server.sessions.has_trusted_device(session.device_id)
             ):
@@ -4570,20 +4599,46 @@ async def _authenticate(
             ttl_seconds: float | None = metadata.ttl_seconds
             grants: dict[str, float] | None = metadata.grants
             transport_hint = metadata.transport_hint or detected_transport
+            replaced_tokens = {
+                existing.token for existing in server.sessions.list_sessions()
+                if metadata.operator_replace_device_id is not None
+                and existing.device_id == metadata.operator_replace_device_id
+            }
 
-            session = server.sessions.create_session(
-                device_name,
-                device_id,
-                ttl_seconds=ttl_seconds,
-                grants=grants,
-                transport_hint=transport_hint,
-                client_surface=client_surface,
-                device_form_factor=device_form_factor,
-                device_model=device_model,
-                device_platform=device_platform,
-                supervised_mode=supervised_mode,
-                issue_refresh_token=True,
-            )
+            try:
+                session = server.sessions.create_session(
+                    device_name,
+                    device_id,
+                    ttl_seconds=ttl_seconds,
+                    grants=grants,
+                    transport_hint=transport_hint,
+                    client_surface=client_surface,
+                    device_form_factor=device_form_factor,
+                    device_model=device_model,
+                    device_platform=device_platform,
+                    supervised_mode=supervised_mode,
+                    issue_refresh_token=not metadata.desktop_only,
+                    desktop_only=metadata.desktop_only,
+                    operator_replace_device_id=metadata.operator_replace_device_id,
+                )
+            except ValueError as exc:
+                await _send_system(ws, "auth.fail", {"reason": str(exc)})
+                raise _AuthFailed("pairing identity rejected") from exc
+            if replaced_tokens:
+                for old_ws, old_token in list(server._clients.items()):
+                    if old_token in replaced_tokens and not old_ws.closed:
+                        await old_ws.close(
+                            code=aiohttp.WSCloseCode.POLICY_VIOLATION,
+                            message=b"Relay installation replaced by operator",
+                        )
+                for old_token in replaced_tokens:
+                    credential_id = credential_id_for(old_token)
+                    server.secure_link_route_credentials.pop(credential_id, None)
+                    if server.secure_link_connector is not None:
+                        try:
+                            await server.secure_link_connector.revoke_route(credential_id=credential_id)
+                        except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError) as exc:
+                            logger.warning("Secure Link broker route revoke deferred: %s", exc)
             server.rate_limiter.record_success(remote_ip)
             route_credential = (
                 await _route_credential_for_auth(session, server)
@@ -4647,12 +4702,27 @@ async def _on_message(
     try:
         envelope = json.loads(raw)
     except json.JSONDecodeError:
-        logger.warning("Non-JSON message from client: %s", raw[:200])
+        logger.warning("Non-JSON message from client")
         return
 
+    if not isinstance(envelope, dict):
+        return
     channel = envelope.get("channel", "")
-    msg_type = envelope.get("type", "")
     msg_id = envelope.get("id", "")
+    token = server._clients.get(ws)
+    authenticated = server.sessions.get_session(token) if token else None
+    if authenticated is None:
+        message = (
+            "Terminal grant expired for this device" if channel == "terminal"
+            else "Authenticated Relay session is no longer valid"
+        )
+        await _send_system(ws, "error", {"message": message}, msg_id)
+        await ws.close(code=aiohttp.WSCloseCode.POLICY_VIOLATION, message=b"Relay session invalid")
+        return
+    if authenticated.desktop_only and channel not in {"system", "desktop"}:
+        await _send_system(ws, "error", {"message": "Desktop connector channel only"}, msg_id)
+        return
+    msg_type = envelope.get("type", "")
 
     logger.debug("Received: channel=%s type=%s id=%s", channel, msg_type, msg_id)
 
@@ -4757,6 +4827,12 @@ async def _handle_system(
     msg_type = envelope.get("type", "")
     payload = envelope.get("payload", {})
     msg_id = envelope.get("id")
+
+    token = server._clients.get(ws)
+    session = server.sessions.get_session(token) if token else None
+    if session is not None and session.desktop_only and msg_type not in {"ping", "pong"}:
+        await _send_system(ws, "error", {"message": "Desktop connector heartbeat only"}, msg_id)
+        return
 
     if msg_type == "ping":
         await _send_system(ws, "pong", {"ts": payload.get("ts", time.time())}, msg_id)
@@ -4907,6 +4983,7 @@ def create_app(config: RelayConfig) -> web.Application:
     app.router.add_get("/", handle_ws)
     app.router.add_get("/health", handle_health)
     app.router.add_get("/secure-link/preflight", handle_secure_link_preflight)
+    app.router.add_post("/connector/invite", handle_connector_invite)
     app.router.add_post("/pairing/register", handle_pairing_register)
     app.router.add_post("/pairing/mint", handle_pairing_mint)
     app.router.add_post("/pairing/approve", handle_pairing_approve)

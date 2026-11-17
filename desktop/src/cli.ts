@@ -6,6 +6,7 @@
 import { auditCommand } from './commands/audit.js'
 import { chatCommand } from './commands/chat.js'
 import { computerUseCommand } from './commands/computerUse.js'
+import { connectorCommand } from './commands/connector.js'
 import { daemonCommand } from './commands/daemon.js'
 import { devicesCommand } from './commands/devices.js'
 import { doctorCommand } from './commands/doctor.js'
@@ -145,6 +146,7 @@ const KNOWN_COMMANDS = new Set([
   'audit',
   'chat',
   'computer-use',
+  'connector',
   'daemon',
   'devices',
   'doctor',
@@ -172,6 +174,7 @@ Usage:
   hermes-relay chat [<prompt>]     Structured-event chat (REPL or one-shot, scriptable)
   hermes-relay computer-use        Enable/disable desktop screenshots and task-scoped input
   hermes-relay "<prompt>"          One-shot structured chat (shortcut for chat "...")
+  hermes-relay connector           Install from a private setup file without typing a code
   hermes-relay pair [CODE]         Pair with the relay and store a session token
   hermes-relay paste               Stage clipboard image for /paste in the TUI
   hermes-relay plugins             List/install/update/launch desktop surface plugins
@@ -329,6 +332,8 @@ export async function main(argv = process.argv): Promise<number> {
       return chatCommand(args)
     case 'computer-use':
       return computerUseCommand(args)
+    case 'connector':
+      return connectorCommand(args)
     case 'daemon':
       return daemonCommand(args)
     case 'devices':
