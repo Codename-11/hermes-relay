@@ -52,6 +52,7 @@ from pathlib import Path
 
 from . import __version__
 from .auth import (
+    DESKTOP_INVITE_TTL_SECONDS,
     _PAIRING_CODE_TTL,
     PairingManager,
     RateLimiter,
@@ -1123,7 +1124,8 @@ async def handle_connector_invite(request: web.Request) -> web.Response:
         ):
             raise web.HTTPNotFound(text="Installation identity is not paired")
     code = server.pairing.generate_desktop_invite(operator_replace_device_id=replacement_id)
-    return web.json_response({"invite": code, "expires_in": 600}, headers={"Cache-Control": "no-store"})
+    return web.json_response({"invite": code, "expires_in": DESKTOP_INVITE_TTL_SECONDS},
+                             headers={"Cache-Control": "no-store"})
 
 
 async def handle_sessions_list(request: web.Request) -> web.Response:

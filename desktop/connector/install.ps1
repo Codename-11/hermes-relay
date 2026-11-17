@@ -86,6 +86,39 @@ function Stop-ConnectorDaemon {
         if (Get-Process -Id $daemonPid -ErrorAction SilentlyContinue) { throw '原后台连接未退出，已保留原安装。' }
     }
 }
+function Get-ConnectorBinaryProcesses {
+    try {
+        # Query the image name narrowly, then require the complete executable
+        # path. Another installation or isolated profile is never selected.
+        $image = [IO.Path]::GetFileName($cli).Replace("'","''")
+        return @(Get-CimInstance -ClassName Win32_Process -Filter ("Name='"+$image+"'") -ErrorAction Stop | Where-Object {
+            $_.ExecutablePath -and [IO.Path]::GetFullPath([string]$_.ExecutablePath) -ieq $cli
+        })
+    } catch { throw '无法检查此安装路径的残留进程，已保留原安装。' }
+}
+function Stop-RemainingConnectorProcesses {
+    $remaining = @(Get-ConnectorBinaryProcesses)
+    if (-not $remaining.Count) { return }
+    # Keep only identifiers and a role label, never credential-bearing argv.
+    $records = @($remaining | ForEach-Object { @{pid=[int]$_.ProcessId;role='same-installation-cli'} })
+    ConvertTo-Json -InputObject $records -Depth 3 | Set-Content -LiteralPath (Join-Path $backup 'remaining-relay-processes.json') -Encoding UTF8
+    foreach ($item in $remaining) {
+        $process = $null
+        try {
+            $process = Get-Process -Id ([int]$item.ProcessId) -ErrorAction SilentlyContinue
+            if (-not $process) { continue }
+            # Holding this OS handle prevents PID reuse between path validation
+            # and termination. Recheck the live image before stopping anything.
+            [void]$process.Handle
+            if ($process.HasExited) { continue }
+            if ([IO.Path]::GetFullPath([string]$process.Path) -ine $cli) { continue }
+            $process.Kill()
+            if (-not $process.WaitForExit(10000)) { throw 'process did not exit' }
+        } catch { throw '无法关闭此安装路径的残留进程，已保留原安装。请先结束该连接器后重试。' }
+        finally { if ($process) { $process.Dispose() } }
+    }
+    if (@(Get-ConnectorBinaryProcesses).Count) { throw '此安装路径仍有进程占用，已保留原安装。请先结束该连接器后重试。' }
+}
 function Task-IsOwned($task) {
     $owner = [string]$task.Principal.UserId
     if ($owner -ine $user -and $owner -ine $userSid -and $owner -ine $env:USERNAME) { return $false }
@@ -159,10 +192,12 @@ try {
         if ($existingFiles[$name]) { Copy-Item -LiteralPath $file -Destination (Join-Path $backup $name) }
     }
     if ($hadCli) { Copy-Item -LiteralPath $cli -Destination (Join-Path $backup 'hermes-relay-before.exe') }
+    Stop-RemainingConnectorProcesses
     # Copy beside the old binary first; Windows rejects replacement if any old
     # executable owner remains. No validation websocket is opened until stop.
     Copy-Item -LiteralPath $payload -Destination ($cli+'.new') -Force
-    Move-Item -LiteralPath ($cli+'.new') -Destination $cli -Force
+    if ($hadCli) { [IO.File]::Replace(($cli+'.new'),$cli,[NullString]::Value) }
+    else { [IO.File]::Move(($cli+'.new'),$cli) }
     $replaced = $true
     & $cli connector --setup $setupPath --grant-tools
     if ($LASTEXITCODE -ne 0) { throw '连接授权失败。检查网络或从下载页领取新的安装包。' }

@@ -46,7 +46,11 @@ its one-use invitation even after the extracted setup file is removed.
 Before replacement, the installer disables only recognized tasks owned by the
 current user and pointing into this installation, stops its daemon, and backs
 up the binary, saved sessions, access policy, device identifier and task XML.
-Unrecognized tasks are retained. Backups live in an owner-restricted
+Before replacing the executable, it closes remaining CLI processes only when
+their complete executable path matches this installation. Other installation
+paths and isolated profiles are retained. Failure to close a matching process
+aborts replacement and preserves the original program. Unrecognized tasks are
+retained. Backups live in an owner-restricted
 `connector-backup-<timestamp>-<id>` directory under `.hermes`.
 
 Before new authorization is verified and saved, a failed installation attempts

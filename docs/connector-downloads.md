@@ -13,9 +13,12 @@ issuer and application audience. Forward the original assertion and browser
 Origin header through the proxy; do not replace them with a shared secret.
 The public landing page contains only a link to the private page.
 
-A successful download creates a random, single-use invitation valid for ten
-minutes. The installation exchanges that invitation for a permanent session
-with exactly one `desktop` grant. It cannot use server chat, terminal, voice,
+A successful download creates a random, single-use invitation valid for one
+hour, allowing time to download a large installer over a slow connection.
+Ordinary six-character pairing codes retain their ten-minute lifetime. The
+portal records the operator endpoint's returned lifetime in the installation
+package's expiry. The installation exchanges that invitation for a permanent
+session with exactly one `desktop` grant. It cannot use server chat, terminal, voice,
 media, profiles or management routes. Revoke a device using the existing
 operator session controls. This revocation is separate from pausing its local
 startup task.

@@ -163,7 +163,7 @@ class PortalNetworkTests(unittest.IsolatedAsyncioTestCase):
             invite = secrets.token_hex(32)
             self.invites.append(invite)
             return web.json_response(self.invite_document if self.invite_document is not None
-                                     else {"invite": invite, "expires_in": 600})
+                                     else {"invite": invite, "expires_in": 3600})
 
         upstream = web.Application()
         upstream.router.add_get("/certs", certs)
@@ -279,8 +279,8 @@ class PortalNetworkTests(unittest.IsolatedAsyncioTestCase):
                 setup = json.loads(archive.read("setup.json"))
                 self.assertEqual(setup["invite"], self.invites[-1])
                 self.assertRegex(setup["invite"], r"^[a-f0-9]{64}$")
-                self.assertLessEqual(before + 600, setup["expires_at"])
-                self.assertLessEqual(setup["expires_at"], int(time.time()) + 600)
+                self.assertLessEqual(before + 3600, setup["expires_at"])
+                self.assertLessEqual(setup["expires_at"], int(time.time()) + 3600)
             self.assertEqual(list(self.temp_path.iterdir()), [])
         self.assertNotEqual(results[0], results[1])
         for local_headers in self.local_headers:
@@ -291,11 +291,31 @@ class PortalNetworkTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_bad_local_invitation_never_leaks_or_leaves_an_archive(self) -> None:
         csrf, headers = await self.form()
-        for document in ({"invite": "bad", "expires_in": 600}, {"invite": "a" * 64, "expires_in": 3600}, []):
+        for document in ({"invite": "bad", "expires_in": 3600}, {"invite": "a" * 64, "expires_in": 3601}, []):
             self.invite_document = document
             response = await self.client.post("/relay/private/download", headers=headers, data={"csrf": csrf})
             self.assertEqual(response.status, 503)
             self.assertNotIn("a" * 64, await response.text())
+            self.assertEqual(list(self.temp_path.iterdir()), [])
+
+    async def test_download_uses_the_returned_invitation_lifetime(self) -> None:
+        self.invite_document = {"invite": "a" * 64, "expires_in": 1200}
+        csrf, headers = await self.form()
+        before = int(time.time())
+        response = await self.client.post("/relay/private/download", headers=headers, data={"csrf": csrf})
+        self.assertEqual(response.status, 200)
+        with zipfile.ZipFile(io.BytesIO(await response.read())) as archive:
+            setup = json.loads(archive.read("setup.json"))
+        self.assertLessEqual(before + 1200, setup["expires_at"])
+        self.assertLessEqual(setup["expires_at"], int(time.time()) + 1200)
+
+    async def test_invalid_invitation_lifetimes_are_rejected(self) -> None:
+        object.__setattr__(self.config, "downloads_per_window", 20)
+        csrf, headers = await self.form()
+        for lifetime in (None, True, False, 0, -1, 3601, 3600.0, "3600"):
+            self.invite_document = {"invite": "a" * 64, "expires_in": lifetime}
+            response = await self.client.post("/relay/private/download", headers=headers, data={"csrf": csrf})
+            self.assertEqual(response.status, 503)
             self.assertEqual(list(self.temp_path.iterdir()), [])
 
     async def test_archive_failure_cleanup_and_identity_rate_limit(self) -> None:

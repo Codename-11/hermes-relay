@@ -89,6 +89,8 @@ VOICE_GRANT_KEYS: tuple[str, ...] = (
 
 # Pairing codes still expire after 10 minutes regardless of session TTL.
 _PAIRING_CODE_TTL = 600.0
+# Download invitations allow time for a large installer on a slow link.
+DESKTOP_INVITE_TTL_SECONDS = 60 * 60
 
 # Device refresh credentials survive normal relay restarts and updates. They
 # are only issued after a successful pair or an already-valid session reconnect,
@@ -425,7 +427,8 @@ class _PairingEntry:
 class PairingManager:
     """Manages short-lived pairing codes used for initial device authentication.
 
-    Codes are stored in-memory and expire after 10 minutes.
+    Codes are stored in-memory. Ordinary pairing codes expire after ten
+    minutes; high-entropy desktop download invitations expire after one hour.
     """
 
     def __init__(self) -> None:
@@ -444,16 +447,21 @@ class PairingManager:
     def generate_desktop_invite(self, operator_replace_device_id: str | None = None) -> str:
         """Mint a high-entropy, one-use installation invite without logging it.
 
-        Used only by the local operator/download portal. Its ten-minute life
+        Used only by the local operator/download portal. Its one-hour life
         is independent of the resulting revocable, desktop-only device session.
         An operator replacement is bound to the exact supplied installation
         identity; ordinary download invitations never replace an existing pair.
         """
         code = secrets.token_hex(32).upper()
-        self._codes[code] = _PairingEntry(code=code, metadata=PairingMetadata(
-            ttl_seconds=0, transport_hint="wss", desktop_only=True,
-            operator_replace_device_id=operator_replace_device_id,
-        ))
+        created_at = time.time()
+        self._codes[code] = _PairingEntry(
+            code=code, created_at=created_at,
+            expires_at=created_at + DESKTOP_INVITE_TTL_SECONDS,
+            metadata=PairingMetadata(
+                ttl_seconds=0, transport_hint="wss", desktop_only=True,
+                operator_replace_device_id=operator_replace_device_id,
+            ),
+        )
         logger.info("Created a one-use desktop installation invite")
         return code
 

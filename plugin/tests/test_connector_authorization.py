@@ -19,6 +19,20 @@ from plugin.relay.server import _broadcast_profiles_updated, create_app
 
 
 class ConnectorInviteTests(unittest.TestCase):
+    def test_desktop_invite_allows_an_hour_but_ordinary_pairing_stays_ten_minutes(self) -> None:
+        manager = PairingManager()
+        invite = manager.generate_desktop_invite()
+        ordinary = manager.generate_code()
+        invite_entry = manager._codes[invite]
+        ordinary_entry = manager._codes[ordinary]
+        self.assertEqual(invite_entry.expires_at - invite_entry.created_at, 3600)
+        self.assertEqual(ordinary_entry.expires_at - ordinary_entry.created_at, 600)
+        with patch('plugin.relay.auth.time.time', return_value=ordinary_entry.expires_at + 1):
+            self.assertTrue(manager.validate_code(invite))
+            self.assertFalse(manager.validate_code(ordinary))
+        with patch('plugin.relay.auth.time.time', return_value=invite_entry.expires_at + 1):
+            self.assertIsNone(manager.consume_code(invite))
+
     def test_one_use_high_entropy_and_expiry(self) -> None:
         manager = PairingManager()
         code = manager.generate_desktop_invite()
@@ -137,7 +151,9 @@ class ConnectorWireTests(AioHTTPTestCase):
         reply = await self.client.post('/connector/invite', headers={'Host': '127.0.0.1:8767'})
         self.assertEqual(reply.status, 200)
         self.assertEqual(reply.headers['Cache-Control'], 'no-store')
-        self.assertRegex((await reply.json())['invite'], r'^[0-9A-F]{64}$')
+        invitation = await reply.json()
+        self.assertEqual(invitation['expires_in'], 3600)
+        self.assertRegex(invitation['invite'], r'^[0-9A-F]{64}$')
 
     async def test_actual_desktop_session_cannot_open_other_channels_or_manage_sessions(self) -> None:
         ws, token = await self.authorize()

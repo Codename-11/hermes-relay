@@ -32,6 +32,8 @@ import zipfile
 from aiohttp import ClientError, ClientResponse, ClientSession, ClientTimeout, web
 import jwt
 
+from .relay.auth import DESKTOP_INVITE_TTL_SECONDS
+
 logger = logging.getLogger(__name__)
 _CHUNK_SIZE = 256 * 1024
 _MAX_JSON_BYTES = 128 * 1024
@@ -306,7 +308,7 @@ def create_app(config: PortalConfig) -> web.Application:
         target = html.escape(f"{config.prefix}/private/download", quote=True)
         return _page("下载桌面连接器", f'''<h1>安装桌面连接器</h1><p>安装时一次确认，授权这台电脑的文件、命令执行、屏幕与输入、USB、麦克风和摄像头能力。安装后以独立的长期授权连接，直到你撤销。</p>
 <ol><li>点击下方按钮下载专属安装包。</li><li>解压全部文件，双击 <strong>Install.cmd</strong>，按提示确认安装。</li><li>以后登录自动后台运行，无需再次填写配对码。</li></ol>
-<p>安装包的首次连接邀请只能使用一次，并在领取后 10 分钟失效。请及时安装；超时后重新下载。请勿转发安装包。</p>
+<p>安装包的首次连接邀请只能使用一次，并在领取后 1 小时失效。请及时安装；超时后重新下载。请勿转发安装包。</p>
 <form method="post" action="{target}"><input type="hidden" name="csrf" value="{token}"><button type="submit">下载 Windows 安装包</button></form>
 <p><small>已安装设备可在 Relay 设备管理中撤销长期授权。电脑上的 Status.cmd 可查看状态，Stop.cmd 可暂停连接。</small></p>''')
 
@@ -335,13 +337,14 @@ def create_app(config: PortalConfig) -> web.Application:
             if not isinstance(grant, dict):
                 raise ValueError("invalid local Relay response")
             invite, lifetime = grant.get("invite"), grant.get("expires_in")
-            if not isinstance(invite, str) or not _INVITE.fullmatch(invite) or lifetime != 600:
+            if (not isinstance(invite, str) or not _INVITE.fullmatch(invite)
+                    or type(lifetime) is not int or not 0 < lifetime <= DESKTOP_INVITE_TTL_SECONDS):
                 raise ValueError("invalid local Relay invitation")
             descriptor, filename = tempfile.mkstemp(suffix=".zip", dir=request.app[temp_key])
             os.close(descriptor)
             path = Path(filename)
             await build_download_archive(config.base_zip_path, path, relay_url=config.relay_url,
-                                         invite=invite, expires_at=started + 600)
+                                         invite=invite, expires_at=started + lifetime)
             response = web.StreamResponse(headers={**_SECURITY_HEADERS,
                 "Content-Type": "application/zip",
                 "Content-Disposition": 'attachment; filename="Relay-Connector-Windows.zip"',
