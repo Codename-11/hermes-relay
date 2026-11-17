@@ -1049,12 +1049,14 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   }
   await updateStatus({})
 
+  let advertiseDesktopAfterReconnect = () => {}
   const relay = new RelayTransport({
     url,
     sessionToken: token,
     sessionHeader: useSessionHeader,
     broker: brokerRoute,
     autoReconnect: true,
+    onReconnect: () => advertiseDesktopAfterReconnect(),
     attachTui: !args.flags['no-voice'],
     ...desktopRelayIdentity()
   })
@@ -1203,6 +1205,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
       })
     : null
   router?.attach(relay)
+  advertiseDesktopAfterReconnect = () => router?.advertise()
 
   log.info({
     event: toolsEnabled ? 'ready' : 'ready_locked',

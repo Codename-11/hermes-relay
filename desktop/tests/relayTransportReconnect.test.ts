@@ -141,6 +141,7 @@ test('startup retry budget exhaustion settles auth without another attempt', asy
   })
   relay.start()
   assert.deepEqual(await relay.whenAuthResolved(), { ok: false, reason: 'network unreachable' })
+  assert.equal(relay.wasCredentialRejected(), false)
   assert.equal(calls, 2)
   assert.equal(relay.getState(), 'idle')
 })
@@ -173,6 +174,7 @@ test('auth rejection is terminal even when startup retry is enabled', async t =>
   relay.start(); sockets[0]!.open()
   sockets[0]!.frame('system', 'auth.fail', { reason: 'invalid session token' })
   assert.deepEqual(await relay.whenAuthResolved(), { ok: false, reason: 'invalid session token' })
+  assert.equal(relay.wasCredentialRejected(), true)
   assert.equal(retries, 0)
 })
 
@@ -328,4 +330,40 @@ test('WebSocket error without close retires the socket and starts exactly one re
   await waitFor(() => sockets.length === 2)
   sockets[1]!.open(); sockets[1]!.authOk()
   assert.equal(relay.getState(), 'connected')
+})
+
+test('silent blackhole triggers heartbeat recovery without a socket close event', async t => {
+  const { relay, sockets } = fixture(t, { heartbeatIntervalMs: 15, heartbeatTimeoutMs: 40 })
+  relay.start(); sockets[0]!.open(); sockets[0]!.authOk()
+  const reasons: string[] = []
+  relay.on('reconnecting', info => reasons.push(info.reason))
+  await waitFor(() => relay.getState() === 'reconnecting')
+  assert.deepEqual(reasons, ['Relay heartbeat timed out'])
+  assert.equal(sockets[0]!.readyState, 3)
+})
+
+test('only the current heartbeat response satisfies liveness and kill cancels the watchdog', async t => {
+  const { relay, sockets } = fixture(t, { heartbeatIntervalMs: 15, heartbeatTimeoutMs: 80 })
+  relay.start(); const socket = sockets[0]!; socket.open(); socket.authOk()
+  await waitFor(() => socket.sent.some(raw => JSON.parse(raw).type === 'ping'))
+  const ping = JSON.parse(socket.sent.at(-1)!)
+  socket.frame('system', 'pong', { ts: 'obsolete-probe' })
+  socket.frame('system', 'pong', { ts: ping.payload.ts })
+  assert.equal(relay.getState(), 'connected')
+  relay.kill()
+  await new Promise(resolve => setTimeout(resolve, 110))
+  assert.equal(relay.getState(), 'idle')
+  assert.equal(sockets.length, 1)
+})
+
+test('successful reconnect invokes desktop readvertisement before announcing restored connectivity', async t => {
+  const events: string[] = []
+  const { relay, sockets } = fixture(t, { onReconnect: () => events.push('desktop-status') })
+  relay.on('reconnected', () => events.push('restored'))
+  relay.start(); sockets[0]!.open(); sockets[0]!.authOk()
+  assert.deepEqual(events, [])
+  sockets[0]!.drop(1006, 'temporary gap')
+  await waitFor(() => sockets.length === 2)
+  sockets[1]!.open(); sockets[1]!.authOk()
+  assert.deepEqual(events, ['desktop-status', 'restored'])
 })

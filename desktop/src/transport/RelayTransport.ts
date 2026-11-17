@@ -159,6 +159,9 @@ export interface RelayTransportConfig {
   ttlSeconds?: number
   /** Test hook. */
   wsFactory?: WSFactory
+  /** Application-level liveness checks for long-running direct Relay sockets. */
+  heartbeatIntervalMs?: number
+  heartbeatTimeoutMs?: number
   /** Attach the optional chat/voice TUI channel after authentication. Default: true. */
   attachTui?: boolean
   /** Retry WSS closes and transient startup failures with a stored token.
@@ -229,6 +232,7 @@ export class RelayTransport extends EventEmitter implements Transport {
   private authSuccessObservers: Array<(token: string, serverVersion: string | null, meta: AuthMeta) => void> = []
   private authSettlers: Array<(r: AuthOutcome) => void> = []
   private authFailReason: null | string = null
+  private credentialRejected = false
   private started = false
   private tornDown = false
   /** Listeners keyed by channel name. Lets the `shell` subcommand receive raw
@@ -254,6 +258,9 @@ export class RelayTransport extends EventEmitter implements Transport {
   /** Fences asynchronous connection attempts after timeout, replacement, or kill. */
   private connectionGeneration = 0
   private tuiError: string | null = null
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null
+  private heartbeatDeadline: ReturnType<typeof setTimeout> | null = null
+  private heartbeatNonce: string | null = null
   /** True after any socket has completed auth. Unlike `authResolved`, this is
    * not cleared while a replacement socket authenticates. This distinguishes
    * the first successful authentication from a restored session. */
@@ -298,6 +305,13 @@ export class RelayTransport extends EventEmitter implements Transport {
     })
   }
 
+  /** True only for an explicit auth.fail on this transport, never a network,
+   * TLS, timeout or local teardown error. Callers may use a fresh invitation
+   * after a revoked saved credential without treating outages as re-pairing. */
+  wasCredentialRejected(): boolean {
+    return this.credentialRejected
+  }
+
   private settleAuth(outcome: AuthOutcome): void {
     const settlers = this.authSettlers
     this.authSettlers = []
@@ -334,6 +348,7 @@ export class RelayTransport extends EventEmitter implements Transport {
     this.authResolved = false
     this.tornDown = false
     this.authFailReason = null
+    this.credentialRejected = false
     this.state = 'connecting'
     void this.connectOnce()
   }
@@ -764,6 +779,8 @@ export class RelayTransport extends EventEmitter implements Transport {
         })
       }
 
+      if (this.cfg.autoReconnect) this.scheduleHeartbeat()
+
       if (this.cfg.attachTui !== false) {
         this.sendEnvelope('tui', 'tui.attach', {
           cols: process.stdout.columns ?? 80,
@@ -811,6 +828,7 @@ export class RelayTransport extends EventEmitter implements Transport {
     }
 
     if (type === 'auth.fail') {
+      this.credentialRejected = true
       const reason = typeof payload.reason === 'string' ? payload.reason : 'auth failed'
       this.authFailReason = reason
       this.pushLog(`[auth] fail: ${reason}`)
@@ -822,11 +840,49 @@ export class RelayTransport extends EventEmitter implements Transport {
       return
     }
 
+    if (type === 'pong') {
+      if (this.heartbeatNonce !== null && payload.ts === this.heartbeatNonce) {
+        if (this.heartbeatDeadline) clearTimeout(this.heartbeatDeadline)
+        this.heartbeatDeadline = null
+        this.heartbeatNonce = null
+        this.scheduleHeartbeat()
+      }
+      return
+    }
+
     if (type === 'ping') {
       this.sendEnvelope('system', 'pong', { ts: typeof payload.ts === 'number' ? payload.ts : Date.now() })
 
       return
     }
+  }
+
+  private clearHeartbeat(): void {
+    if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer)
+    if (this.heartbeatDeadline) clearTimeout(this.heartbeatDeadline)
+    this.heartbeatTimer = null
+    this.heartbeatDeadline = null
+    this.heartbeatNonce = null
+  }
+
+  private scheduleHeartbeat(): void {
+    this.clearHeartbeat()
+    const ws = this.ws
+    if (!ws || !this.authResolved || this.tornDown) return
+    this.heartbeatTimer = setTimeout(() => {
+      this.heartbeatTimer = null
+      if (this.ws !== ws || !this.authResolved || this.tornDown) return
+      const nonce = randomUUID()
+      this.heartbeatNonce = nonce
+      this.heartbeatDeadline = setTimeout(() => {
+        if (this.ws === ws && this.heartbeatNonce === nonce && !this.tornDown) {
+          this.teardownSocket(-1, 'Relay heartbeat timed out')
+        }
+      }, this.cfg.heartbeatTimeoutMs ?? 15_000)
+      this.heartbeatDeadline.unref?.()
+      this.sendEnvelope('system', 'ping', { ts: nonce })
+    }, this.cfg.heartbeatIntervalMs ?? 20_000)
+    this.heartbeatTimer.unref?.()
   }
 
   private handleTui(type: string, payload: Record<string, unknown>) {
@@ -936,6 +992,7 @@ export class RelayTransport extends EventEmitter implements Transport {
    * the transport itself decides the current socket is dead (auth timeout,
    * TOFU failure). */
   private teardownSocket(code: number | null, reason: string): void {
+    this.clearHeartbeat()
     if (this.authTimer) {
       clearTimeout(this.authTimer)
       this.authTimer = null
@@ -959,6 +1016,7 @@ export class RelayTransport extends EventEmitter implements Transport {
     if (this.tornDown) {
       return
     }
+    this.clearHeartbeat()
     this.tornDown = true
     this.connectionGeneration += 1
     this.state = 'idle'
@@ -1012,6 +1070,7 @@ export class RelayTransport extends EventEmitter implements Transport {
     if (this.tornDown || this.state === 'reconnecting') {
       return
     }
+    this.clearHeartbeat()
     this.connectionGeneration += 1
     this.authResolved = false
 

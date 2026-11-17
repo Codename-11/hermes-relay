@@ -11,11 +11,15 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
   broker outages. Keep rejected credentials, protocol violations, and pinned
   TLS failures terminal; add broker-specific recovery fixtures before changing
   this policy. Direct Relay startup recovery does not certify broker recovery.
-- Verify client recovery when a network silently blackholes an already-open
-  connection. The direct server has a WebSocket heartbeat, but the desktop
-  transport has no independent receive deadline; a server-side close may not
-  reach a disconnected network path. Measure this with a controlled blackhole
-  before choosing a client watchdog budget.
+- Certify direct Relay heartbeat recovery under a physical network blackhole.
+  The desktop transport now requires its own nonce-matched pong within 15 seconds
+  after each 20-second idle heartbeat; deterministic socket fixtures verify
+  reconnect and tool readvertisement. A real network outage remains separate
+  device evidence.
+- Verify headless connector installation and process recovery on supported Windows
+  versions, including rollback after server-side device credential replacement.
+  Keep desktop-only, permanent authorizations independently revocable; never
+  embed credentials in the public installer template.
 - Add localized desktop management strings and a language selection policy.
   The current tray UI has English literals and no translation catalog.
 - Restore a usable desktop window drag region with explicit Tauri permissions

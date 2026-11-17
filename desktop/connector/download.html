@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="下载 Windows x64 Relay 桌面连接器，一次授权后自动在后台连接。">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'">
+  <title>Relay 桌面连接器</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #edf3fc; background: #101720; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { width: min(100% - 40px, 760px); margin: 72px auto; }
+    .label { color: #92c2ff; font-size: 13px; font-weight: 650; letter-spacing: .08em; }
+    h1 { margin: 14px 0 16px; font-size: clamp(30px, 6vw, 44px); letter-spacing: -.03em; line-height: 1.2; }
+    p { margin: 0 0 18px; color: #bac9dc; line-height: 1.8; }
+    .intro { max-width: 580px; font-size: 18px; }
+    .download { display: inline-block; margin: 7px 0 12px; padding: 15px 24px; border-radius: 10px; color: #10243c; background: #9bcaff; text-decoration: none; font-weight: 700; }
+    .download:hover { background: #bedcff; }
+    .download:focus-visible { outline: 3px solid #fff; outline-offset: 5px; }
+    .support { display: block; margin-bottom: 36px; color: #a2b3ca; font-size: 14px; }
+    section { margin-top: 20px; padding: 24px 26px; border: 1px solid #2a394d; border-radius: 15px; background: #17222f; }
+    h2 { margin: 0 0 16px; font-size: 20px; }
+    ol { margin: 0; padding-left: 23px; }
+    li { padding: 0 0 12px 5px; line-height: 1.8; color: #bac9dc; }
+    li:last-child { padding-bottom: 0; }
+    strong { color: #edf3fc; font-weight: 650; }
+    code { padding: 2px 6px; border-radius: 5px; background: #26364b; color: #e1edff; font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
+    section p:last-child { margin-bottom: 0; }
+    footer { padding: 23px 2px 0; color: #9caec6; font-size: 14px; line-height: 1.8; }
+    @media (max-width: 480px) { main { margin: 42px auto; } section { padding: 21px; } .download { width: 100%; text-align: center; } }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="label">RELAY · WINDOWS</div>
+    <h1>让电脑持续连接你的 Relay</h1>
+    <p class="intro">一次安装与授权，以后登录自动在后台启动，断线自动重连，无需反复填写配对码。</p>
+    <!-- Replace ADMIN_DOWNLOAD_URL with the private HTTPS download page when deploying. -->
+    <a class="download" href="ADMIN_DOWNLOAD_URL">登录后台，下载安装包</a>
+    <span class="support">适用于 Windows x64 · 下载前需要登录后台</span>
+
+    <section aria-labelledby="install-heading">
+      <h2 id="install-heading">三步完成安装</h2>
+      <ol>
+        <li><strong>登录并下载。</strong>通过后台身份验证后，领取本次安装专用的 ZIP 安装包。</li>
+        <li><strong>解压全部文件。</strong>打开解压后的文件夹，双击 <code>Install.cmd</code>。</li>
+        <li><strong>确认一次授权。</strong>按提示确认服务器与权限，完成后即在后台自动连接。</li>
+      </ol>
+    </section>
+
+    <section aria-labelledby="permission-heading">
+      <h2 id="permission-heading">授权与日常使用</h2>
+      <p>安装时一次确认文件、命令执行、屏幕与输入、USB、麦克风和摄像头能力。安装后的独立长期授权可在 Relay 设备管理中撤销。</p>
+      <p>安装完成后，使用 <code>Status.cmd</code> 查看连接状态，使用 <code>Stop.cmd</code> 暂停后台连接；具体位置见安装完成提示。</p>
+    </section>
+
+    <footer>安装包中的首次连接邀请仅可使用一次，领取后 10 分钟失效。请及时安装并妥善保管，不要转发；超时后可重新登录下载。</footer>
+  </main>
+</body>
+</html>
