@@ -209,6 +209,9 @@ function Start-ConnectorScheduledDaemon {
         throw '普通用户后台任务未能完成连接，正在检查恢复。'
     } finally { Remove-Item -LiteralPath $readyPath -Force -ErrorAction SilentlyContinue }
 }
+function Task-IsRetiredLegacy([string]$name,$task) {
+    return $name -in @('HermesRelay-KeepAlive','HermesRelayDaemon') -and [string]$task.State -eq 'Disabled'
+}
 function Task-IsOwned($task) {
     $owner = [string]$task.Principal.UserId
     if ($owner -ine $user -and $owner -ine $userSid -and $owner -ine $env:USERNAME) { return $false }
@@ -253,6 +256,9 @@ try {
             if ($name -eq $taskName) { throw '同名自启任务不属于此安装；请检查任务冲突。' }
             continue
         }
+        # Retired legacy tasks retain their registration and administrator ACL.
+        # A paused current hash task still needs its normal backup and update.
+        if (Task-IsRetiredLegacy $name $task) { continue }
         Export-ScheduledTask -TaskName $name -TaskPath '\' | Set-Content -LiteralPath (Join-Path $backup ($name+'.xml')) -Encoding Unicode
         $taskBackups += $name
         Disable-ScheduledTask -TaskName $name -TaskPath '\' | Out-Null

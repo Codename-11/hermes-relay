@@ -10,7 +10,7 @@ if (-not $InstallerSource) {
 $tokens=$null;$parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseInput($InstallerSource,[ref]$tokens,[ref]$parseErrors)
 if ($parseErrors.Count) { throw 'Installer parsing failed' }
-foreach ($name in @('Get-ConnectorBinaryProcesses','Stop-RemainingConnectorProcesses','Replace-ConnectorBinary','Get-ConnectorTaskManagementSddl')) {
+foreach ($name in @('Get-ConnectorBinaryProcesses','Stop-RemainingConnectorProcesses','Replace-ConnectorBinary','Get-ConnectorTaskManagementSddl','Task-IsRetiredLegacy')) {
     $node=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
     if (-not $node) { throw ('Missing installer function '+$name) }
     . ([ScriptBlock]::Create($node.Extent.Text))
@@ -120,4 +120,8 @@ $system=@($descriptor.DiscretionaryAcl|Where-Object {$_.SecurityIdentifier.Value
 $administrators=@($descriptor.DiscretionaryAcl|Where-Object {$_.SecurityIdentifier.Value -eq 'S-1-5-32-544'})
 Assert-Case ($system.Count -eq 1 -and $administrators.Count -eq 1) 'Task ACL must retain SYSTEM and Administrators'
 Assert-Case ((Get-ConnectorTaskManagementSddl $after $sid) -ceq $after) 'Task management grant must be idempotent'
-@{passed=8;installer_parse_errors=0;scope='mocked process closure, task ACL and temporary-file replacement'}|ConvertTo-Json -Compress
+Assert-Case (Task-IsRetiredLegacy 'HermesRelay-KeepAlive' ([pscustomobject]@{State='Disabled'})) 'Disabled historical keepalive must be left untouched'
+Assert-Case (Task-IsRetiredLegacy 'HermesRelayDaemon' ([pscustomobject]@{State='Disabled'})) 'Disabled historical daemon must be left untouched'
+Assert-Case (-not (Task-IsRetiredLegacy 'HermesRelay-Connector-0123456789AB' ([pscustomobject]@{State='Disabled'}))) 'Paused current connector must still be updated'
+Assert-Case (-not (Task-IsRetiredLegacy 'HermesRelayDaemon' ([pscustomobject]@{State='Ready'}))) 'Active historical task still requires migration'
+@{passed=12;installer_parse_errors=0;scope='mocked process closure, task ACL, retired legacy tasks and temporary-file replacement'}|ConvertTo-Json -Compress

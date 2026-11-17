@@ -26,7 +26,9 @@ Even an elevated migration starts the new daemon through that Limited task so
 the normal user can stop it afterward.
 Older tasks created with administrator-only management permissions may require
 one elevated installation under the same Windows user to migrate. Their task
-permissions are not broadened. The task runs at sign-in and checks once
+permissions are not broadened. Once disabled by migration, the historical tasks
+are left untouched during later installs, so their administrator-only ACL does
+not block updates from the normal user. The task runs at sign-in and checks once
 per minute to restart a stopped process. The daemon also reconnects after network
 interruptions. The connector requires that user to be signed in; it is not a
 system service and does not run on the Windows sign-in screen.
