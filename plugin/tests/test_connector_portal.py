@@ -241,7 +241,7 @@ class PortalNetworkTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(web.HTTPUnauthorized):
             await self.verifier.verify(self.token())
 
-    async def test_csrf_origin_and_get_download_denials_do_not_mint(self) -> None:
+    async def test_csrf_and_origin_denials_do_not_mint(self) -> None:
         token, headers = await self.form()
         for origin in (None, "https://evil.test", "null"):
             bad = dict(headers)
@@ -257,8 +257,6 @@ class PortalNetworkTests(unittest.IsolatedAsyncioTestCase):
         bad = {**headers, "CF-Access-Jwt-Assertion": self.token(sub="another-user")}
         response = await self.client.post("/relay/private/download", headers=bad, data={"csrf": token})
         self.assertEqual(response.status, 403)
-        response = await self.client.get("/relay/private/download", headers=headers)
-        self.assertEqual(response.status, 405)
         self.assertEqual(self.invites, [])
 
     async def test_downloads_are_unique_nostore_and_local_headers_never_forward(self) -> None:
@@ -373,3 +371,42 @@ class PortalNetworkTests(unittest.IsolatedAsyncioTestCase):
         response = await self.client.post("/relay/private/download", headers=headers, data={"csrf": csrf})
         self.assertEqual(response.status, 200)
         await response.read()
+
+    async def test_private_page_aliases_are_authenticated_and_get_never_mints(self) -> None:
+        for path in ("/relay/private/", "/relay/private", "/relay/private/download"):
+            response = await self.client.get(path)
+            self.assertEqual(response.status, 401)
+            self.assertEqual(response.content_type, "text/html")
+            self.assertIn("返回下载页", await response.text())
+            response = await self.client.get(path, headers={"CF-Access-Jwt-Assertion": self.token()})
+            self.assertEqual(response.status, 200)
+            self.assertEqual(response.headers["Referrer-Policy"], "same-origin")
+            self.assertIn("no-store", response.headers["Cache-Control"])
+            body = await response.text()
+            self.assertIn('<form method="post" action="/relay/private/download">', body)
+            self.assertIn('name="csrf"', body)
+            self.assertIn("下载 Windows 安装包", body)
+        self.assertEqual(self.invites, [])
+
+    async def test_recovery_pages_preserve_status_headers_and_hide_exception_details(self) -> None:
+        csrf, headers = await self.form()
+        sentinel = "private-assertion-and-invitation-must-not-appear"
+        for error, status, retry in (
+            (web.HTTPUnauthorized(text=sentinel), 401, None),
+            (web.HTTPForbidden(text=sentinel), 403, None),
+            (web.HTTPTooManyRequests(text=sentinel, headers={"Retry-After": "600"}), 429, "600"),
+            (web.HTTPServiceUnavailable(text=sentinel, headers={"Retry-After": "10"}), 503, "10"),
+        ):
+            with patch("plugin.connector_portal.DownloadLimiter.acquire", side_effect=error):
+                response = await self.client.post("/relay/private/download", headers=headers, data={"csrf": csrf})
+            self.assertEqual(response.status, status)
+            self.assertEqual(response.content_type, "text/html")
+            self.assertEqual(response.headers.get("Retry-After"), retry)
+            self.assertEqual(response.headers["Referrer-Policy"], "same-origin")
+            self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+            self.assertIn("no-store", response.headers["Cache-Control"])
+            body = await response.text()
+            self.assertIn('<a href="/relay/private/">返回下载页</a>', body)
+            for private in (sentinel, headers["CF-Access-Jwt-Assertion"], csrf):
+                self.assertNotIn(private, body)
+        self.assertEqual(self.invites, [])

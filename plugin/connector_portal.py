@@ -41,7 +41,7 @@ _INVITE = re.compile(r"[0-9a-fA-F]{64}\Z")
 _ISSUER = re.compile(r"https://[a-z0-9][a-z0-9-]*\.cloudflareaccess\.com\Z")
 _SECURITY_HEADERS = {
     "Cache-Control": "no-store, private, max-age=0", "Pragma": "no-cache",
-    "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff", "Referrer-Policy": "same-origin",
     "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
     "X-Frame-Options": "DENY",
 }
@@ -261,11 +261,11 @@ class CSRF:
             return False
 
 
-def _page(title: str, body: str) -> web.Response:
+def _page(title: str, body: str, *, status: int = 200) -> web.Response:
     return web.Response(text=f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>{html.escape(title)}</title>
 <style>body{{font:17px system-ui,sans-serif;background:#10151e;color:#eef2fa;margin:0}}main{{max-width:620px;margin:9vh auto;padding:28px}}h1{{font-size:32px}}p,li{{line-height:1.8;color:#c6cfde}}a,button{{display:inline-block;padding:14px 22px;border:0;border-radius:9px;background:#78b7ff;color:#092342;text-decoration:none;font:inherit;font-weight:650;cursor:pointer}}small{{color:#a9b4c7}}</style>
-<main>{body}</main></html>''', content_type="text/html")
+<main>{body}</main></html>''', content_type="text/html", status=status)
 
 
 @web.middleware
@@ -273,8 +273,23 @@ async def security_headers(request: web.Request, handler: Callable[[web.Request]
     try:
         response = await handler(request)
     except web.HTTPException as error:
-        error.headers.update(_SECURITY_HEADERS)
-        raise
+        recovery_messages = {
+            401: ("请先登录后台", "登录后即可领取本次安装专用的安装包。"),
+            403: ("请重新打开下载页", "当前请求未通过验证。请返回下载页，刷新后重新点击下载按钮。"),
+            429: ("下载过于频繁", "请稍候再试，再次下载需要从下载页领取。"),
+            503: ("暂时无法下载", "服务暂不可用或下载繁忙。请稍后返回下载页重试。"),
+        }
+        if error.status not in recovery_messages:
+            error.headers.update(_SECURITY_HEADERS)
+            raise
+        title, message = recovery_messages[error.status]
+        target = html.escape(str(request.app.router["connector_private"].url_for()), quote=True)
+        # Use fixed copy, never exception text or request data, in recovery pages.
+        response = _page(title, f'<h1>{title}</h1><p>{message}</p><a href="{target}">返回下载页</a>',
+                         status=error.status)
+        for header in ("Retry-After", "Allow", "WWW-Authenticate"):
+            if header in error.headers:
+                response.headers[header] = error.headers[header]
     response.headers.update(_SECURITY_HEADERS)
     return response
 
@@ -370,7 +385,9 @@ def create_app(config: PortalConfig) -> web.Application:
 
     app.cleanup_ctx.append(resources)
     app.router.add_get(config.prefix + "/", landing)
-    app.router.add_get(config.prefix + "/private/", private_page)
+    app.router.add_get(config.prefix + "/private/", private_page, name="connector_private")
+    app.router.add_get(config.prefix + "/private", private_page)
+    app.router.add_get(config.prefix + "/private/download", private_page)
     app.router.add_post(config.prefix + "/private/download", download)
     return app
 
