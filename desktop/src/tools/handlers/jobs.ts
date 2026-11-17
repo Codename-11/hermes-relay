@@ -168,8 +168,10 @@ export const jobStartHandler: ToolHandler = async args => {
   const errFd = openSync(stderrPath, 'a')
 
   const isWin = process.platform === 'win32'
-  const shellName = isWin ? 'cmd' : 'bash'
-  const shellArgs = isWin ? ['/c', command] : ['-lc', command]
+  const shellName = isWin ? process.env.ComSpec || 'cmd.exe' : 'bash'
+  // Match Node's cmd.exe shell normalization: preserve the command's own
+  // quotes instead of applying executable-argument escaping a second time.
+  const shellArgs = isWin ? ['/d', '/s', '/c', `"${command}"`] : ['-lc', command]
 
   const env = envOverride ? { ...process.env, ...envOverride } : process.env
 
@@ -180,7 +182,8 @@ export const jobStartHandler: ToolHandler = async args => {
     // Open stdin as a pipe iff the caller supplied stdin text; otherwise
     // 'ignore' so child can't hang reading from a closed TTY.
     stdio: [stdinText !== null ? 'pipe' : 'ignore', outFd, errFd],
-    windowsHide: true
+    windowsHide: true,
+    ...(isWin ? { windowsVerbatimArguments: true } : {})
   })
 
   if (!child.pid || child.pid <= 0) {

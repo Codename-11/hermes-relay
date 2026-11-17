@@ -6,6 +6,14 @@ For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisi
 
 ## Desktop connectivity and management follow-ups
 
+- Restore native child stdout/stderr capture for detached Windows background jobs.
+  Native Windows checks show that PowerShell scripts and Node programs can execute
+  and return their real exit code while both logs remain empty, although cmd
+  builtins produce logs. Disabling detachment restores PowerShell logs while
+  the parent is alive, but did not preserve completion after parent exit or
+  termination. Keep the background survival contract and verify both lifecycle
+  and output on Windows before changing process ownership.
+
 - Classify Hermes Reach broker setup failures: `openBrokerRelaySocket` errors
   currently terminate reconnect even for host-match timeouts or temporary
   broker outages. Keep rejected credentials, protocol violations, and pinned
