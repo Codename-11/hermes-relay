@@ -44,6 +44,28 @@ export function getPush() {
   return fetchJSON("/push");
 }
 
+export function installPushServiceAccount(body) {
+  return fetchJSON("/push/service-account", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+}
+
+export function clearPushServiceAccount() {
+  return fetchJSON("/push/service-account", {
+    method: "DELETE",
+  });
+}
+
+export function setPushEnabled(enabled) {
+  return fetchJSON("/push/enabled", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled: !!enabled }),
+  });
+}
+
 export function getAgentContext() {
   return fetchJSON("/agent-context");
 }

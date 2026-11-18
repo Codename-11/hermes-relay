@@ -17,6 +17,7 @@ import { relativeTime, ttlCountdown, uptime, shortToken } from "../lib/formatter
 import { formatSessionExpiry } from "../lib/session-expiry.mjs";
 import { supervisedSessionDisplay } from "../lib/supervised-session.mjs";
 import PairDialog from "../components/PairDialog.jsx";
+import PushConsole from "./PushConsole.jsx";
 import {
   Alert,
   AlertTitle,
@@ -1021,6 +1022,7 @@ export function RelaySettings({ autoRefresh }) {
 
   const categories = [
     { key: "general", label: "General" },
+    { key: "push", label: "Push wake" },
     { key: "context", label: "Agent Context" },
     { key: "maintenance", label: "Maintenance" },
   ];
@@ -1064,6 +1066,10 @@ export function RelaySettings({ autoRefresh }) {
               </CardHeader>
             </Card>
           )
+        ) : null}
+
+        {category === "push" ? (
+          <PushConsole autoRefresh={autoRefresh} />
         ) : null}
 
         {category === "context" ? (

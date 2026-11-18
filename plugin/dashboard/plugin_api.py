@@ -15,7 +15,10 @@ Route map
 - ``GET /media``            → relay ``GET /media/inspect`` (forwards ``include_expired``)
 - ``GET /agent-context``    → relay ``GET /context/injected`` + local env settings
 - ``GET /provider-usage``   → live-session-aware provider usage from this plugin
-- ``GET /push``             → static stub (no network call) until FCM is wired
+- ``GET /push``             → host FCM status (no private key)
+- ``POST /push/service-account`` → install Firebase Admin SA JSON on host
+- ``DELETE /push/service-account`` → clear host SA
+- ``PUT /push/enabled``     → toggle RELAY_FCM_ENABLED without deleting SA
 
 Error translation
 -----------------
@@ -115,6 +118,7 @@ _HTTP_ROUTE_SPECS: tuple[tuple[str, str], ...] = (
     ("GET", "/chat/image-activity"),
     ("GET", "/context/injected"),
     ("GET", "/phone/threads"),
+    ("POST", "/push/token"),
     ("GET", "/relay/info"),
     ("GET", "/relay/update-check"),
     ("POST", "/relay/model-capabilities"),
@@ -791,14 +795,61 @@ async def get_update_check(refresh: Optional[bool] = Query(default=False)) -> di
 
 @router.get("/push")
 async def get_push() -> dict[str, Any]:
-    """Push console stub — no network call until FCM lands."""
-    return {
-        "configured": False,
-        "reason": (
-            "FCM not yet wired; see docs/plans/2026-04-18-dashboard-plugin.md "
-            "and the 'Deferred Features' memory entry."
-        ),
-    }
+    """BYO FCM host status (service account on this machine only)."""
+    fcm_sender = _plugin_module("relay.fcm_sender")
+    return fcm_sender.fcm_host_status()
+
+
+@router.post("/push/service-account")
+async def post_push_service_account(request: Request) -> dict[str, Any]:
+    """Install Firebase Admin service-account JSON onto the host.
+
+    Body shapes accepted:
+      ``{\"json\": {…}}``  — already-parsed object
+      ``{\"json_text\": \"{…}\"}`` — raw file contents
+      ``{…}`` service-account object at the top level (must include client_email)
+
+    Writes ``$HERMES_HOME/secrets/fcm-sa.json`` (mode 600), sets
+    ``RELAY_FCM_SERVICE_ACCOUNT_JSON`` + ``RELAY_FCM_ENABLED=1`` in
+    ``$HERMES_HOME/.env``. Never stores the SA on the phone.
+    """
+    fcm_sender = _plugin_module("relay.fcm_sender")
+    try:
+        payload = await request.json()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"invalid JSON body: {exc}") from exc
+
+    source: Any
+    if isinstance(payload, dict) and "json_text" in payload:
+        source = payload.get("json_text")
+    elif isinstance(payload, dict) and "json" in payload:
+        source = payload.get("json")
+    else:
+        source = payload
+
+    try:
+        return fcm_sender.install_service_account(source)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/push/service-account")
+async def delete_push_service_account() -> dict[str, Any]:
+    """Remove the host service account and disable FCM wake."""
+    fcm_sender = _plugin_module("relay.fcm_sender")
+    return fcm_sender.clear_service_account()
+
+
+@router.put("/push/enabled")
+async def put_push_enabled(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """Toggle FCM wake without deleting the installed service account."""
+    fcm_sender = _plugin_module("relay.fcm_sender")
+    if "enabled" not in body:
+        raise HTTPException(status_code=400, detail="enabled (bool) is required")
+    enabled = body.get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(status_code=400, detail="enabled must be a boolean")
+    return fcm_sender.set_fcm_enabled_flag(enabled)
 
 
 async def _proxy(

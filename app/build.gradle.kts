@@ -393,6 +393,12 @@ dependencies {
     "googlePlayImplementation"(libs.play.app.update)
     "googlePlayImplementation"(libs.play.app.update.ktx)
 
+    // BYO FCM — sideload only. Runtime FirebaseOptions (no google-services
+    // plugin). googlePlay stays free of messaging in this theme; Device
+    // Control remains sideload-only as before.
+    "sideloadImplementation"(platform(libs.firebase.bom))
+    "sideloadImplementation"(libs.firebase.messaging)
+
     // Markdown rendering
     implementation(libs.markdown.renderer.m3)
     implementation(libs.markdown.renderer.code)
