@@ -468,9 +468,14 @@ class ChatHandler {
     /**
      * Render an agent-initiated message inline in the open Thread as an
      * ASSISTANT bubble (the unified-Threads live path — the agent's reply shows
-     * in the conversation, not just as a notification). [clientOnly] preserves it
-     * across the history reconcile; idempotent on the proactive [messageId] so a
-     * re-delivered push (e.g. an outbound-buffer flush) never double-posts.
+     * in the conversation, not just as a notification).
+     *
+     * Starts [ChatMessage.clientOnly] so interim / not-yet-persisted pushes keep
+     * their bubble across reloads. Once gateway history carries the same final,
+     * [reconcileLiveIdsToServer] adopts the server id onto this row (stable
+     * [ChatMessage.uiKey], badges kept) so live push + history are one bubble —
+     * not two. Idempotent on the proactive [messageId] so a re-delivered push
+     * (e.g. an outbound-buffer flush) never double-posts.
      */
     fun addAgentThreadMessage(
         text: String,
@@ -1632,6 +1637,10 @@ class ChatHandler {
                 // this as the same visible row across the post-turn reload.
                 prior.copy(
                     id = messageId,
+                    // History row is server-backed. Clear clientOnly so a live
+                    // Thread proactive that just adopted this server id is not
+                    // treated as a local-only orphan on the next reload.
+                    clientOnly = false,
                     activitySourceId = activitySourceId,
                     activityTaskCount = activityTaskCount,
                     activityFailedCount = activityFailedCount,
@@ -1710,19 +1719,29 @@ class ChatHandler {
         // subtlety: a turn that errors *after* persisting keeps an "Error" badge
         // but IS in the transcript, so it reconciles normally; only clientOnly +
         // absent-from-transcript marks a preservable orphan.
+        //
+        // Explicit supersede cases (drop the orphan, keep the server row):
+        //  - live id already adopted onto a loaded server id (idRemap) —
+        //    includes Thread proactive ASSISTANT finals (proactive-*) that
+        //    matched gateway history by role+content
+        //  - synced realtime voice whose server copy just loaded
         val loadedIds = loaded.mapTo(HashSet()) { it.id }
         val preservedLocal = _messages.value.filter { msg ->
-            if (!msg.clientOnly || msg.id in loadedIds) return@filter false
+            val effectiveId = idRemap[msg.id] ?: msg.id
+            if (!msg.clientOnly || effectiveId in loadedIds) return@filter false
             // Drop a provider-answered realtime bubble whose SYNCED copy just
             // loaded from the server transcript (matched on the synced
             // assistant text) — keeping both would render the exchange twice.
             // Unsynced traces are always preserved: they are still the only
             // record of the turn.
             val trace = msg.realtimeTurn
-            !(
+            if (
                 trace != null && trace.syncedToServer &&
-                    trace.assistantText.trim() in syncedRealtimeTurnContents
-                )
+                trace.assistantText.trim() in syncedRealtimeTurnContents
+            ) {
+                return@filter false
+            }
+            true
         }
         val merged = if (preservedLocal.isEmpty()) {
             loaded
@@ -1780,22 +1799,33 @@ class ChatHandler {
         val serverId: String,
         val role: MessageRole,
         val key: String,
+        val platformMessageId: String? = null,
     ) {
         var taken: Boolean = false
     }
 
     /**
-     * Map optimistic (client-UUID) live message ids → their server ids so the
-     * id-keyed delta-merge in [loadMessageHistory] updates rows in place.
+     * Map optimistic (client-UUID / live-proactive) message ids → their server
+     * ids so the id-keyed delta-merge in [loadMessageHistory] updates rows in
+     * place.
      *
-     * Strategy: match each still-unreconciled, non-[ChatMessage.clientOnly] live
-     * row to an unclaimed server row by (role, marker-stripped content),
-     * consume-once in document order, and adopt the server id. Rows whose id is
-     * already a server id (SSE assistant, reconciled mid-turn) are skipped so we
-     * never double-swap; clientOnly orphans have no server row and are never
-     * mapped; a live row that matches no slot is left alone (graceful fallback —
-     * the content-keyed attachment fallback and drop-and-reinsert still apply, so
-     * a count divergence / truncation / compaction never forces a wrong map).
+     * Strategy: match each still-unreconciled live row to an unclaimed server
+     * row. Prefer shared delivery id for Thread proactive ASSISTANT finals
+     * (`proactive-<id>` ↔ history `platform_message_id` or `id`), then fall
+     * back to (role, marker-stripped content) consume-once. Rows whose id is
+     * already a server id (SSE assistant, reconciled mid-turn) are skipped so
+     * we never double-swap.
+     *
+     * Most [ChatMessage.clientOnly] bubbles stay local-only (system notices,
+     * ask cards, voice intents, …). Exception: Thread live proactive ASSISTANT
+     * rows (`proactive-*`) are the dual-path twin of a gateway history final —
+     * they adopt the server id so Compose keeps one bubble ([ChatMessage.uiKey]
+     * stable) instead of painting the answer twice. Empty content never adopts
+     * via the content path; id-first still works when platform ids align.
+     *
+     * A live row that matches no slot is left alone (graceful fallback — the
+     * content-keyed attachment fallback and drop-and-reinsert still apply, so a
+     * count divergence / truncation / compaction never forces a wrong map).
      *
      * Returns oldLiveId → serverId for the rows that reconciled (empty when there
      * is nothing to adopt).
@@ -1808,25 +1838,59 @@ class ChatHandler {
         if (live.isEmpty()) return emptyMap()
         val liveIds = live.mapTo(HashSet()) { it.id }
 
-        // Adoptable slots: rendered server rows (not tool, not a hidden steering
-        // marker) whose id no live row already carries.
+        // Adoptable slots: rendered server rows whose id no live row already
+        // carries. Content-empty slots stay adoptable only via platform id.
         val slots = items.mapNotNull { item ->
             val serverId = item.id ?: return@mapNotNull null
             if (serverId in liveIds) return@mapNotNull null
             val role = renderedRoleOf(item) ?: return@mapNotNull null
-            ReconcileSlot(serverId, role, reconcileKey(item.contentText))
+            val key = reconcileKey(item.contentText)
+            val platformId = item.platformMessageId?.trim()?.takeIf { it.isNotEmpty() }
+            if (key.isEmpty() && platformId == null) return@mapNotNull null
+            ReconcileSlot(serverId, role, key, platformId)
         }
         if (slots.isEmpty()) return emptyMap()
 
         val remap = HashMap<String, String>()
+
+        fun tryAdopt(liveId: String, slot: ReconcileSlot) {
+            if (slot.taken) return
+            slot.taken = true
+            remap[liveId] = slot.serverId
+        }
+
+        // Pass 1: shared delivery id (proactive-<id> ↔ platform_message_id / id).
         for (msg in live) {
-            if (msg.clientOnly) continue            // no server row to adopt
-            if (msg.id in serverItemIds) continue   // already a server id
+            if (!(msg.role == MessageRole.ASSISTANT && msg.id.startsWith("proactive-"))) continue
+            if (msg.id in serverItemIds || msg.id in remap) continue
+            val deliveryId = msg.id.removePrefix("proactive-").trim()
+            if (deliveryId.isEmpty()) continue
+            val slot = slots.firstOrNull { candidate ->
+                !candidate.taken &&
+                    candidate.role == MessageRole.ASSISTANT &&
+                    (
+                        candidate.platformMessageId == deliveryId ||
+                            candidate.serverId == deliveryId
+                        )
+            } ?: continue
+            tryAdopt(msg.id, slot)
+        }
+
+        // Pass 2: role + content (legacy / unstamped rows).
+        for (msg in live) {
+            if (msg.id in remap) continue
+            if (msg.clientOnly) {
+                // Dual-path Thread finals only — other clientOnly stay local.
+                if (!(msg.role == MessageRole.ASSISTANT && msg.id.startsWith("proactive-"))) {
+                    continue
+                }
+            }
+            if (msg.id in serverItemIds) continue // already a server id
             val key = reconcileKey(msg.content)
+            if (key.isEmpty()) continue
             val slot = slots.firstOrNull { !it.taken && it.role == msg.role && it.key == key }
                 ?: continue
-            slot.taken = true
-            remap[msg.id] = slot.serverId
+            tryAdopt(msg.id, slot)
         }
         return remap
     }
