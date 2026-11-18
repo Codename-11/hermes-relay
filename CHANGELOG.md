@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Creating a cron job the server refuses shows the server's reason instead of reporting success, and the cron list shows the selected profile's jobs.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
