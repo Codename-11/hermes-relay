@@ -4398,14 +4398,22 @@ fun ChatScreen(
                 R.string.chat_large_paste_too_large,
                 maxAttachmentMb,
             )
-            val sseModelOptions = remember(apiModelOptions, agentProfiles, selectedModelOverride) {
-                (apiModelOptions +
-                    agentProfiles.mapNotNull { profile ->
-                        AgentDisplay.requestModelName(profile.model)?.let { ApiModelOption(it) }
-                    } +
-                    listOfNotNull(AgentDisplay.requestModelName(selectedModelOverride)?.let { ApiModelOption(it) }))
-                    .distinctBy { it.id }
+            // Only actual advertised routes belong in the fallback list. Other
+            // profiles' defaults are NOT selectable models in this conversation.
+            // When the gateway catalog is unavailable, keep its error visible
+            // instead of fabricating a cross-profile four-model catalog.
+            val rawSseModelOptions = remember(apiModelOptions, selectedModelOverride, isGatewayTransport) {
+                fallbackModelPickerOptions(
+                    apiModelOptions,
+                    AgentDisplay.requestModelName(selectedModelOverride),
+                    isGatewayTransport,
+                )
             }
+            // Provider inventory is already scoped by Dashboard REST to the
+            // selected profile. Do not implement vendor/model-specific picker
+            // behavior; retain the ordinary server-default option for all bots.
+            val pickerProviders = modelProviders
+            val sseModelOptions = rawSseModelOptions
             val currentModelForInput = AgentDisplay.displayModelName(sessionModelState.model)
             val fallbackModelDetail = AgentDisplay.displayModelName(gatewayCurrentModel)
                 ?: AgentDisplay.displayModelName(effectiveProfile?.model)
@@ -4415,15 +4423,20 @@ fun ChatScreen(
             // that to the active OVERRIDE, so using it here mislabeled the user's
             // override as the server default. serverModelName comes from /api/config
             // (never touched by overrides) — the same source the agent drawer uses.
-            val serverDefaultModelDetail = AgentDisplay.displayModelName(serverModelName)
-                ?: AgentDisplay.displayModelName(effectiveProfile?.model)
-            val hasModelChoices = modelProviders.any { it.models.isNotEmpty() } || sseModelOptions.isNotEmpty()
+            val serverDefaultModelDetail = if (explicitBindingProfileName != null) {
+                AgentDisplay.displayModelName(conversationProfile?.model)
+                    ?: AgentDisplay.displayModelName(serverModelName)
+            } else {
+                AgentDisplay.displayModelName(serverModelName)
+                    ?: AgentDisplay.displayModelName(effectiveProfile?.model)
+            }
+            val hasModelChoices = pickerProviders.any { it.models.isNotEmpty() } || sseModelOptions.isNotEmpty()
             val serverDefaultLabel = stringResource(R.string.chat_server_default)
             val notOnPlanLabel = stringResource(R.string.chat_not_on_plan)
             val needsSetupLabel = stringResource(R.string.chat_needs_setup)
             val modelDefaultLabel = stringResource(R.string.chat_model_label)
             val modelPickerOptions = remember(
-                modelProviders,
+                pickerProviders,
                 sseModelOptions,
                 selectedModelOverride,
                 selectedProviderOverride,
@@ -4447,11 +4460,11 @@ fun ChatScreen(
                                 selected = sessionModelState.inheritsProfileDefault,
                             ),
                         )
-                        if (modelProviders.any { it.models.isNotEmpty() }) {
+                        if (pickerProviders.any { it.models.isNotEmpty() }) {
                             // Current provider first — matches the desktop picker,
                             // which defaults the selection to is_current, so the
                             // user's authenticated/current provider leads.
-                            modelProviders.sortedByDescending { it.isCurrent }.forEach { provider ->
+                            pickerProviders.sortedByDescending { it.isCurrent }.forEach { provider ->
                                 provider.models.distinct().forEach { model ->
                                     // Respect upstream's per-provider availability:
                                     // unavailable_models are paid models the account
@@ -4476,7 +4489,7 @@ fun ChatScreen(
                                     )
                                 }
                             }
-                            val providerModelIds = modelProviders.flatMap { it.models }.toSet()
+                            val providerModelIds = pickerProviders.flatMap { it.models }.toSet()
                             sseModelOptions.filter { it.id !in providerModelIds }.forEach { model ->
                                 add(
                                     ChatInputPickerOption(
