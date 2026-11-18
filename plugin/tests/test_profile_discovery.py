@@ -701,6 +701,47 @@ class ProfileDiscoveryTests(unittest.TestCase):
         self.assertTrue(entry["api_server_key_present"])
 
 
+    def test_hidden_profile_dirs_are_ignored_without_warning(self) -> None:
+        """``hermes profile delete`` leaves a ``profiles/.deleted/<name>`` tombstone.
+
+        Hermes keeps that dot-directory beside the profile dirs deliberately (it is one
+        of its Hermes-home markers) and its own discovery skips hidden entries. Relay
+        must skip it too, instead of reporting it as a profile with no ``config.yaml``
+        on every rescan.
+        """
+        self._write_root_config()
+        self._write_profile(
+            "mizu",
+            config_body="model:\n  default: gpt-4o-mini\n",
+            soul=None,
+        )
+        tombstone = self.profiles_dir / ".deleted"
+        tombstone.mkdir()
+        (tombstone / "retired").write_text("deleted\n", encoding="utf-8")
+
+        records: list[logging.LogRecord] = []
+
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
+
+        handler = _Capture(level=logging.DEBUG)
+        relay_logger = logging.getLogger("plugin.relay.config")
+        relay_logger.addHandler(handler)
+        self.addCleanup(relay_logger.removeHandler, handler)
+
+        out = self._load()
+
+        names = [p["name"] for p in out]
+        self.assertIn("mizu", names)
+        self.assertNotIn(".deleted", names)
+        self.assertEqual(
+            [r.getMessage() for r in records if "has no config.yaml" in r.getMessage()],
+            [],
+            "the tombstone directory must not be reported as a broken profile",
+        )
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG)
     unittest.main()
