@@ -40,6 +40,8 @@ _SSE_TYPE_MAP: dict[str, str] = {
     "delta": "chat.delta",
     "thinking_delta": "chat.progress",
     "reasoning_delta": "chat.progress",
+    "reasoning.delta": "chat.progress",
+    "thinking.delta": "chat.progress",
     "tool_start": "chat.tool.started",
     "tool_started": "chat.tool.started",
     "tool_result": "chat.tool.completed",
@@ -62,6 +64,8 @@ _TYPED_STREAM_EVENT_NAMES: set[str] = {
     "memory.updated",
     "skill.loaded",
     "artifact.created",
+    "reasoning.delta",
+    "thinking.delta",
     "assistant.completed",
     "run.completed",
     "error",
@@ -580,7 +584,7 @@ class ChatHandler:
             return {
                 "session_id": session_id,
                 "message_id": data.get("message_id", data.get("id", "")),
-                "delta": data.get("delta", data.get("thinking_delta", data.get("text", ""))),
+                "delta": data.get("delta", data.get("thinking_delta", data.get("text", data.get("preview", "")))),
             }
 
         if proto_type == "chat.turn.completed":

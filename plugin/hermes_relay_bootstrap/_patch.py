@@ -162,6 +162,13 @@ def _apply_patch(web_module) -> None:
                     "installation failed: %s",
                     exc,
                 )
+            try:
+                _maybe_patch_reasoning_stream(value)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                logger.warning(
+                    "hermes_relay_bootstrap: reasoning stream patch failed: %s",
+                    exc,
+                )
 
     web_module.Application = _PatchedApplication
 
@@ -264,3 +271,28 @@ def _maybe_install_command_middleware(app, adapter) -> None:
             "slash commands will fall through to the LLM.",
             exc,
         )
+
+
+def _maybe_patch_reasoning_stream(adapter) -> None:
+    """Ensure reasoning deltas stream through api_server and local_viewer_events."""
+    try:
+        import gateway.local_viewer_events as lve
+        lve._CONFIG_DEFAULT_SOURCES = lve._CONFIG_DEFAULT_SOURCES | frozenset({"webui", "api_server", "phone", "relay"})
+    except Exception as exc:
+        logger.debug("hermes_relay_bootstrap: local_viewer_events patch skipped: %s", exc)
+
+    orig_run_agent = getattr(adapter, "_run_agent", None)
+    if orig_run_agent and not getattr(orig_run_agent, "_relay_reasoning_patched", False):
+        async def _run_agent_with_reasoning(*args, **kwargs):
+            if not kwargs.get("reasoning_callback") and kwargs.get("tool_progress_callback"):
+                tp_cb = kwargs["tool_progress_callback"]
+                def _reasoning_forwarder(text: str) -> None:
+                    if text:
+                        try:
+                            tp_cb("reasoning.available", tool_name="_thinking", preview=text)
+                        except Exception as exc:
+                            logger.debug("hermes_relay_bootstrap: reasoning forwarder failed: %s", exc)
+                kwargs["reasoning_callback"] = _reasoning_forwarder
+            return await orig_run_agent(*args, **kwargs)
+        setattr(_run_agent_with_reasoning, "_relay_reasoning_patched", True)
+        adapter._run_agent = _run_agent_with_reasoning
