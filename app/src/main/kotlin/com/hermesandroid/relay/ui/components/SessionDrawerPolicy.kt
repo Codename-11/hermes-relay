@@ -192,6 +192,158 @@ private val SessionDrawerStatus.displayLabel: String
         SessionDrawerStatus.Idle -> "Idle"
     }
 
+internal fun sessionMatchesContentSearch(
+    sessionId: String,
+    contentMatchIds: Set<String>,
+): Boolean = sessionId in contentMatchIds
+
+internal fun mergeContentSearchSessions(
+    loaded: List<ChatSession>,
+    hits: List<ChatSession>,
+): List<ChatSession> {
+    if (hits.isEmpty()) return loaded
+    val hitById = hits.associateBy { it.sessionId }
+    val mergedLoaded = loaded.map { session ->
+        val hit = hitById[session.sessionId] ?: return@map session
+        session.copy(
+            searchSnippet = hit.searchSnippet ?: session.searchSnippet,
+            matchKind = hit.matchKind ?: session.matchKind,
+            // Prefer richer title from either side.
+            title = session.title?.takeIf { it.isNotBlank() } ?: hit.title,
+        )
+    }
+    val seen = mergedLoaded.mapTo(mutableSetOf()) { it.sessionId }
+    return mergedLoaded + hits.filter { seen.add(it.sessionId) }
+}
+
+/**
+ * Drawer list chrome while a gateway content search is in flight.
+ * Searching must never fall back to the full recent-session list.
+ */
+internal enum class SessionDrawerSearchPresentation {
+    Idle,
+    Searching,
+    Results,
+    Empty,
+}
+
+internal fun sessionDrawerSearchPresentation(
+    query: String,
+    contentSearchPending: Boolean,
+    visibleMatchCount: Int,
+): SessionDrawerSearchPresentation {
+    if (query.trim().isEmpty()) return SessionDrawerSearchPresentation.Idle
+    if (contentSearchPending) return SessionDrawerSearchPresentation.Searching
+    return if (visibleMatchCount > 0) {
+        SessionDrawerSearchPresentation.Results
+    } else {
+        SessionDrawerSearchPresentation.Empty
+    }
+}
+
+/** Keep first occurrence so gateway rank survives message-level duplicate session ids. */
+internal fun dedupeContentSearchHits(hits: List<ChatSession>): List<ChatSession> {
+    if (hits.isEmpty()) return hits
+    val seen = linkedSetOf<String>()
+    return hits.filter { seen.add(it.sessionId) }
+}
+
+/** Sort mode for an active content-search result set. */
+internal enum class SessionSearchSort {
+    /** Keep gateway / RRF rank (default). */
+    Relevant,
+    /** Same hit set, newest activity first. */
+    Recent,
+}
+
+/**
+ * When the gateway ranked sessions, put those hits first in gateway order.
+ * Local-only title matches that were not gateway hits keep their relative order after.
+ * [sort] only reorders the gateway hit block (Relevant = API order, Recent = activity).
+ */
+internal fun orderRowsForContentSearch(
+    rows: List<ProfileSessionRow>,
+    contentHitOrder: List<String>,
+    sort: SessionSearchSort = SessionSearchSort.Relevant,
+): List<ProfileSessionRow> {
+    if (contentHitOrder.isEmpty() || rows.isEmpty()) return rows
+    val byId = rows.groupBy { it.session.sessionId }
+    val used = mutableSetOf<String>()
+    val ordered = ArrayList<ProfileSessionRow>(rows.size)
+    val hitIds = when (sort) {
+        SessionSearchSort.Relevant -> contentHitOrder
+        SessionSearchSort.Recent -> contentHitOrder
+            .mapNotNull { id -> byId[id]?.firstOrNull()?.let { id to it } }
+            .sortedByDescending { it.second.session.activityTimestamp }
+            .map { it.first }
+            .ifEmpty { contentHitOrder }
+    }
+    for (id in hitIds) {
+        val group = byId[id] ?: continue
+        if (!used.add(id)) continue
+        ordered.addAll(group)
+    }
+    for (row in rows) {
+        if (used.add(row.session.sessionId)) {
+            ordered.add(row)
+        }
+    }
+    return ordered
+}
+
+/**
+ * Build a Compose-friendly plain snippet and whether the hit is embedding-only.
+ * Gateway may mark the matched term with `>>>term<<<`.
+ */
+internal fun searchSnippetDisplay(snippet: String?): Pair<String, List<IntRange>> {
+    val raw = snippet?.trim().orEmpty()
+    if (raw.isEmpty()) return "" to emptyList()
+    val ranges = ArrayList<IntRange>()
+    val out = StringBuilder()
+    var i = 0
+    while (i < raw.length) {
+        val open = raw.indexOf(">>>", i)
+        if (open < 0) {
+            out.append(raw, i, raw.length)
+            break
+        }
+        out.append(raw, i, open)
+        val close = raw.indexOf("<<<", open + 3)
+        if (close < 0) {
+            out.append(raw, open, raw.length)
+            break
+        }
+        val start = out.length
+        out.append(raw, open + 3, close)
+        ranges.add(start until out.length)
+        i = close + 3
+    }
+    return out.toString() to ranges
+}
+
+internal fun isSemanticOnlyMatch(matchKind: String?): Boolean =
+    matchKind.equals("semantic", ignoreCase = true)
+
+internal fun chatSessionFromSearchHit(
+    sessionId: String,
+    title: String?,
+    preview: String?,
+    model: String?,
+    source: String?,
+    matchKind: String? = null,
+    updatedAt: Long = 0L,
+): ChatSession = ChatSession(
+    sessionId = sessionId,
+    // Never promote body snippet into the title slot.
+    title = title?.takeIf { it.isNotBlank() },
+    model = model,
+    source = source,
+    searchSnippet = preview?.takeIf { it.isNotBlank() },
+    matchKind = matchKind?.takeIf { it.isNotBlank() },
+    updatedAt = updatedAt,
+    lastActivityAt = updatedAt,
+)
+
 private fun updatedBucket(timestamp: Long, nowMillis: Long): String {
     if (timestamp <= 0L) return "Older"
     val age = (nowMillis - timestamp).coerceAtLeast(0L)

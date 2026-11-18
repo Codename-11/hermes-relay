@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+### Fixed
+- CI: raise Android unit-test job timeout to 30m so cold focused runs finish before cancel; include SessionDrawerPolicyTest in the focused lane.
+
+
+### Added
+
+- Session drawer search asks the gateway for message-body matches. Fuzzy search is always used; semantic ranking is added only when the host has an embedding model configured. Hits can show gateway snippets, a semantically-similar label for embedding-only matches, and a most-relevant / most-recent sort toggle.
 
 ## [Android 1.19.0] - 2026-10-20
 

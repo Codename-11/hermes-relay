@@ -492,6 +492,16 @@ data class ChatSession(
     val pullRequestUrl: String? = null,
     val pullRequestState: String? = null,
     val pullRequestDraft: Boolean = false,
+    /**
+     * Gateway content-search snippet (may include `>>>term<<<` highlight markers).
+     * Separate from [title] so a body hit never replaces the session title.
+     */
+    val searchSnippet: String? = null,
+    /**
+     * Gateway match lane: `fts`, `expanded` (typo rescue), `semantic`, `title`, `id`.
+     * Null when the row is not a content-search hit.
+     */
+    val matchKind: String? = null,
 ) {
     val totalTokens: Int
         get() = inputTokens + outputTokens
