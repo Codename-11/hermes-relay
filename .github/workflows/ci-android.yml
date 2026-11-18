@@ -154,7 +154,10 @@ jobs:
   test:
     name: Test (Android)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Expanded focused suite can need >20m under cold cache / shared runners;
+    # a hard cancel here marks the whole android reusable workflow cancelled
+    # and fails Required checks even though this job is advisory on dev.
+    timeout-minutes: 30
     # Advisory on dev, strict on main. Evaluates to false (= strict) for
     # pushes to main and PRs whose base branch is main; true (= advisory)
     # for everything else (dev pushes, dev-targeted PRs, feature branches).
@@ -240,6 +243,7 @@ jobs:
             --tests com.hermesandroid.relay.ui.components.AttachmentGalleryLayoutTest \
             --tests com.hermesandroid.relay.ui.components.MarkdownStreamingParserTest \
             --tests com.hermesandroid.relay.ui.screens.ChatUnreadStateTest \
+            --tests com.hermesandroid.relay.ui.components.SessionSidebarLayoutResolverTest \
             --console=plain
 
       # Upload reports only for failures. Successful PR report uploads add

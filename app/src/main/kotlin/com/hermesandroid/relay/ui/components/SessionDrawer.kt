@@ -231,15 +231,24 @@ fun resolveSessionSidebarLayout(
     }
 
 /**
- * Whether the modal drawer's edge-swipe gestures should be active. Pure so the
- * supervised rule stays JVM-testable. Edge-swipe opens the modal drawer, so it
- * must be off when the pinned sidebar is already the sessions surface —
- * otherwise a swipe stacks a second sessions UI on top of the sidebar.
+ * Whether the modal drawer's drag/scrim gestures should be active. Pure so the
+ * rules stay JVM-testable.
+ *
+ * Material3 [ModalNavigationDrawer] has no edge-width API — when gestures are
+ * on, a horizontal pan anywhere on chat content can open the sessions drawer
+ * and steal scrolls from wide markdown code blocks and tables. Keep gestures
+ * off while the drawer is closed (hamburger / sidebar still open it). Keep them
+ * on while open so swipe-to-close and scrim taps still work (Material routes
+ * scrim dismiss through the drawer gesture handler).
+ *
+ * Also off when supervised mode gates conversation history, and when the pinned
+ * sidebar already is the sessions surface (a swipe would stack a second UI).
  */
 fun resolveDrawerGesturesEnabled(
     supervisedHistoryAllowed: Boolean,
     pinnedSidebar: Boolean,
-): Boolean = supervisedHistoryAllowed && !pinnedSidebar
+    drawerOpen: Boolean,
+): Boolean = supervisedHistoryAllowed && !pinnedSidebar && drawerOpen
 
 internal enum class SessionDrawerLoadPresentation {
     Loading,

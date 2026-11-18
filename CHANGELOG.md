@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Android chat disables sessions-drawer swipe-to-open so horizontal pans on markdown code blocks and tables scroll instead of opening the menu; the header control still opens sessions, and swipe-to-close plus scrim dismiss stay available while the drawer is open.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
