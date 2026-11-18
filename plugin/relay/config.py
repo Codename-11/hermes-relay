@@ -1416,6 +1416,12 @@ def _load_profiles(
         for child in sorted(profiles_dir.iterdir()):
             if not child.is_dir():
                 continue
+            # ``hermes profile delete`` leaves a ``profiles/.deleted/<name>`` tombstone
+            # (Hermes uses that directory as one of its Hermes-home markers). Upstream
+            # profile discovery skips hidden entries; without this, every rescan reports
+            # the tombstone as a profile with no config.yaml.
+            if child.name.startswith("."):
+                continue
             entry = _read_profile_entry(
                 name=child.name,
                 config_yaml=child / "config.yaml",
