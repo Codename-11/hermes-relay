@@ -60,7 +60,7 @@ class ToolProgressCardInteractionTest {
     }
 
     @Test
-    fun `running card remains expanded when the live tool completes`() {
+    fun `running card starts folded and keeps a manual expansion through completion`() {
         var call by mutableStateOf(
             ToolCall(
                 id = "generating:running-skill",
@@ -76,11 +76,12 @@ class ToolProgressCardInteractionTest {
             MaterialTheme { ToolProgressCard(toolCall = call) }
         }
 
+        // A live call folds like the settled one: header, preview line and
+        // progress only, so argument-heavy calls cannot reflow the transcript.
+        compose.onNodeWithContentDescription("Expand").assertExists()
         compose.onNodeWithText("inspect active session").assertExists()
-        compose.onNodeWithContentDescription("Collapse").performTouchInput { click() }
-        compose.onNodeWithText("inspect active session").assertDoesNotExist()
         compose.onNodeWithContentDescription("Expand").performTouchInput { click() }
-        compose.onNodeWithText("inspect active session").assertExists()
+        compose.onNodeWithContentDescription("Collapse").assertExists()
 
         // A live placeholder can adopt the real Gateway ID during
         // reconciliation. Expansion belongs to the logical call, not the ID.

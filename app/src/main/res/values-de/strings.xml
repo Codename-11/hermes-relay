@@ -780,6 +780,8 @@
     <string name="chat_settings_back">Zurück</string>
     <string name="chat_settings_smooth_auto_scroll">Sanftes automatisches Scrollen</string>
     <string name="chat_settings_smooth_auto_scroll_desc">Neuen Nachrichten während des Streamings folgen. Zum Pausieren nach oben scrollen; zum Fortsetzen auf den Pfeil tippen oder wieder ganz nach unten scrollen.</string>
+    <string name="chat_settings_collapse_reasoning">Denkweise standardmäßig einklappen</string>
+    <string name="chat_settings_collapse_reasoning_desc">Live-Denkweise bleibt verfügbar, startet aber eingeklappt. Tippe auf einen Block, um ihn zu lesen.</string>
     <string name="chat_settings_thinking_indicator">Denkanzeige</string>
     <string name="chat_settings_thinking_indicator_desc">Die Animation in einer Antwortblase, während Hermes arbeitet.</string>
     <string name="chat_settings_dots">Punkte</string>

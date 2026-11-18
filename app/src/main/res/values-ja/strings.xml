@@ -777,6 +777,8 @@
     <string name="chat_settings_back">戻る</string>
     <string name="chat_settings_smooth_auto_scroll">スムーズな自動スクロール</string>
     <string name="chat_settings_smooth_auto_scroll_desc">ストリーミング中に新しいメッセージをフォローします。上にスクロールして一時停止します。矢印をタップするか、一番下までスクロールして再開します。</string>
+    <string name="chat_settings_collapse_reasoning">推論を既定で折りたたむ</string>
+    <string name="chat_settings_collapse_reasoning_desc">ライブの推論は利用できますが、最初は折りたたまれます。ブロックをタップすると表示されます。</string>
     <string name="chat_settings_thinking_indicator">思考指標</string>
     <string name="chat_settings_thinking_indicator_desc">Hermes の動作中に返信バブルに表示されるアニメーション。</string>
     <string name="chat_settings_dots">ドット</string>

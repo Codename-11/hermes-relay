@@ -86,13 +86,16 @@ fun ToolProgressCard(
      */
     onExpandedChange: (Boolean) -> Unit = {},
 ) {
-    // Preparing (tool.generating) starts collapsed — the args preview line
-    // under the header is the whole story until tool.start lands.
+    // Every state starts folded, including a call that is already running when
+    // it first composes: a live card keeps its header, the one-line args
+    // preview and the progress bar, and the reader opens it for the arguments
+    // or output. Argument-heavy calls such as write_file used to open on their
+    // own and reflow the transcript mid-stream.
     // Use the call identity as an input, not a custom saveable key: custom keys
     // bypass positional scoping and can share state between nested lazy items.
     // uiKey survives generating -> running ID adoption and ordinary copies.
     var expanded by rememberSaveable(toolCall.uiKey) {
-        mutableStateOf(!toolCall.isComplete && !toolCall.isGenerating)
+        mutableStateOf(false)
     }
     val isPreparing = toolCall.isGenerating && !toolCall.isComplete
     val timeMillis = toolCall.completedAt ?: messageTimestamp
@@ -251,9 +254,10 @@ fun ToolProgressCard(
                 }
             }
 
-            // One-line faded mono args preview while preparing — partial
-            // JSON grows per delta; no expand needed, the card stays folded.
-            if (isPreparing && !toolCall.args.isNullOrBlank()) {
+            // One-line faded mono args preview while the call is live — partial
+            // JSON grows per delta, so folding stays readable and the reader
+            // still sees what the call is working on.
+            if (!toolCall.isComplete && !expanded && !toolCall.args.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = compactToolDetail(toolCall.args, 80),

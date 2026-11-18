@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,12 +51,29 @@ fun ThinkingBlock(
     accessibilityLabel: String = stringResource(R.string.thinking_thinking_short),
     /** Stable key when this interactive block participates in Chat pet terrain. */
     petObstacleKey: String? = null,
+    /**
+     * Identity for the disclosure state. A row scrolled out of the lazy list is
+     * disposed and plain `remember` forgets whether the reader opened it, which
+     * collapsed blocks again as soon as they left the viewport. The saveable
+     * registry survives that; the key must be stable per block, so a message
+     * with several reasoning blocks passes message plus segment index.
+     */
+    stateKey: String? = null,
+    /**
+     * Seed the block closed even while it streams. The content still arrives
+     * live and a tap still opens it; only the initial state changes, so a long
+     * turn cannot push the reply off screen with an expanding wall of text.
+     */
+    collapsedByDefault: Boolean = false,
 ) {
     if (thinkingContent.isBlank()) return
-    var expanded by remember { mutableStateOf(isStreaming) }
-    var userToggled by remember { mutableStateOf(false) }
-    LaunchedEffect(isStreaming) {
-        if (!userToggled) expanded = isStreaming
+    val startsExpanded = isStreaming && !collapsedByDefault
+    val expandedState = rememberSaveable(stateKey) { mutableStateOf(startsExpanded) }
+    val toggledState = rememberSaveable(stateKey, "toggled") { mutableStateOf(false) }
+    var expanded by expandedState
+    var userToggled by toggledState
+    LaunchedEffect(isStreaming, collapsedByDefault) {
+        if (!userToggled) expanded = isStreaming && !collapsedByDefault
     }
     val locale = LocalLocale.current.platformLocale
     val timeLabel = timestamp?.let {

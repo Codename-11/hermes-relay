@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Live reasoning interleaves with the tool rows it produced: each thinking block sits above the calls that followed it, instead of one growing block above all of them.
+- A "Collapse reasoning by default" chat setting starts reasoning blocks closed while they stream. Tapping a block still opens it.
+
+### Fixed
+
+- Reasoning blocks keep their open or closed state when a row scrolls out of view, instead of collapsing again on the way back.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
