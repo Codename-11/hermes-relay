@@ -4160,6 +4160,7 @@
     <string name="tool_name_android">Phone action</string>
     <string name="tool_name_tts">Speech</string>
     <string name="tool_name_file">File</string>
+    <string name="tool_name_compaction">Context compaction</string>
     <string name="badge_tool_failed">Tool failed</string>
     <string name="badge_memory">Memory</string>
     <string name="badge_skill">Skill</string>

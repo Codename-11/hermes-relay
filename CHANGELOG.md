@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Context compaction summaries render as a collapsible tool card instead of a user bubble (including legacy marker-prefix rows).
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added

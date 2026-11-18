@@ -26,6 +26,7 @@ fun localizeToolNameKey(name: String): Int? = when {
     name.contains("vision") || name.contains("image") -> R.string.tool_name_vision
     name.contains("computer_use") -> R.string.tool_name_computer
     name.contains("speech") || name.contains("tts") -> R.string.tool_name_tts
+    name.contains("context_compaction") || name.contains("compaction") -> R.string.tool_name_compaction
     name.contains("file") -> R.string.tool_name_file
     else -> null
 }

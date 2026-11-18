@@ -3835,6 +3835,7 @@
     <string name="tool_name_cron">スケジューラー</string>
     <string name="tool_name_computer">コンピューター操作</string>
     <string name="tool_name_android">電話アクション</string>
+    <string name="tool_name_compaction">コンテキスト圧縮</string>
     <string name="timeline_no_checks">チェックなし</string>
     <string name="thinking_title">思考プロセス</string>
     <string name="thinking_settled">思考</string>
