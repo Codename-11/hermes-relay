@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Chat history keeps durable row order after context compaction. Compaction can scramble timestamps; history now prefers durable row id over wall-clock sort.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
