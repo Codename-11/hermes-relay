@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Bridge commands no longer return to Hermes-Relay merely because twelve seconds pass between actions. Explicit return commands and actual run-completion handling remain available.
+- Screen inspection without coordinates preserves readable elements, node IDs, and truncation instead of returning an empty tree.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
