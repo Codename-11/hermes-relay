@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **Answer recovery no longer gives up just because the phone was offline.** When a reply's stream dropped while the device was asleep or switching networks, the three history reads used to recover it failed instantly and the chat showed "The active profile's conversation history could not be reached", even though the server had finished the answer. Reads that fail while the device has no network no longer count toward giving up; recovery keeps polling within its existing window. Each failed read is now recorded in Diagnostics, including whether it counted.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
