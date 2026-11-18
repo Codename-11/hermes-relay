@@ -777,6 +777,8 @@
     <string name="chat_settings_back">返回</string>
     <string name="chat_settings_smooth_auto_scroll">平滑自动滚动</string>
     <string name="chat_settings_smooth_auto_scroll_desc">流式响应时跟随新消息。向上滚动暂停；点击箭头或滚回底部恢复。</string>
+    <string name="chat_settings_collapse_reasoning">默认折叠思考过程</string>
+    <string name="chat_settings_collapse_reasoning_desc">实时思考仍然可用，但默认折叠。点按区块即可查看。</string>
     <string name="chat_settings_thinking_indicator">思考指示器</string>
     <string name="chat_settings_thinking_indicator_desc">Hermes 工作时在回复气泡中显示的动画。</string>
     <string name="chat_settings_dots">圆点</string>

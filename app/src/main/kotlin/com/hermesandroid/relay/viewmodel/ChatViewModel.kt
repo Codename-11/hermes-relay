@@ -465,6 +465,13 @@ class ChatViewModel : ViewModel() {
     private var activeStreamDeltas: StreamDeltaCoalescer? = null
 
     /**
+     * Splits the live assistant row when a correction is accepted mid-turn.
+     * Set for the duration of a turn and cleared with [activeStreamDeltas], so
+     * a stale turn can never move a newer turn's row.
+     */
+    private var rotateLiveRowAtSteer: (() -> Unit)? = null
+
+    /**
      * True when [activeStream] is a GATEWAY turn (vs an SSE EventSource). A
      * gateway turn runs on the gateway client, which survives a same-connection
      * route blip via its own reconnect — so [updateApiClient] (a route handoff
@@ -6692,6 +6699,9 @@ class ChatViewModel : ViewModel() {
                             deliveryStatus = MessageDeliveryStatus.STEERED,
                         )
                     )
+                    // Continue the reply below the correction instead of
+                    // growing the row that sits above it.
+                    rotateLiveRowAtSteer?.invoke()
                 }
                 SteerResult.Rejected, SteerResult.Failed -> {
                     if (activeStream != null) {
@@ -10287,9 +10297,36 @@ class ChatViewModel : ViewModel() {
             updateTurnCheckpointAssistantId(nextMessageId)
         }
 
+        // A correction sent mid-turn is appended as a user row, but the live
+        // assistant row predates it, so everything streamed afterwards keeps
+        // growing above the correction. Close that row and open a fresh one so
+        // the reply continues underneath the message that caused it.
+        fun rotateAtSteerBoundary() {
+            streamDeltas.flushNow()
+            handler.settleStreamingRow(currentMessageId)
+            val nextMessageId = UUID.randomUUID().toString()
+            handler.addPlaceholderMessage(
+                ChatMessage(
+                    id = nextMessageId,
+                    role = MessageRole.ASSISTANT,
+                    content = "",
+                    timestamp = System.currentTimeMillis(),
+                    isStreaming = true,
+                    agentName = handler.activeAgentName,
+                    badges = if (interfaceContextPrompt != null) listOf("Voice") else emptyList(),
+                ),
+            )
+            currentMessageId = nextMessageId
+            updateTurnCheckpointAssistantId(nextMessageId)
+        }
+        rotateLiveRowAtSteer = ::rotateAtSteerBoundary
+
         fun flushAndReleaseStreamDeltas() {
             streamDeltas.flushNow()
-            if (activeStreamDeltas === streamDeltas) activeStreamDeltas = null
+            if (activeStreamDeltas === streamDeltas) {
+                activeStreamDeltas = null
+                rotateLiveRowAtSteer = null
+            }
         }
 
         // Shared callbacks for both endpoints
