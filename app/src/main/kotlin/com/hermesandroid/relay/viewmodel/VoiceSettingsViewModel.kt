@@ -266,6 +266,10 @@ class VoiceSettingsViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    fun setAssistLaunchVoice(enabled: Boolean) {
+        viewModelScope.launch { wakeWordRepo.setAssistLaunchVoice(enabled) }
+    }
+
     fun setWakeWordStartNewSession(enabled: Boolean) {
         viewModelScope.launch {
             wakeWordRepo.setStartNewSession(enabled)

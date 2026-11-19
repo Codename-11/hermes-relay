@@ -3771,6 +3771,8 @@
     <string name="assistant_mode_manage">Настройки Android</string>
     <string name="assistant_mode_wake_enable">Фоновая фраза «Hey Hermes»</string>
     <string name="assistant_mode_wake_enable_desc">Доступно, только когда Hermes выбран цифровым помощником. Эта функция не связана с экспериментальным прослушиванием через уведомление ниже.</string>
+    <string name="assistant_mode_launch_voice">Сразу открывать голосовой режим</string>
+    <string name="assistant_mode_launch_voice_desc">Боковая кнопка или жест ассистента сразу запускает голосовой диалог (слушает и отвечает вслух) вместо текстового чата.</string>
     <string name="assistant_mode_status_session">Открытие сеанса помощника</string>
     <string name="assistant_mode_removal">Чтобы убрать Hermes, откройте настройки Android и выберите другого помощника или «Нет». Отключение фоновой ключевой фразы оставляет доступным вызов жестом или кнопкой питания, пока Hermes выбран помощником.</string>
     <string name="assistant_mode_battery">До активации обнаружение выполняется на телефоне. Сторонние помощники не получают доступ к специализированному энергосберегающему оборудованию Google для ключевых фраз, поэтому постоянное использование микрофона и процессора может заметно сокращать время работы от батареи.</string>

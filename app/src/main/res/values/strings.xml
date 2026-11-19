@@ -4357,6 +4357,8 @@
     <string name="assistant_mode_manage">Android settings</string>
     <string name="assistant_mode_wake_enable">Background “Hey Hermes”</string>
     <string name="assistant_mode_wake_enable_desc">Available only while Hermes is the selected Digital Assistant. This is separate from the experimental notification-based listener below.</string>
+    <string name="assistant_mode_launch_voice">Open straight into voice</string>
+    <string name="assistant_mode_launch_voice_desc">Side key / assistant gesture starts the voice dialog right away (listen, answer aloud) instead of the text chat.</string>
     <string name="assistant_mode_status_session">Opening the assistant session</string>
     <string name="assistant_mode_removal">To remove Hermes, tap Android settings and choose another assistant or None. Turning off background wake leaves gesture or power-button invocation available while Hermes remains selected.</string>
     <string name="assistant_mode_battery">Wake detection stays on this phone until activation. Third-party assistants do not receive Google’s dedicated low-power hotword hardware, so continuous local microphone and CPU use can noticeably affect battery life.</string>
