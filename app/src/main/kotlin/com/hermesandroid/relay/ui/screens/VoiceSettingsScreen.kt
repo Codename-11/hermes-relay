@@ -604,6 +604,7 @@ fun VoiceSettingsScreen(
                         onDisableWake = {
                             settingsViewModel.setAssistantWakeEnabled(false)
                         },
+                        onAssistLaunchVoiceChange = settingsViewModel::setAssistLaunchVoice,
                     )
                     WakeWordCard(
                         preferences = wakeWordPrefs,
@@ -3565,6 +3566,7 @@ private fun DigitalAssistantCard(
     onManageAssistant: () -> Unit,
     onEnableWake: () -> Unit,
     onDisableWake: () -> Unit,
+    onAssistLaunchVoiceChange: (Boolean) -> Unit,
 ) {
     val selected = roleStatus == AssistantRoleStatus.Selected
     SectionCard(title = stringResource(R.string.assistant_mode_title)) {
@@ -3597,6 +3599,28 @@ private fun DigitalAssistantCard(
             ) {
                 Text(stringResource(R.string.assistant_mode_manage))
             }
+        }
+        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    stringResource(R.string.assistant_mode_launch_voice),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    stringResource(R.string.assistant_mode_launch_voice_desc),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = preferences.assistLaunchVoice,
+                onCheckedChange = onAssistLaunchVoiceChange,
+            )
         }
         HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
         Row(

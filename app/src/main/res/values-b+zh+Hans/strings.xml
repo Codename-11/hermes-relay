@@ -3965,6 +3965,8 @@
     <string name="assistant_mode_manage">Android 设置</string>
     <string name="assistant_mode_wake_enable">后台“Hey Hermes”</string>
     <string name="assistant_mode_wake_enable_desc">仅在 Hermes 是所选数字助理时可用。它与下方基于通知的实验监听功能相互独立。</string>
+    <string name="assistant_mode_launch_voice">直接进入语音模式</string>
+    <string name="assistant_mode_launch_voice_desc">侧键或助理手势会立即启动语音对话（聆听并语音回答），而不是打开文字聊天。</string>
     <string name="assistant_mode_status_session">正在打开助理会话</string>
     <string name="assistant_mode_removal">若要移除 Hermes，请打开 Android 设置并选择其他助理或“无”。关闭后台唤醒后，仍可通过手势或电源键调用。</string>
     <string name="assistant_mode_battery">唤醒前的检测全部留在此手机上。第三方助理无法使用 Google 专用的低功耗热词硬件，因此持续使用麦克风和 CPU 可能会明显影响电池续航。</string>

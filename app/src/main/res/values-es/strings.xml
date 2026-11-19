@@ -3729,6 +3729,8 @@
     <string name="assistant_mode_manage">Ajustes de Android</string>
     <string name="assistant_mode_wake_enable">“Hey Hermes” en segundo plano</string>
     <string name="assistant_mode_wake_enable_desc">Solo disponible mientras Hermes sea el asistente digital seleccionado. Es independiente del oyente experimental con notificación.</string>
+    <string name="assistant_mode_launch_voice">Abrir directamente en voz</string>
+    <string name="assistant_mode_launch_voice_desc">La tecla lateral o el gesto del asistente inicia el diálogo de voz de inmediato (escucha y responde en voz alta) en lugar del chat de texto.</string>
     <string name="assistant_mode_status_session">Abriendo la sesión del asistente</string>
     <string name="assistant_mode_removal">Para quitar Hermes, abre los ajustes de Android y elige otro asistente o Ninguno. Desactivar la escucha en segundo plano mantiene la invocación por gesto o botón de encendido.</string>
     <string name="assistant_mode_battery">La detección permanece en este teléfono hasta la activación. Los asistentes de terceros no reciben el hardware de palabra clave de bajo consumo de Google, por lo que el micrófono y la CPU pueden afectar notablemente la batería.</string>

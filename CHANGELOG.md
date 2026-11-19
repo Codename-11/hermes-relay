@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Voice settings can make the assistant gesture (side key or system assistant shortcut) open voice mode and start listening directly instead of the text chat. Off by default.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added

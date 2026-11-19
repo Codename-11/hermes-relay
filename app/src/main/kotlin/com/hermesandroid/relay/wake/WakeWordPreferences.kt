@@ -38,6 +38,8 @@ data class WakeWordProfileRouting(
 data class WakeWordPreferences(
     val enabled: Boolean = false,
     val assistantEnabled: Boolean = false,
+    /** Side key / ACTION_ASSIST opens straight into the voice dialog instead of text chat. */
+    val assistLaunchVoice: Boolean = false,
     val phrase: String = DEFAULT_WAKE_PHRASE,
     /** Higher is stricter (fewer false activations), matching upstream. */
     val sensitivity: Float = 0.3f,
@@ -76,6 +78,7 @@ class WakeWordPreferencesRepository(
     private companion object {
         val KEY_ENABLED = booleanPreferencesKey("wake_word_enabled")
         val KEY_ASSISTANT_ENABLED = booleanPreferencesKey("assistant_wake_word_enabled")
+        val KEY_ASSIST_LAUNCH_VOICE = booleanPreferencesKey("assist_launch_voice")
         val KEY_PHRASE = stringPreferencesKey("wake_word_phrase")
         val KEY_SENSITIVITY = floatPreferencesKey("wake_word_sensitivity")
         val KEY_CONFIRMATION_FRAMES = intPreferencesKey("wake_word_confirmation_frames")
@@ -90,6 +93,7 @@ class WakeWordPreferencesRepository(
             WakeWordPreferences(
                 enabled = prefs[KEY_ENABLED] ?: false,
                 assistantEnabled = prefs[KEY_ASSISTANT_ENABLED] ?: false,
+                assistLaunchVoice = prefs[KEY_ASSIST_LAUNCH_VOICE] ?: false,
                 // Only one phrase has been validated. Ignore stale/future values
                 // until the product actually exposes multi-phrase support.
                 phrase = DEFAULT_WAKE_PHRASE,
@@ -130,6 +134,10 @@ class WakeWordPreferencesRepository(
                 it[KEY_ASSISTANT_ENABLED] = false
             }
         }
+    }
+
+    suspend fun setAssistLaunchVoice(enabled: Boolean) {
+        dataStore.edit { it[KEY_ASSIST_LAUNCH_VOICE] = enabled }
     }
 
     suspend fun setSensitivity(sensitivity: Float) {

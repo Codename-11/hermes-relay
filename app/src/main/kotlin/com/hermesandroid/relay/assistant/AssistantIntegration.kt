@@ -20,6 +20,7 @@ import java.util.UUID
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 enum class AssistantRoleStatus {
@@ -70,6 +71,9 @@ internal fun assistantSnapshotMatchesActivation(
     expectedActivationId: String?,
     receivedActivationId: String?,
 ): Boolean = expectedActivationId != null && expectedActivationId == receivedActivationId
+
+internal fun assistantLaunchSource(voiceFirst: Boolean): WakeWordActivationSource =
+    if (voiceFirst) WakeWordActivationSource.AssistantLaunch else WakeWordActivationSource.SystemAssistant
 
 object AssistantRole {
     fun status(context: Context): AssistantRoleStatus {
@@ -201,6 +205,25 @@ object AssistantSessionProtocol {
         if (intent?.getBooleanExtra(EXTRA_ASSISTANT_SESSION, false) != true) return false
         val id = intent.getStringExtra(EXTRA_ACTIVATION_ID) ?: UUID.randomUUID().toString()
         val startNewSession = intent.getBooleanExtra(EXTRA_START_NEW_SESSION, true)
+        val voiceFirst = intent.getStringExtra(EXTRA_ACTIVATION_ID) == null &&
+            kotlinx.coroutines.runBlocking {
+                com.hermesandroid.relay.wake.WakeWordPreferencesRepository(context)
+                    .flow.first().assistLaunchVoice
+            }
+        if (voiceFirst) {
+            // Android opened MainActivity itself (side key). No session process owns
+            // this turn, so RelayApp enters Voice mode and starts listening directly.
+            WakeWordActivationCoordinator.request(
+                WakeWordActivation(
+                    id = id,
+                    startNewSession = startNewSession,
+                    profileRouting = WakeWordProfileRouting(),
+                    source = assistantLaunchSource(voiceFirst = true),
+                )
+            )
+            clearAssistExtras(intent)
+            return true
+        }
         val manualMic = intent.getBooleanExtra(EXTRA_MANUAL_MIC, false)
         AssistantSessionPersistence.setActivation(context, id, startNewSession, manualMic)
         WakeWordActivationCoordinator.request(
@@ -208,15 +231,19 @@ object AssistantSessionProtocol {
                 id = id,
                 startNewSession = startNewSession,
                 profileRouting = WakeWordProfileRouting(),
-                source = WakeWordActivationSource.SystemAssistant,
+                source = assistantLaunchSource(voiceFirst = false),
             )
         )
         AssistantAppSessionState.setActive(true)
+        clearAssistExtras(intent)
+        return true
+    }
+
+    private fun clearAssistExtras(intent: Intent) {
         intent.removeExtra(EXTRA_ASSISTANT_SESSION)
         intent.removeExtra(EXTRA_ACTIVATION_ID)
         intent.removeExtra(EXTRA_START_NEW_SESSION)
         intent.removeExtra(EXTRA_MANUAL_MIC)
-        return true
     }
 
     fun restoreActivation(context: Context): Boolean {
