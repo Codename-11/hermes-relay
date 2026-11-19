@@ -2,16 +2,22 @@
 
 :root {
   font-family: 'Hermes UI', 'Segoe UI', sans-serif;
-  color: #f2f3f5;
+  color: #f7f6f0;
   background: transparent;
   font-synthesis: none;
-  --ink: #f2f3f5;
-  --muted: #aeb4bd;
+  /* Relay cockpit tokens — shared vocabulary with the desktop CLI
+     (desktop/src/lib/theme.ts): warm-white ink with muted/dim stairs,
+     periwinkle for active/primary state, violet reserved for identity.
+     Panel and line navy stays put; --faint keeps its old value so the
+     micro-labels do not lose contrast. */
+  --ink: #f7f6f0;
+  --muted: #a7a4b7;
   --faint: #737d88;
   --panel: #0d141b;
   --raised: #121b24;
   --line: #2b3540;
   --line-hi: #46515d;
+  --relay: #aebfff;
   --violet: #a866ff;
   --violet-deep: #6638d6;
   --green: #5bd56c;
@@ -23,7 +29,7 @@
 html, body, #root { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent !important; }
 button, input { font: inherit; }
 button { color: inherit; }
-button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--relay); outline-offset: 2px; }
 
 .app-shell {
   position: fixed; inset: 0; width: 100%; height: 100%; overflow: hidden;
@@ -47,7 +53,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .window-controls button { width: 42px; border: 0; background: transparent; color: #b9bec5; font-size: 19px; cursor: pointer; }
 .window-controls button:hover { background: #ffffff0c; color: white; }
 .window-controls button:last-child:hover { background: #c42b1c; }
-.window-controls button:focus-visible { outline: 0; box-shadow: inset 0 0 0 1px var(--violet); }
+.window-controls button:focus-visible { outline: 0; box-shadow: inset 0 0 0 1px var(--relay); }
 .window-controls svg { width: 20px; display: block; margin: auto; }
 
 .content { position: relative; z-index: 1; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #4a5561 transparent; padding: 11px 18px 13px; }
@@ -92,7 +98,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .route-host { position: relative; z-index: 2; min-width: 0; }
 .route-host > button { width: 100%; min-height: 50px; border: 1px solid #52606d; border-radius: 9px; background: #121c25; color: var(--text); padding: 5px 8px; display: flex; align-items: center; gap: 7px; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; box-shadow: 0 5px 18px #0005; transition: border-color .14s ease, background .14s ease, box-shadow .14s ease; }
 .route-host > button:hover { border-color: var(--green); background: #17232c; box-shadow: 0 6px 22px #0007, 0 0 13px #4bd7651c; }
-.route-host > button:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+.route-host > button:focus-visible { outline: 2px solid var(--relay); outline-offset: 2px; }
 .connection-route.offline .route-host > button { color: #a6afb8; border-color: #596570; }
 .route-host-icon { width: 31px; height: 31px; flex: 0 0 31px; display: grid; place-items: center; border-radius: 7px; color: var(--green); background: #4bd76513; }
 .route-host-icon svg { width: 17px; height: 17px; }
@@ -107,7 +113,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .route-status { position: relative; grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; gap: 7px; min-width: 0; }
 .route-status strong { color: var(--green); font-size: 13px; font-weight: 600; }
 .connection-route.offline .route-status strong { color: #8d98a3; }
-.connection-route.connecting .route-status strong { color: var(--violet); }
+.connection-route.connecting .route-status strong { color: var(--relay); }
 .connection-route.disconnecting .route-status strong { color: var(--amber); }
 .connection-route.retrying .route-status > strong { color: var(--amber); }
 .retry-now { border: 0; background: transparent; color: #d3a84f; padding: 2px 5px; display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; cursor: pointer; }
@@ -235,7 +241,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .activity-section { border-top: 1px solid var(--line); padding-top: 10px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; }
 .section-heading h2 { margin: 0; color: #b9bec5; font-size: 15px; font-weight: 500; }
-.section-heading button { border: 0; background: transparent; color: var(--violet); display: flex; align-items: center; gap: 2px; cursor: pointer; font-size: 13px; }
+/* Dim leading rule + bold title — the same hard-structure section marker the
+   desktop CLI uses (theme.section()). */
+.section-heading h2::before { content: '──  '; color: var(--faint); font-weight: 400; }
+.section-heading button { border: 0; background: transparent; color: var(--relay); display: flex; align-items: center; gap: 2px; cursor: pointer; font-size: 13px; }
 .section-heading svg { width: 16px; }
 .activity-item { border-bottom: 1px solid #2a333c; }
 .activity-item:last-child { border-bottom: 0; }
@@ -325,8 +334,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .bottom-nav { z-index: 3; border-top: 1px solid #303943; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); position: relative; background: #111923d9; }
 .bottom-nav button { min-width: 0; border: 0; background: transparent; color: #aeb4bd; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 7px; position: relative; font-size: 13px; }
 .bottom-nav button::before { content: ''; position: absolute; top: -1px; left: 29%; right: 29%; height: 2px; border-radius: 0 0 3px 3px; background: transparent; }
-.bottom-nav button.active { color: var(--violet); }
-.bottom-nav button.active::before { background: var(--violet); box-shadow: 0 0 10px var(--violet); }
+.bottom-nav button.active { color: var(--relay); }
+.bottom-nav button.active::before { background: var(--relay); box-shadow: 0 0 10px var(--relay); }
 .bottom-nav svg { width: 22px; height: 22px; }
 
 .page-panel { animation: page-in .18s ease-out; }
@@ -575,7 +584,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--violet); ou
 .activity-page-title > div { margin-top: 7px; }
 .back-button { min-height: 32px; border: 1px solid #3c4753; border-radius: 7px; background: #121b24; color: #d8dde3; padding: 5px 9px 5px 7px; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 550; cursor: pointer; box-shadow: 0 3px 10px #0003; transition: border-color .14s ease, background .14s ease, color .14s ease, transform .14s ease; }
 .back-button:hover { border-color: #8657d5; background: #191e2a; color: #fff; transform: translateX(-1px); }
-.back-button:focus-visible { outline: 2px solid var(--violet); outline-offset: 2px; }
+.back-button:focus-visible { outline: 2px solid var(--relay); outline-offset: 2px; }
 .back-button svg { width: 15px; height: 15px; color: var(--violet); }
 .activity-page > .page-intro { margin-top: -5px; }
 .setting-row { min-height: 61px; padding: 11px 13px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }

@@ -371,7 +371,7 @@ hermes-relay --help              Full help
 ```
 $ hermes-relay
 Connecting...
-Connected via Tailscale (secure) — server 0.6.0
+▸ relay: connected · Tailscale · secure · server 0.6.0
 Attached (tmux session "default") — re-attached to existing session.
 Escape: Ctrl+A then . (detach, preserves tmux) · Ctrl+A then k (kill tmux) · Ctrl+A Ctrl+A (literal Ctrl+A)
 
@@ -563,7 +563,7 @@ hermes-relay
 
 ```
 Connecting to ws://192.168.1.100:8767...
-Connected (server 0.6.0).
+▸ relay: connected · plain ws:// · server 0.6.0
 Session 4a3c1f2e… on claude-opus-4-7
 
 Type a message. Ctrl+C to interrupt a turn, /quit to exit.

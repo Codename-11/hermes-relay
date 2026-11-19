@@ -152,6 +152,40 @@ fun contrastRatio(foreground: Color, background: Color): Float {
 fun readableContentColor(background: Color): Color =
     listOf(Color.Black, Color.White).maxBy { contrastRatio(it, background) }
 
+/**
+ * Steps used by [readableOn] when walking a token toward black or white.
+ * 24 × ~4% keeps the shift imperceptible per step while landing on the
+ * closest compliant variant rather than jumping straight to a neutral.
+ */
+private const val READABLE_ON_STEPS = 24
+
+/**
+ * Derive a small-text-safe variant of a semantic status token.
+ *
+ * [BrandPalette.green] (and its siblings) are authored to read as *marks* —
+ * status dots, icons, filled chips — where 3:1 is enough. Reusing the same
+ * value for a label drops it under the WCAG AA 4.5:1 floor on the light
+ * palettes (Hermes Light green lands at ~3.2:1 on its own background), so
+ * callers that paint small text with a status token route it through here
+ * instead of hardcoding a second hex per palette.
+ *
+ * Returns the colour unchanged when it already clears [minContrast] — every
+ * dark preset's green does, so dark surfaces keep the authored hue. Otherwise
+ * the colour is walked toward the palette-neutral extreme with the most
+ * headroom ([readableContentColor]) in [READABLE_ON_STEPS] steps and the first
+ * compliant variant is returned, which darkens on light backgrounds and
+ * lightens on dark ones while preserving the token's hue direction.
+ */
+fun Color.readableOn(background: Color, minContrast: Float = 4.5f): Color {
+    if (contrastRatio(this, background) >= minContrast) return this
+    val target = readableContentColor(background)
+    for (step in 1..READABLE_ON_STEPS) {
+        val candidate = lerp(this, target, step / READABLE_ON_STEPS.toFloat())
+        if (contrastRatio(candidate, background) >= minContrast) return candidate
+    }
+    return target
+}
+
 /** Apply one accent seed without changing surfaces or semantic status colors. */
 fun BrandPalette.withAccent(accentHex: String?): BrandPalette {
     val accent = accentColor(accentHex) ?: return this
