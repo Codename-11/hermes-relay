@@ -2166,14 +2166,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         pendingStart.start()
     }
 
-    private fun canStartContinuousCapture(): Boolean {
-        val state = _uiState.value
-        return state.voiceMode &&
-            state.interactionMode == InteractionMode.Continuous &&
-            state.state == VoiceState.Idle &&
-            continuousLoopArmed &&
-            !continuousListeningPaused
-    }
+    private fun canStartContinuousCapture(): Boolean = shouldRearmContinuousCapture(
+        state = _uiState.value,
+        armed = continuousLoopArmed,
+        paused = continuousListeningPaused,
+    )
 
     private fun startVoiceCapture(
         rec: VoiceRecorder,
@@ -2200,7 +2197,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             // silence watchdog even when Hold-to-talk is the saved mode;
             // otherwise the steering utterance remains open indefinitely.
             if (shouldArmVoiceSilenceWatchdog(_uiState.value.interactionMode, bargeInCapture)) {
-                startSilenceWatchdog()
+                startSilenceWatchdog(
+                    adaptiveContinuous = !bargeInCapture &&
+                        _uiState.value.interactionMode == InteractionMode.Continuous,
+                )
             }
             true
         } catch (e: Exception) {
@@ -2262,6 +2262,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update {
                 it.copy(state = VoiceState.Idle, amplitude = 0f, outputAudioActive = false)
             }
+            // A too-short/empty capture is not a request to pause hands-free
+            // listening. Re-arm only if Continuous is still explicitly armed.
+            if (canStartContinuousCapture()) startListening(requireContinuousLoop = true)
             return
         }
 
@@ -2318,6 +2321,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             detail = detail,
         )
         _uiState.update { voiceCaptureCancellationState(it, notice) }
+        // The 12-second no-speech watchdog also lands here. It must release
+        // the old AudioRecord, then reopen a fresh one in armed Continuous
+        // mode; otherwise Auto goes silent forever after its first idle gap.
+        // Mode changes and explicit pauses have already disarmed the loop.
+        if (canStartContinuousCapture()) startListening(requireContinuousLoop = true)
     }
 
     /** Reconcile microphone state after the Activity returns to foreground. */
@@ -2335,6 +2343,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 outputAudioActive = false,
             )
         }
+        // Android may have stopped AudioRecord while backgrounded. Restore
+        // an armed Continuous session when the Activity becomes usable again.
+        if (canStartContinuousCapture()) startListening(requireContinuousLoop = true)
     }
 
     private fun isMicCaptureActive(): Boolean = recorder?.isRecording() == true
@@ -2422,7 +2433,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
      * No-op when [voicePreferences] is unwired (pre-fix test call sites)
      * or when the threshold is <= 0 (reserved for a future "Off" option).
      */
-    private fun startSilenceWatchdog() {
+    private fun startSilenceWatchdog(adaptiveContinuous: Boolean = false) {
         val prefs = voicePreferences ?: return
         silenceWatchdogJob?.cancel()
         silenceWatchdogJob = viewModelScope.launch {
@@ -2431,6 +2442,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             if (thresholdMs <= 0L) return@launch
 
             val rec = recorder ?: return@launch
+            val adaptiveGate = if (adaptiveContinuous) {
+                AdaptiveContinuousSilenceGate(
+                    silenceMs = thresholdMs,
+                    idleNoSpeechMs = IDLE_NO_SPEECH_MS,
+                    hardCapMs = MAX_LISTEN_TURN_MS,
+                )
+            } else null
             var hasSpoken = false
             var lastVoiceMs = System.currentTimeMillis()
             val turnStartedMs = System.currentTimeMillis()
@@ -2438,6 +2456,36 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             while (isActive && _uiState.value.state == VoiceState.Listening) {
                 val amp = rec.amplitude.value
                 val now = System.currentTimeMillis()
+                if (adaptiveGate != null) {
+                    when (adaptiveGate.observe(amp, now)) {
+                        AdaptiveContinuousSilenceGate.Outcome.EndOfSpeech -> {
+                            Log.i(TAG, "continuous endpoint: ${thresholdMs}ms quiet; " +
+                                "background=${adaptiveGate.lastBackgroundFloor} " +
+                                "speechFloor=${adaptiveGate.lastSpeechThreshold}")
+                            stopListening()
+                            return@launch
+                        }
+                        AdaptiveContinuousSilenceGate.Outcome.IdleNoSpeech -> {
+                            Log.d(TAG, "continuous endpoint: idle/no confirmed speech — rearming")
+                            cancelListeningWithoutProcessing(
+                                title = getApplication<Application>().getString(R.string.voice_status_no_speech),
+                                detail = "No speech within ${IDLE_NO_SPEECH_MS / 1000}s",
+                                notice = AssistantSessionNotice.NoSpeech,
+                            )
+                            return@launch
+                        }
+                        AdaptiveContinuousSilenceGate.Outcome.HardCap -> {
+                            Log.w(TAG, "continuous endpoint: 60s hard cap; " +
+                                "background=${adaptiveGate.lastBackgroundFloor} " +
+                                "speechFloor=${adaptiveGate.lastSpeechThreshold}")
+                            stopListening()
+                            return@launch
+                        }
+                        AdaptiveContinuousSilenceGate.Outcome.Continue -> Unit
+                    }
+                    delay(SILENCE_WATCHDOG_POLL_MS)
+                    continue
+                }
                 when {
                     amp > RESUME_SILENCE_THRESHOLD -> {
                         hasSpoken = true
@@ -7296,6 +7344,11 @@ private const val MIN_VOICE_CAPTURE_PCM_BYTES = 1024
 
 internal fun shouldDiscardVoiceCapture(durationMs: Long, pcmBytes: Int): Boolean =
     durationMs < MIN_VOICE_CAPTURE_DURATION_MS || pcmBytes < MIN_VOICE_CAPTURE_PCM_BYTES
+
+/** A no-speech/short-capture timeout may reopen the mic, but never rearm a pause or exit. */
+internal fun shouldRearmContinuousCapture(state: VoiceUiState, armed: Boolean, paused: Boolean): Boolean =
+    state.voiceMode && state.interactionMode == InteractionMode.Continuous &&
+        state.state == VoiceState.Idle && armed && !paused
 
 /**
  * Minimum chunk length (in chars) before we hand text to TTS. Was 6 in the

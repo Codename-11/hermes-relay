@@ -42,6 +42,30 @@ class VoiceCaptureGuardTest {
     }
 
     @Test
+    fun armedContinuousRearmsAfterNoSpeechOrDiscard() {
+        val idle = voiceCaptureCancellationState(
+            VoiceUiState(voiceMode = true, interactionMode = InteractionMode.Continuous,
+                state = VoiceState.Listening),
+            AssistantSessionNotice.NoSpeech,
+        )
+        assertEquals(VoiceState.Idle, idle.state)
+        assertTrue(shouldRearmContinuousCapture(idle, armed = true, paused = false))
+    }
+
+    @Test
+    fun pausedExitedAndOtherModesMustNotRearm() {
+        val idle = VoiceUiState(
+            voiceMode = true, interactionMode = InteractionMode.Continuous,
+            state = VoiceState.Idle,
+        )
+        assertFalse(shouldRearmContinuousCapture(idle, armed = false, paused = false))
+        assertFalse(shouldRearmContinuousCapture(idle, armed = true, paused = true))
+        assertFalse(shouldRearmContinuousCapture(idle.copy(voiceMode = false), true, false))
+        assertFalse(shouldRearmContinuousCapture(idle.copy(state = VoiceState.Thinking), true, false))
+        assertFalse(shouldRearmContinuousCapture(idle.copy(interactionMode = InteractionMode.TapToTalk), true, false))
+    }
+
+    @Test
     fun unrelatedCaptureCancellationDoesNotClaimNoSpeech() {
         val state = voiceCaptureCancellationState(
             VoiceUiState(
