@@ -152,6 +152,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.hermesandroid.relay.util.HumanError
+import com.hermesandroid.relay.util.newChatCandidate
 import kotlinx.coroutines.delay
 import com.hermesandroid.relay.ui.onboarding.OnboardingScreen
 import com.hermesandroid.relay.ui.screens.AboutScreen
@@ -1621,6 +1622,113 @@ fun RelayApp() {
                         }
                     } else {
                         com.hermesandroid.relay.util.SharedContentRequest.markFailed(request.id)
+                    }
+                }
+            }
+        }
+        // Explicit "new chat" launch intent (widget / shortcut / automation).
+        // Resolves the gateway by URL and the profile by name against what is
+        // configured here, reusing the connection-switch and profile-chat
+        // flows. It fails closed (visible warning, nothing created) rather than
+        // opening on a different gateway or profile, and never sends anything.
+        val newChatLaunch by
+            com.hermesandroid.relay.util.NewChatLaunchRequests.pending.collectAsState()
+        var newChatProfileWaitExpired by remember { mutableStateOf(false) }
+        LaunchedEffect(newChatLaunch?.id) {
+            newChatProfileWaitExpired = false
+            val id = newChatLaunch?.id ?: return@LaunchedEffect
+            delay(com.hermesandroid.relay.util.NewChatLaunch.PROFILE_WAIT_MS)
+            newChatProfileWaitExpired = true
+            delay(com.hermesandroid.relay.util.NewChatLaunch.REQUEST_TTL_MS - com.hermesandroid.relay.util.NewChatLaunch.PROFILE_WAIT_MS)
+            if (com.hermesandroid.relay.util.NewChatLaunchRequests.pending.value?.id == id) {
+                com.hermesandroid.relay.util.NewChatLaunchRequests.consume(id)
+                UiMessageBus.warning(applicationContext.getString(R.string.new_chat_launch_unavailable))
+            }
+        }
+        LaunchedEffect(
+            newChatLaunch,
+            onboardingCompleted,
+            initialChatSettled,
+            relayNavigationHydrated,
+            supervisedPolicy.enabled,
+            connections,
+            activeConnectionId,
+            profileSelectionSettled,
+            agentProfiles,
+            newChatProfileWaitExpired,
+        ) {
+            val request = newChatLaunch ?: return@LaunchedEffect
+            if (!onboardingCompleted || !initialChatSettled) return@LaunchedEffect
+            val step = com.hermesandroid.relay.util.newChatLaunchStep(
+                request = request,
+                hydrated = relayNavigationHydrated,
+                supervisedEnabled = supervisedPolicy.enabled,
+                connections = connections.map(Connection::newChatCandidate),
+                activeConnectionId = activeConnectionId,
+                profileSelectionSettled = profileSelectionSettled,
+                roster = agentProfiles,
+                profileWaitExpired = newChatProfileWaitExpired,
+                isProfileSelectionAllowed = connectionViewModel::isProfileSelectionAllowed,
+            )
+            when (step) {
+                com.hermesandroid.relay.util.NewChatLaunchStep.Wait -> return@LaunchedEffect
+                is com.hermesandroid.relay.util.NewChatLaunchStep.Reject -> {
+                    com.hermesandroid.relay.util.NewChatLaunchRequests.consume(request.id)
+                    UiMessageBus.warning(
+                        applicationContext.getString(
+                            when (step.reason) {
+                                com.hermesandroid.relay.util.NewChatRejection.GatewayNotFound ->
+                                    R.string.new_chat_launch_gateway_not_found
+                                com.hermesandroid.relay.util.NewChatRejection.ProfileNotFound ->
+                                    R.string.new_chat_launch_profile_not_found
+                                else -> R.string.new_chat_launch_unavailable
+                            },
+                        ),
+                    )
+                }
+                is com.hermesandroid.relay.util.NewChatLaunchStep.SwitchConnection -> {
+                    connectionViewModel.switchConnection(step.connectionId).join()
+                }
+                is com.hermesandroid.relay.util.NewChatLaunchStep.Open -> {
+                    // The chat runtime may still be binding to the (new) connection.
+                    val deadline = System.currentTimeMillis() + com.hermesandroid.relay.util.NewChatLaunch.RUNTIME_WAIT_MS
+                    while (!chatViewModel.canOpenFreshDraft && System.currentTimeMillis() < deadline) {
+                        delay(100L)
+                    }
+                    val opened = when (val profile = step.profile) {
+                        com.hermesandroid.relay.util.NewChatProfileResolution.Unspecified ->
+                            chatViewModel.openNewChatDraft()
+                        is com.hermesandroid.relay.util.NewChatProfileResolution.Found ->
+                            chatViewModel.canOpenFreshDraft && chatViewModel.createProfileChat(
+                                profileName = profile.profile.name,
+                                profile = profile.profile,
+                                contextKey = AgentDisplay.profileContextKey(
+                                    connectionId = activeConnectionId,
+                                    profileName = profile.profile.name,
+                                ),
+                            )
+                        com.hermesandroid.relay.util.NewChatProfileResolution.ServerDefault ->
+                            chatViewModel.canOpenFreshDraft && chatViewModel.createProfileChat(
+                                profileName = null,
+                                profile = null,
+                                contextKey = AgentDisplay.profileContextKey(
+                                    connectionId = activeConnectionId,
+                                    profileName = null,
+                                ),
+                            )
+                        com.hermesandroid.relay.util.NewChatProfileResolution.Missing -> false
+                    }
+                    com.hermesandroid.relay.util.NewChatLaunchRequests.consume(request.id)
+                    if (opened) {
+                        navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
+                            launchSingleTop = true
+                        }
+                        com.hermesandroid.relay.util.NewChatLaunchRequests
+                            .requestComposerFocus(request.id)
+                    } else {
+                        UiMessageBus.warning(
+                            applicationContext.getString(R.string.new_chat_launch_unavailable),
+                        )
                     }
                 }
             }
