@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- Profile discovery skips hidden directories, so the `profiles/.deleted/<name>` tombstone
+  written by `hermes profile delete` is no longer reported as a broken profile on every
+  rescan.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
