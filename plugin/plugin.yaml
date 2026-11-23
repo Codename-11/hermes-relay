@@ -8,6 +8,7 @@ author: Axiom Labs
 license: MIT
 homepage: https://github.com/Codename-11/hermes-relay
 tags: [android, dashboard, gateway, relay, remote-access, voice]
+requires_auth: [xai-oauth]
 python_dependencies:
   - "requests>=2.28.0,<3"
   - "aiohttp>=3.14.1,<4"

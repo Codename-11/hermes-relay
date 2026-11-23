@@ -810,9 +810,11 @@ class VoiceLabTests(unittest.TestCase):
                         MetricsRecorder(),
                     )
 
-    def test_xai_provider_requires_api_key(self) -> None:
+    def test_xai_provider_requires_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"VOICE_LAB_HOME": tmp}, clear=True):
+            with patch.dict(os.environ, {"VOICE_LAB_HOME": tmp}, clear=True), patch(
+                "plugin.voice_lab.providers.xai_realtime.mint_client_secret", return_value=None
+            ):
                 with self.assertRaises(ProviderUnavailable) as ctx:
                     XAIRealtimeProvider().run_text(
                         VoiceRequest(
@@ -1035,7 +1037,9 @@ class VoiceLabTests(unittest.TestCase):
 
     def test_cli_reports_xai_missing_key_without_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            with patch.dict(os.environ, {"VOICE_LAB_HOME": tmp}, clear=True):
+            with patch.dict(os.environ, {"VOICE_LAB_HOME": tmp}, clear=True), patch(
+                "plugin.voice_lab.providers.xai_realtime.mint_client_secret", return_value=None
+            ):
                 with patch("sys.stderr") as stderr:
                     rc = main(
                         [
