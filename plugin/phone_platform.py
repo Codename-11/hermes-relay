@@ -214,6 +214,14 @@ def _build_message_payload(
     md = dict(metadata or {})
     surf = surfacing or md.pop("surfacing", None)
     resolved_title = title or md.pop("title", None) or _home_channel_name()
+    # Public interim flag so Android keeps busy chrome through mid-turn status.
+    if (
+        md.get("interim") is True
+        or md.get("_interim_send") is True
+        or md.get("non_conversational") is True
+        or (isinstance(md.get("status_key"), str) and str(md.get("status_key")).strip())
+    ):
+        md["interim"] = True
     return {
         "chat_id": chat_id or _home_channel(),
         "text": (content or "")[:MAX_MESSAGE_LENGTH],
@@ -528,14 +536,32 @@ class PhoneAdapter(BasePlatformAdapter):  # type: ignore[misc,valid-type]
             logger.warning("[%s] send failed HTTP %d: %s", self.name, resp.status_code, body)
             return SendResult(success=False, error=f"relay HTTP {resp.status_code}: {body}")
 
-        message_id = None
+        message_id = payload.get("message_id")
         try:
             data = resp.json()
-            if isinstance(data, dict):
+            if isinstance(data, dict) and data.get("message_id"):
                 message_id = data.get("message_id")
         except Exception:
             pass
         return SendResult(success=True, message_id=message_id or uuid.uuid4().hex[:12])
+
+    async def send_or_update_status(
+        self,
+        chat_id: str,
+        status_key: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> "SendResult":
+        """Phone has no edit-in-place status bubble — append with interim=true.
+
+        Gateway mid-turn status/progress uses this path. Marking interim keeps
+        Android busy chrome armed until the final unmarked send.
+        """
+        md = dict(metadata or {})
+        md["interim"] = True
+        if status_key:
+            md["status_key"] = status_key
+        return await self.send(chat_id, content, metadata=md)
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         """The phone has no typing-indicator primitive for proactive pushes."""
