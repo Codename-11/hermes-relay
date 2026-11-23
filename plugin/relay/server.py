@@ -4067,7 +4067,8 @@ async def handle_phone_outbound(request: web.Request) -> web.Response:
     `relay` CLI / dashboard show what's waiting for an offline phone and cancel
     it before it flushes on the next subscribe.
 
-    GET    /phone/outbound                  → {queued, messages:[{message_id, chat_id, text, sent_at}]}
+    GET    /phone/outbound                  → {queued, messages:[{message_id, chat_id, text, sent_at}],
+                                               subscribed, subscribed_at, last_push_at, push_count, queued_total}
     DELETE /phone/outbound                  → cancel ALL → {cancelled}
     DELETE /phone/outbound?message_id=<id>  → cancel one → {cancelled}
     """
@@ -4082,7 +4083,23 @@ async def handle_phone_outbound(request: web.Request) -> web.Response:
         return web.json_response({"cancelled": cancelled}, status=200)
 
     messages = server.proactive.peek_outbound()
-    return web.json_response({"queued": len(messages), "messages": messages}, status=200)
+    # The buffer plus these counters are the only witness that distinguishes a
+    # live push from a late flush: without them an operator cannot tell "the
+    # phone was notified at send time" from "the message flushed hours later
+    # on the next subscribe" — and deployments where the hub's stderr is not
+    # captured have no other evidence at all.
+    return web.json_response(
+        {
+            "queued": len(messages),
+            "messages": messages,
+            "subscribed": server.proactive.is_phone_subscribed(),
+            "subscribed_at": server.proactive.subscribed_at,
+            "last_push_at": server.proactive.last_push_at,
+            "push_count": server.proactive.push_count,
+            "queued_total": server.proactive.queued_count,
+        },
+        status=200,
+    )
 
 
 # Cap the server-side long-poll hold so a wedged gateway poller can't pin a

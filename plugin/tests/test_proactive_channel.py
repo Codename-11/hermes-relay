@@ -245,6 +245,53 @@ class ProactiveChannelTests(unittest.TestCase):
 
         _run(run())
 
+    def test_old_flush_is_reframed_not_delivered_plain(self) -> None:
+        # An 18h-old buffered page-class flush must not read as a live alert:
+        # the delay rides inside the delivered text/title.
+        async def run() -> None:
+            ch = ProactiveChannel()
+            await ch.push(
+                {
+                    "text": "[ops-alert] tick 12:52 UTC",
+                    "title": "Hermes",
+                    "chat_id": "phone",
+                }
+            )
+            entry = ch._outbound[0]
+            entry["sent_at"] -= 18 * 3600 * 1000  # 18h old — inside TTL, past reframe age
+            ws = _FakeWs()
+            await ch.handle(ws, {"type": "proactive.subscribe"})
+            msgs = [m for m in ws.sent if m["type"] == "phone.message"]
+            self.assertEqual(len(msgs), 1)
+            p = msgs[0]["payload"]
+            self.assertTrue(p["queued_delivery"])
+            self.assertTrue(p["text"].startswith("[relay] RE-DELIVERED"))
+            self.assertIn("18h00m earlier", p["text"])
+            self.assertIn("[ops-alert] tick 12:52 UTC", p["text"])
+            self.assertTrue(p["title"].startswith("[RE-DELIVERED]"))
+            self.assertIn("re_delivered_from", p["metadata"])
+            # The queued record itself stays unmutated (retry-safe).
+            self.assertEqual(
+                ch.cancel_outbound(), 0
+            )  # already flushed; buffer drained by the flush
+
+        _run(run())
+
+    def test_recent_flush_not_reframed(self) -> None:
+        async def run() -> None:
+            ch = ProactiveChannel()
+            await ch.push({"text": "quick answer", "chat_id": "phone"})
+            entry = ch._outbound[0]
+            entry["sent_at"] -= 60 * 1000  # 1 minute — under REFRAME_AFTER_SECONDS
+            ws = _FakeWs()
+            await ch.handle(ws, {"type": "proactive.subscribe"})
+            p = [m for m in ws.sent if m["type"] == "phone.message"][0]["payload"]
+            self.assertEqual(p["text"], "quick answer")
+            self.assertTrue(p["queued_delivery"])
+            self.assertNotIn("re_delivered_from", p["metadata"])
+
+        _run(run())
+
     def test_cancel_outbound_one_and_all(self) -> None:
         async def run() -> None:
             ch = ProactiveChannel()

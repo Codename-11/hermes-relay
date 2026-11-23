@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- `GET /phone/outbound` on the Relay hub now also returns delivery-observability fields (`subscribed`, `subscribed_at`, `last_push_at`, `push_count`, `queued_total`) so operators can tell a live push from a late reconnect flush.
+
+### Changed
+
+- Delayed re-deliveries now say so: a queued agent→phone message flushed more than ten minutes after it was sent is prefixed with a `[relay] RE-DELIVERED` note in the body, a `[RE-DELIVERED]` title prefix, and `metadata.re_delivered_from`, so an old page cannot read as a fresh one even on clients that ignore the `queued_delivery` flag.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added
