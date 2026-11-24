@@ -166,6 +166,7 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -766,6 +767,7 @@ class ChatViewModel : ViewModel() {
      * for the FAILED/LOADED cases.
      */
     companion object {
+        private const val CONTENT_SEARCH_DEBOUNCE_MS = 300L
         // === PHASE3-status: APP_CONTEXT_PROMPT removed ===
         // The old static one-liner used to live here. Replaced by the
         // dynamic block built in PhoneStatusPromptBuilder.buildPromptBlock()
@@ -4165,6 +4167,15 @@ class ChatViewModel : ViewModel() {
         profileSessionPageLister = lister
     }
 
+    private var profileSessionSearcher:
+        (suspend (String?, String) -> Result<List<SessionItem>>?)? = null
+
+    fun setProfileSessionSearcher(
+        searcher: suspend (String?, String) -> Result<List<SessionItem>>?,
+    ) {
+        profileSessionSearcher = searcher
+    }
+
     private var dashboardSignInRequiredHandler: (() -> Unit)? = null
 
     fun setDashboardSignInRequiredHandler(handler: () -> Unit) {
@@ -4557,6 +4568,61 @@ class ChatViewModel : ViewModel() {
 
     val sessions: StateFlow<List<ChatSession>>
         get() = chatHandler?.sessions ?: _emptySessions
+
+    private val _contentSearchHits = MutableStateFlow<List<ChatSession>>(emptyList())
+    val contentSearchHits: StateFlow<List<ChatSession>> = _contentSearchHits
+    private val _contentSearchPending = MutableStateFlow(false)
+    val contentSearchPending: StateFlow<Boolean> = _contentSearchPending
+    private var contentSearchJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Debounced gateway message-body search for the session drawer.
+     * While in flight [contentSearchPending] is true so the drawer can show a spinner
+     * instead of flashing empty / dumping the full recent list.
+     */
+    fun searchSessionContents(query: String) {
+        val q = query.trim()
+        contentSearchJob?.cancel()
+        if (q.length < 2) {
+            _contentSearchPending.value = false
+            _contentSearchHits.value = emptyList()
+            return
+        }
+        _contentSearchPending.value = true
+        contentSearchJob = viewModelScope.launch {
+            try {
+                delay(CONTENT_SEARCH_DEBOUNCE_MS)
+                val result = profileSessionSearcher?.invoke(currentSessionProfileName(), q)
+                _contentSearchHits.value = com.hermesandroid.relay.ui.components.dedupeContentSearchHits(
+                    result?.getOrNull().orEmpty().map { item ->
+                        val activityMs = listOfNotNull(
+                            item.lastActive,
+                            item.lastActivity,
+                            item.lastActivityAt,
+                            item.updatedAt,
+                            item.startedAt,
+                        ).firstOrNull()?.let { sec ->
+                            // Gateway timestamps are usually epoch seconds.
+                            if (sec > 1e12) sec.toLong() else (sec * 1000.0).toLong()
+                        } ?: 0L
+                        com.hermesandroid.relay.ui.components.chatSessionFromSearchHit(
+                            sessionId = item.id,
+                            title = item.title,
+                            preview = item.preview,
+                            model = item.model,
+                            source = item.source,
+                            matchKind = item.matchKind,
+                            updatedAt = activityMs,
+                        )
+                    },
+                )
+            } finally {
+                if (isActive) {
+                    _contentSearchPending.value = false
+                }
+            }
+        }
+    }
 
     val error: StateFlow<String?>
         get() = chatHandler?.error ?: _emptyError

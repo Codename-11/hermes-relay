@@ -993,6 +993,9 @@
     <string name="drawer_new_chat">Neuer Chat</string>
     <string name="drawer_search_placeholder">Sitzungen oder ID suchen...</string>
     <string name="drawer_search_sessions">Sitzungen durchsuchen</string>
+    <string name="drawer_search_sort_relevant">Am relevantesten</string>
+    <string name="drawer_search_sort_recent">Am neuesten</string>
+    <string name="drawer_search_semantically_similar">Semantisch ähnlich</string>
     <string name="drawer_pin_sidebar">Sitzungsleiste anheften</string>
     <string name="drawer_unpin_sidebar">Sitzungsleiste lösen</string>
     <string name="drawer_activity_working">Wird bearbeitet</string>
@@ -4638,4 +4641,5 @@
     <string name="voice_settings_host_barge_in_desc">Steuert Unterbrechungen im Sprachmodus des Hermes-Hosts, nicht das Mikrofon dieses Telefons. Nutze dafür Unterbrechung am Telefon unter Listening.</string>
     <string name="voice_settings_speak_tool_updates">Tool-Meldungen vorlesen</string>
     <string name="voice_settings_speak_tool_updates_desc">Integrierte Tool-Meldungen sind auf Englisch. Deaktiviere diese Option, um Antworten ohne diese Meldungen zu hören. Die Option „Nur endgültige Antwort“ schaltet sie ebenfalls stumm.</string>
+    <string name="drawer_searching_sessions">Suche…</string>
 </resources>

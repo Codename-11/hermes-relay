@@ -154,7 +154,9 @@ jobs:
   test:
     name: Test (Android)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Focused suite + cold fork cache can approach 20m; cancelled jobs fail the
+    # required-checks gate even when continue-on-error would tolerate assertion fails.
+    timeout-minutes: 30
     # Advisory on dev, strict on main. Evaluates to false (= strict) for
     # pushes to main and PRs whose base branch is main; true (= advisory)
     # for everything else (dev pushes, dev-targeted PRs, feature branches).
@@ -214,6 +216,7 @@ jobs:
             --tests com.hermesandroid.relay.screenshots.ChatComposerProgressScreenshotTest \
             --tests com.hermesandroid.relay.screenshots.UnreadConversationsScreenshotTest \
             --tests com.hermesandroid.relay.ui.components.ProfileShelfPolicyTest \
+            --tests com.hermesandroid.relay.ui.components.SessionDrawerPolicyTest \
             --tests com.hermesandroid.relay.viewmodel.VoiceInboundCompletionTest \
             --tests com.hermesandroid.relay.voice.VoiceViewModelBargeInTest \
             --tests com.hermesandroid.relay.wake.WakeWordCoreTest \

@@ -1022,6 +1022,9 @@
     <string name="drawer_new_chat">Новый чат</string>
     <string name="drawer_search_placeholder">Поиск сессий или id...</string>
     <string name="drawer_search_sessions">Поиск сессий</string>
+    <string name="drawer_search_sort_relevant">Наиболее релевантные</string>
+    <string name="drawer_search_sort_recent">Недавние</string>
+    <string name="drawer_search_semantically_similar">Семантически похожие</string>
     <string name="drawer_pin_sidebar">Закрепить боковую панель сессий</string>
     <string name="drawer_unpin_sidebar">Открепить боковую панель сессий</string>
     <string name="drawer_activity_working">Выполняется</string>
@@ -4377,4 +4380,5 @@
     <string name="voice_settings_host_barge_in_desc">Управляет прерываниями в голосовом режиме хоста Hermes, но не микрофоном этого телефона. Используйте Прерывание на телефоне на вкладке Listening.</string>
     <string name="voice_settings_speak_tool_updates">Озвучивать уведомления инструментов</string>
     <string name="voice_settings_speak_tool_updates_desc">Встроенные уведомления инструментов звучат на английском. Отключите их, чтобы слышать ответы ассистента без этих уведомлений. Режим «Только финальный ответ» также отключает их озвучивание.</string>
+    <string name="drawer_searching_sessions">Поиск…</string>
 </resources>

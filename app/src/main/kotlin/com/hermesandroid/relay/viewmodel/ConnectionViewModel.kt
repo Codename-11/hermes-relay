@@ -2442,6 +2442,12 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
     ): Result<List<SessionItem>>? =
         profileController.listProfileScopedSessions(profileName, limit, offset, excludeSources)
 
+    suspend fun searchProfileScopedSessions(
+        profileName: String?,
+        query: String,
+    ): Result<List<SessionItem>>? =
+        profileController.searchProfileScopedSessions(profileName, query)
+
     suspend fun listAllProfileSessions(limit: Int = 200): Result<List<SessionItem>>? =
         profileController.listAllProfileSessions(limit)
 
