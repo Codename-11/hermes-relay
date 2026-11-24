@@ -15,7 +15,14 @@ data class WakeWordActivation(
 enum class WakeWordActivationSource {
     ForegroundService,
     SystemAssistant,
+
+    /** Android launched MainActivity directly with ACTION_ASSIST (side key). */
+    AssistantLaunch,
 }
+
+/** SystemAssistant turns are owned by the session process; the rest start voice in RelayApp. */
+val WakeWordActivationSource.startsVoiceInApp: Boolean
+    get() = this != WakeWordActivationSource.SystemAssistant
 
 /**
  * Durable-within-process handoff between the microphone service and Compose.

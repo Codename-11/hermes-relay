@@ -4038,6 +4038,8 @@
     <string name="assistant_mode_manage">Android-Einstellungen</string>
     <string name="assistant_mode_wake_enable">„Hey Hermes“ im Hintergrund</string>
     <string name="assistant_mode_wake_enable_desc">Nur verfügbar, solange Hermes als Digitalassistent ausgewählt ist. Dies ist unabhängig vom experimentellen Benachrichtigungs-Listener unten.</string>
+    <string name="assistant_mode_launch_voice">Direkt im Sprachdialog starten</string>
+    <string name="assistant_mode_launch_voice_desc">Seitentaste / Assistenten-Geste öffnet sofort den Sprachdialog (zuhören, Antwort vorlesen) statt des Text-Chats.</string>
     <string name="assistant_mode_status_session">Assistentensitzung wird geöffnet</string>
     <string name="assistant_mode_removal">Zum Entfernen Android-Einstellungen öffnen und einen anderen Assistenten oder Keine wählen. Ohne Hintergrundaktivierung bleibt die Gesten- oder Ein/Aus-Tasten-Aktivierung verfügbar.</string>
     <string name="assistant_mode_battery">Die Erkennung bleibt bis zur Aktivierung auf diesem Telefon. Drittanbieter-Assistenten erhalten nicht Googles spezielle stromsparende Hotword-Hardware; Mikrofon und CPU können den Akku merklich belasten.</string>

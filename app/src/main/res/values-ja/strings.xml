@@ -4034,6 +4034,8 @@
     <string name="assistant_mode_manage">Android の設定</string>
     <string name="assistant_mode_wake_enable">バックグラウンドの「Hey Hermes」</string>
     <string name="assistant_mode_wake_enable_desc">Hermes がデジタル アシスタントに選択されている間だけ利用できます。下の通知型の試験機能とは別です。</string>
+    <string name="assistant_mode_launch_voice">音声モードで直接開く</string>
+    <string name="assistant_mode_launch_voice_desc">サイドキーまたはアシスタントのジェスチャーで、テキストチャットではなく音声ダイアログをすぐに開始します（聞き取り、音声で応答）。</string>
     <string name="assistant_mode_status_session">アシスタント セッションを開いています</string>
     <string name="assistant_mode_removal">削除するには Android の設定で別のアシスタントまたは「なし」を選びます。バックグラウンド起動をオフにしても、ジェスチャーや電源ボタンから起動できます。</string>
     <string name="assistant_mode_battery">起動前の検出はこの端末内で行われます。サードパーティ製アシスタントは Google 専用の低消費電力ホットワード機能を利用できないため、マイクと CPU が電池を多く消費する場合があります。</string>

@@ -1,5 +1,6 @@
 package com.hermesandroid.relay.ui
 
+import com.hermesandroid.relay.wake.startsVoiceInApp
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -1550,9 +1551,7 @@ fun RelayApp() {
         // gate and UI-owned activation flow.
         LaunchedEffect(wakeActivation?.id, appIsForeground) {
             val activation = wakeActivation ?: return@LaunchedEffect
-            if (activation.source ==
-                com.hermesandroid.relay.wake.WakeWordActivationSource.SystemAssistant
-            ) {
+            if (!activation.source.startsVoiceInApp) {
                 navController.navigate(Screen.Chat.route(openAgentSheet = false)) {
                     launchSingleTop = true
                 }
