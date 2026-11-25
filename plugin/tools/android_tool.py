@@ -444,11 +444,26 @@ def android_find_nodes(text: Optional[str] = None,
         return json.dumps({"error": str(e)})
 
 
+def _gesture_failure(exc: Exception) -> str:
+    """Return an actionable refusal for Relay's guarded node actions."""
+    response = getattr(exc, "response", None)
+    if response is not None and getattr(response, "status_code", None) == 409:
+        try:
+            message = response.json().get("error")
+        except (AttributeError, TypeError, ValueError):
+            message = None
+        return json.dumps({
+            "error": message or "Stale or invalid screen node; read the screen again.",
+            "action_performed": False,
+        })
+    return json.dumps({"error": str(exc)})
+
+
 def android_tap(x: Optional[int] = None, y: Optional[int] = None,
                 node_id: Optional[str] = None) -> str:
     """
-    Tap at screen coordinates (x, y) or by accessibility node_id.
-    Prefer node_id when available — it's more reliable than coordinates.
+    Tap at screen coordinates (x, y) or by a fresh snapshot-bound node_id.
+    Node IDs are one-use; raw positional IDs are rejected by Relay.
     """
     try:
         payload = {}
@@ -462,7 +477,7 @@ def android_tap(x: Optional[int] = None, y: Optional[int] = None,
         data = _post("/tap", payload)
         return json.dumps(data)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _gesture_failure(e)
 
 
 def android_tap_text(text: str, exact: bool = False) -> str:
@@ -555,7 +570,7 @@ def android_long_press(
         data = _post("/long_press", payload)
         return json.dumps(data)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _gesture_failure(e)
 
 
 def android_type(text: str, clear_first: bool = False) -> str:
@@ -744,7 +759,7 @@ def android_scroll(direction: str, node_id: Optional[str] = None) -> str:
         data = _post("/scroll", payload)
         return json.dumps(data)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _gesture_failure(e)
 
 
 def android_wait(text: str = None, class_name: str = None,
@@ -885,7 +900,7 @@ def android_describe_node(node_id: str) -> str:
         data = _post("/describe_node", {"nodeId": node_id})
         return json.dumps(data)
     except Exception as e:
-        return json.dumps({"error": str(e)})
+        return _gesture_failure(e)
 
 
 def android_events(limit: int = 50, since: int = 0) -> str:
@@ -1934,13 +1949,13 @@ _SCHEMAS = {
     },
     "android_tap": {
         "name": "android_tap",
-        "description": "Tap a UI element by node_id (preferred) or by screen coordinates (x, y). Always prefer node_id over coordinates — it's more reliable. Get node_ids from android_read_screen.",
+        "description": "Tap by coordinates or by a one-use snapshot-bound node_id from android_read_screen/android_find_nodes. Old positional IDs are rejected. Re-read the screen after every action.",
         "parameters": {
             "type": "object",
             "properties": {
                 "x": {"type": "integer", "description": "X coordinate in pixels"},
                 "y": {"type": "integer", "description": "Y coordinate in pixels"},
-                "node_id": {"type": "string", "description": "Accessibility node ID from android_read_screen"},
+                "node_id": {"type": "string", "description": "One-use snapshot-bound ID from a current screen read. Raw w0:NN IDs are rejected."},
             },
             "required": [],
         },
@@ -1961,8 +1976,8 @@ _SCHEMAS = {
         "name": "android_long_press",
         "description": (
             "Perform a long press at screen coordinates (x, y) or on an "
-            "accessibility node_id. Prefer node_id when available — it's "
-            "more reliable than coordinates. Use for context menus, text "
+            "one-use accessibility node_id from a fresh read. Old IDs "
+            "are rejected by the Relay. Use for context menus, text "
             "selection, widget rearranging, and hold-to-confirm UI. "
             "Duration defaults to 500 ms and is clamped to 100..3000 ms."
         ),
@@ -2074,7 +2089,7 @@ _SCHEMAS = {
     },
     "android_scroll": {
         "name": "android_scroll",
-        "description": "Scroll the screen or a specific scrollable element.",
+        "description": "Scroll the screen or a scrollable element by one-use node ID. Re-read after each action because positional IDs are unsafe.",
         "parameters": {
             "type": "object",
             "properties": {
