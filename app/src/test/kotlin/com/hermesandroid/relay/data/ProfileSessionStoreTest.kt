@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -28,6 +29,9 @@ class ProfileSessionStoreTest {
             "session-default",
             store.sessionIdFlow("conn-1", null, GATEWAY).first(),
         )
+        val pointer = store.sessionPointerFlow("conn-1", null, GATEWAY).first()
+        assertEquals("session-default", pointer?.sessionId)
+        assertTrue((pointer?.lastActivityAtMs ?: 0L) > 0L)
     }
 
     @Test
@@ -83,7 +87,24 @@ class ProfileSessionStoreTest {
         store.setSessionId("conn-1", "mizu", GATEWAY, null)
 
         assertNull(store.sessionIdFlow("conn-1", "mizu", GATEWAY).first())
+        assertNull(store.sessionPointerFlow("conn-1", "mizu", GATEWAY).first())
         assertEquals("session-sse", store.sessionIdFlow("conn-1", "mizu", SSE).first())
+        assertEquals("session-sse", store.sessionPointerFlow("conn-1", "mizu", SSE).first()?.sessionId)
+    }
+
+    @Test
+    fun explicitActivityIsPreservedAndIndependentPerTransport() = runBlocking {
+        store.setSessionId("conn-1", "mizu", GATEWAY, "session-gw", lastActivityAtMs = 1_111L)
+        store.setSessionId("conn-1", "mizu", SSE, "session-sse", lastActivityAtMs = 2_222L)
+
+        assertEquals(
+            StoredSessionPointer("session-gw", 1_111L),
+            store.sessionPointerFlow("conn-1", "mizu", GATEWAY).first(),
+        )
+        assertEquals(
+            StoredSessionPointer("session-sse", 2_222L),
+            store.sessionPointerFlow("conn-1", "mizu", SSE).first(),
+        )
     }
 
     @Test
@@ -108,17 +129,22 @@ class ProfileSessionStoreTest {
 
     @Test
     fun clearConnectionRemovesAllProfilesAndTransportsForThatConnectionOnly() = runBlocking {
-        store.setSessionId("conn-1", null, GATEWAY, "session-default")
-        store.setSessionId("conn-1", "mizu", GATEWAY, "session-mizu")
-        store.setSessionId("conn-1", "mizu", SSE, "session-mizu-sse")
-        store.setSessionId("conn-2", "mizu", GATEWAY, "session-other")
+        store.setSessionId("conn-1", null, GATEWAY, "session-default", lastActivityAtMs = 10L)
+        store.setSessionId("conn-1", "mizu", GATEWAY, "session-mizu", lastActivityAtMs = 20L)
+        store.setSessionId("conn-1", "mizu", SSE, "session-mizu-sse", lastActivityAtMs = 30L)
+        store.setSessionId("conn-2", "mizu", GATEWAY, "session-other", lastActivityAtMs = 40L)
 
         store.clearConnection("conn-1")
 
         assertNull(store.sessionIdFlow("conn-1", null, GATEWAY).first())
+        assertNull(store.sessionPointerFlow("conn-1", null, GATEWAY).first())
         assertNull(store.sessionIdFlow("conn-1", "mizu", GATEWAY).first())
         assertNull(store.sessionIdFlow("conn-1", "mizu", SSE).first())
         assertEquals("session-other", store.sessionIdFlow("conn-2", "mizu", GATEWAY).first())
+        assertEquals(
+            StoredSessionPointer("session-other", 40L),
+            store.sessionPointerFlow("conn-2", "mizu", GATEWAY).first(),
+        )
     }
 
     @Test

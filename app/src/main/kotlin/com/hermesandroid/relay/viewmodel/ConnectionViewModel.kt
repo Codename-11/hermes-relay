@@ -8,6 +8,7 @@ import android.net.Uri
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.AndroidViewModel
@@ -1016,6 +1017,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         private val KEY_INSECURE_MODE = booleanPreferencesKey("insecure_mode")
         private val KEY_LAST_SEEN_VERSION = stringPreferencesKey("last_seen_version")
         private val KEY_LAST_SESSION_ID = stringPreferencesKey("last_session_id")
+        private val KEY_LAST_SESSION_ACTIVITY_MS = longPreferencesKey("last_session_activity_ms")
         private val KEY_SHOW_THINKING = booleanPreferencesKey("show_thinking")
         private val KEY_TOOL_DISPLAY = stringPreferencesKey("tool_display")
         private val KEY_THINKING_INDICATOR_STYLE = stringPreferencesKey("thinking_indicator_style")
@@ -1410,6 +1412,9 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         setLastSessionId = { _lastSessionId.value = it },
         legacyDefaultSessionId = {
             getApplication<Application>().relayDataStore.data.first()[KEY_LAST_SESSION_ID]
+        },
+        legacyDefaultSessionActivityMs = {
+            getApplication<Application>().relayDataStore.data.first()[KEY_LAST_SESSION_ACTIVITY_MS]
         },
         rebuildChatApiClient = { rebuildChatApiClient() },
         relayHttpClient = relayHttpClient,
@@ -4479,6 +4484,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         prefs[KEY_API_SERVER_URL] = ""
                         prefs[KEY_RELAY_URL] = ""
                         prefs.remove(KEY_LAST_SESSION_ID)
+                        prefs.remove(KEY_LAST_SESSION_ACTIVITY_MS)
                     }
                 // rebuildApiClient() with blank URL nulls _apiClient,
                 // flips _apiServerReachable / _apiServerHealth /
@@ -8421,6 +8427,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
         // The null Server-default sentinel stays separate from whichever named
         // profile the server's sticky default currently resolves to.
         val profileName = profileController.selectionIdentityProfileName()
+        val activityAtMs = if (sessionId != null) System.currentTimeMillis() else null
         viewModelScope.launch {
             if (connectionId != null) {
                 if (sessionId != null) {
@@ -8434,6 +8441,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                         profileName,
                         transport,
                         sessionId,
+                        lastActivityAtMs = activityAtMs,
                     )
                 } else {
                     // A null clears only the ACTIVE transport's slot, and only when
@@ -8457,8 +8465,10 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
                 getApplication<Application>().relayDataStore.edit { preferences ->
                     if (sessionId != null) {
                         preferences[KEY_LAST_SESSION_ID] = sessionId
+                        preferences[KEY_LAST_SESSION_ACTIVITY_MS] = activityAtMs!!
                     } else {
                         preferences.remove(KEY_LAST_SESSION_ID)
+                        preferences.remove(KEY_LAST_SESSION_ACTIVITY_MS)
                     }
                 }
             }
@@ -8474,6 +8484,7 @@ class ConnectionViewModel(application: Application) : AndroidViewModel(applicati
             viewModelScope.launch {
                 getApplication<Application>().relayDataStore.edit { preferences ->
                     preferences.remove(KEY_LAST_SESSION_ID)
+                    preferences.remove(KEY_LAST_SESSION_ACTIVITY_MS)
                 }
             }
         }
