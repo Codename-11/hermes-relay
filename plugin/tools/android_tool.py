@@ -735,7 +735,8 @@ def android_screenshot(sensitive: bool = False) -> dict:
 def android_scroll(direction: str, node_id: Optional[str] = None) -> str:
     """
     Scroll within a scrollable element or the whole screen.
-    direction: up, down, left, right
+    direction: up, down, left, right. A gesture dispatch alone does not
+    guarantee list movement. Read the screen afterward to verify.
     """
     try:
         payload = {"direction": direction}
@@ -2074,7 +2075,7 @@ _SCHEMAS = {
     },
     "android_scroll": {
         "name": "android_scroll",
-        "description": "Scroll the screen or a specific scrollable element.",
+        "description": "Scroll the screen or a scrollable element. The Relay can avoid unsafe edge overlays by falling back to the root center; verify visible content changed after the gesture.",
         "parameters": {
             "type": "object",
             "properties": {
