@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -45,6 +46,7 @@ class AttachmentGalleryUiTest {
         }
 
         compose.onNodeWithContentDescription("3 image gallery").assertExists()
+        waitForTile("one.png, image 1 of 3")
         compose.onNodeWithTag("attachment-gallery-tile-0").performClick()
         compose.onNodeWithText("1 / 3").assertExists()
 
@@ -71,6 +73,7 @@ class AttachmentGalleryUiTest {
             }
         }
 
+        waitForTile("two.png, image 2 of 3")
         compose.onNodeWithTag("attachment-gallery-tile-1").performClick()
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithText("2 / 3").fetchSemanticsNodes().isNotEmpty()
@@ -94,6 +97,7 @@ class AttachmentGalleryUiTest {
             }
         }
 
+        waitForTile("two.png, image 2 of 3")
         compose.onNodeWithTag("attachment-gallery-tile-1").performClick()
         compose.onNodeWithText("2 / 3").assertExists()
 
@@ -267,12 +271,20 @@ class AttachmentGalleryUiTest {
             }
         }
 
+        waitForTile("safe.png, image 1 of 2")
         compose.onNodeWithTag("attachment-gallery-tile-0").performClick()
         compose.onNodeWithTag("attachment-gallery-pager").performTouchInput { swipeLeft() }
         compose.waitUntil(timeoutMillis = 5_000) {
             compose.onAllNodesWithText("2 / 2").fetchSemanticsNodes().isNotEmpty()
         }
         compose.onNodeWithContentDescription("Share").assertIsNotEnabled()
+    }
+
+    private fun waitForTile(description: String) {
+        compose.waitUntil(timeoutMillis = 5_000) {
+            compose.onAllNodesWithContentDescription(description, useUnmergedTree = true)
+                .fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     private companion object {

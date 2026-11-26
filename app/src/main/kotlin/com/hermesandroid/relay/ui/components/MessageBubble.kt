@@ -678,6 +678,8 @@ fun MessageBubble(
                             style = MaterialTheme.typography.bodyMedium.copy(
                                 fontSize = 15.sp,
                                 lineHeight = 21.sp,
+                                textDirection = androidx.compose.ui.text.style.TextDirection.ContentOrLtr,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Start,
                             ),
                             color = textColor
                         )
