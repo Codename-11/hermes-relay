@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- Optional Chat setting to hide unread badges and counts without changing read state or Android notifications.
+
 ## [Android 1.19.0] - 2026-10-20
 
 ### Added

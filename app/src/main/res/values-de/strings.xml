@@ -4638,4 +4638,7 @@
     <string name="voice_settings_host_barge_in_desc">Steuert Unterbrechungen im Sprachmodus des Hermes-Hosts, nicht das Mikrofon dieses Telefons. Nutze dafür Unterbrechung am Telefon unter Listening.</string>
     <string name="voice_settings_speak_tool_updates">Tool-Meldungen vorlesen</string>
     <string name="voice_settings_speak_tool_updates_desc">Integrierte Tool-Meldungen sind auf Englisch. Deaktiviere diese Option, um Antworten ohne diese Meldungen zu hören. Die Option „Nur endgültige Antwort“ schaltet sie ebenfalls stumm.</string>
+    <string name="chat_settings_unread_indicators">Ungelesen-Markierungen</string>
+    <string name="chat_settings_show_unread_indicators">Ungelesen-Markierungen anzeigen</string>
+    <string name="chat_settings_show_unread_indicators_desc">Zeigt Markierungen für ungelesene Inhalte in Chats, Sitzungen und Profilen an. Ändert weder den Lesestatus noch Android-Benachrichtigungen.</string>
 </resources>

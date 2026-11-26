@@ -26,6 +26,20 @@ class ChatInputPreferencesTest {
     }
 
     @Test
+    fun `unread indicators default on and persist independently`() = runTest {
+        val unrelatedKey = stringPreferencesKey("unrelated_unread_test")
+        val store = InMemoryChatInputDataStore(mutablePreferencesOf(unrelatedKey to "keep-me"))
+        val repository = ChatInputPreferencesRepository(store)
+
+        assertEquals(true, repository.showUnreadIndicators.first())
+        repository.setShowUnreadIndicators(false)
+        assertEquals(false, ChatInputPreferencesRepository(store).showUnreadIndicators.first())
+        assertEquals("keep-me", store.data.first()[unrelatedKey])
+        repository.setShowUnreadIndicators(true)
+        assertEquals(true, repository.showUnreadIndicators.first())
+    }
+
+    @Test
     fun `correction availability rejects attachments blocked input compaction and slash commands`() {
         assertEquals(true, canCorrectBusyMessage(true, false, false, null, "Correct this"))
         assertEquals(false, canCorrectBusyMessage(false, false, false, null, "Correct this"))
