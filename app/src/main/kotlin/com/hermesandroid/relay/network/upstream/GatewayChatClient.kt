@@ -644,9 +644,14 @@ class GatewayChatClient(
     @Volatile
     private var attachMethodForSocket: String? = null
 
-    /** `commands.catalog` result for the current socket — invalidated on socket loss. */
+    /**
+     * `commands.catalog` result for the current socket, tagged with the profile
+     * it was fetched for (skills differ per profile) — invalidated on socket loss.
+     */
+    private class CommandsCatalogCache(val profile: String?, val catalog: JsonObject)
+
     @Volatile
-    private var commandsCatalogCache: JsonObject? = null
+    private var commandsCatalogCache: CommandsCatalogCache? = null
 
     @Volatile
     private var connectCooldownUntil: Long = 0L
@@ -1317,7 +1322,8 @@ class GatewayChatClient(
     }
 
     /**
-     * Obtain a session-scoped target before a model-selection `config.set`.
+     * Obtain a session-scoped target before a model-selection `config.set`, or
+     * before a built-in slash command (`slash.exec` needs a live session).
      *
      * Unlike [prewarmAwait], a draft is deliberately materialized here because
      * sending a model with `session.create` bypasses upstream's cost/data-policy
@@ -2021,14 +2027,22 @@ class GatewayChatClient(
     }
 
     /**
-     * Server slash-command catalog (`commands.catalog`), cached per socket —
-     * the command set only changes with server config, so one fetch per
-     * connection is enough. Default [connectIfNeeded] = false fails fast
+     * Server slash-command catalog (`commands.catalog`), cached per socket and
+     * profile — skills are profile-scoped, so a different profile is a cache
+     * miss. [forceRefresh] bypasses the cache (e.g. after a skill install). Default [connectIfNeeded] = false fails fast
      * (no ticket mint) when no socket is ready — a catalog fetch must never
      * be the reason /api/ws cold-opens.
      */
-    suspend fun commandsCatalog(connectIfNeeded: Boolean = false): Result<JsonObject> {
-        commandsCatalogCache?.let { return Result.success(it) }
+    suspend fun commandsCatalog(
+        connectIfNeeded: Boolean = false,
+        forceRefresh: Boolean = false,
+    ): Result<JsonObject> {
+        val requestedProfile = currentSessionProfile()
+        if (!forceRefresh) {
+            commandsCatalogCache
+                ?.takeIf { it.profile == requestedProfile }
+                ?.let { return Result.success(it.catalog) }
+        }
         if (!connectIfNeeded && (webSocket == null || readySignal?.isCompleted != true)) {
             return Result.failure(GatewayRpcException("not connected"))
         }
@@ -2037,8 +2051,14 @@ class GatewayChatClient(
         } catch (e: Exception) {
             return Result.failure(e)
         }
-        return rpc("commands.catalog", JsonObject(emptyMap()))
-            .onSuccess { commandsCatalogCache = it }
+        val params = buildJsonObject {
+            liveSessionId
+                ?.takeIf { liveSessionProfile == requestedProfile }
+                ?.let { put("session_id", it) }
+            requestedProfile?.let { put("profile", it) }
+        }
+        return rpc("commands.catalog", params)
+            .onSuccess { commandsCatalogCache = CommandsCatalogCache(requestedProfile, it) }
     }
 
     /**
@@ -2804,6 +2824,7 @@ class GatewayChatClient(
             buildJsonObject {
                 put("session_id", sid)
                 put("command", command)
+                currentSessionProfile()?.let { put("profile", it) }
             },
         )
     }
@@ -2820,6 +2841,7 @@ class GatewayChatClient(
                 liveSessionId?.let { put("session_id", it) }
                 put("name", name)
                 if (arg != null) put("arg", arg)
+                currentSessionProfile()?.let { put("profile", it) }
             },
         )
 

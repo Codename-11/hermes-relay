@@ -4011,6 +4011,47 @@ class GatewayChatClientTest {
     }
 
     @Test
+    fun `commands catalog carries profile and misses the cache on profile change`() {
+        var profile: String? = "work"
+        client.sessionProfileProvider = { profile }
+
+        assertTrue(runBlocking { client.commandsCatalog(connectIfNeeded = true) }.isSuccess)
+        assertTrue(runBlocking { client.commandsCatalog() }.isSuccess)
+        assertEquals(1, harness.rpcLog.count { it.first == "commands.catalog" })
+        assertEquals(
+            "work",
+            (harness.awaitRpc("commands.catalog")["profile"] as? JsonPrimitive)?.contentOrNull,
+        )
+
+        profile = "other"
+        assertTrue(runBlocking { client.commandsCatalog() }.isSuccess)
+        val calls = harness.rpcLog.filter { it.first == "commands.catalog" }
+        assertEquals(2, calls.size)
+        assertEquals("other", (calls[1].second["profile"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
+    fun `commands catalog forceRefresh bypasses the cache`() {
+        assertTrue(runBlocking { client.commandsCatalog(connectIfNeeded = true) }.isSuccess)
+        assertTrue(runBlocking { client.commandsCatalog(forceRefresh = true) }.isSuccess)
+        assertEquals(2, harness.rpcLog.count { it.first == "commands.catalog" })
+    }
+
+    @Test
+    fun `slashExec and commandDispatch carry the session profile`() {
+        client.sessionProfileProvider = { "work" }
+        val r = Recorder()
+        client.sendTurn(null, "hi", null, r.callbacks) { r.preflightFailures += it }
+        harness.awaitServerSocket()
+        harness.awaitRpc("prompt.submit")
+
+        runBlocking { client.slashExec("/help") }
+        runBlocking { client.commandDispatch("ntfy-cli", "x") }
+        assertEquals("work", (harness.awaitRpc("slash.exec")["profile"] as? JsonPrimitive)?.contentOrNull)
+        assertEquals("work", (harness.awaitRpc("command.dispatch")["profile"] as? JsonPrimitive)?.contentOrNull)
+    }
+
+    @Test
     fun `commands catalog without a ready socket fails fast and mints no ticket`() {
         val result = runBlocking { client.commandsCatalog() }
         assertTrue(result.isFailure)
