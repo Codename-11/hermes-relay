@@ -224,6 +224,7 @@ internal fun dashboardSectionRequestPath(path: String, profile: String?): String
             "/api/mcp/catalog",
             "/api/providers/custom-endpoints",
             "/api/learning/graph",
+            "/api/cron/jobs",
         )
     ) return path
     val encoded = java.net.URLEncoder.encode(profile, Charsets.UTF_8.name()).replace("+", "%20")
