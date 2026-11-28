@@ -44,6 +44,8 @@ import {
   clearDaemonStatus,
   isDaemonProcessAlive,
   isPidAlive,
+  processOwnerIsAlive,
+  windowsProcessSnapshot,
   readDaemonStatus,
   writeDaemonStatus,
   type DaemonComputerGrantStatus,
@@ -96,6 +98,8 @@ const INCOMPLETE_LOCK_GRACE_MS = 1_000
 interface ProcessLockOwner {
   pid: number
   process_name: string
+  executable_path?: string
+  process_started_at?: number
   token: string
   created_at: number
   purpose: string
@@ -135,11 +139,7 @@ async function readProcessLockOwner(lockPath: string): Promise<ProcessLockOwner 
 }
 
 function processLockOwnerAlive(owner: ProcessLockOwner): boolean {
-  // PID liveness is deliberately authoritative here. Unlike status/stop, a
-  // conservative false positive only causes a bounded lock timeout; a false
-  // negative could let a second daemon start. It also avoids spawning tasklist
-  // or ps from the startup hot path (and executable-name truncation on Unix).
-  return isPidAlive(owner.pid)
+  return processOwnerIsAlive(owner)
 }
 
 async function releaseProcessLock(lockPath: string, token: string): Promise<void> {
@@ -164,8 +164,13 @@ async function acquireProcessLock(lockPath: string, options: ProcessLockOptions)
   const sleep = options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)))
   const ownerAlive = options.ownerAlive ?? processLockOwnerAlive
   const deadline = now() + options.timeoutMs
+  const processSnapshot = process.platform === 'win32' ? windowsProcessSnapshot(process.pid) : null
   const owner: ProcessLockOwner = {
     pid: process.pid,
+    executable_path: process.platform === 'win32'
+      ? processSnapshot?.state === 'alive' ? processSnapshot.executablePath ?? undefined : undefined
+      : process.execPath,
+    process_started_at: processSnapshot?.state === 'alive' ? processSnapshot.startedAt ?? undefined : undefined,
     process_name: path.basename(process.execPath),
     token: randomUUID(),
     created_at: now(),
@@ -715,8 +720,10 @@ async function startDetachedDaemonLocked(args: ParsedArgs): Promise<number> {
     process.stderr.write(
       t.err(`daemon did not become ready within ${DETACHED_START_TIMEOUT_MS / 1000} seconds (${state})`) + '\n'
     )
+    process.stderr.write(t.muted(`  daemon is still running (pid ${child.pid}); connection attempts continue in the background`) + '\n')
     process.stderr.write(t.muted(`  logs:   ${logPath}`) + '\n')
     process.stderr.write(t.muted('  status: hermes-relay daemon status') + '\n')
+    process.stderr.write(t.muted('  stop:   hermes-relay daemon stop') + '\n')
     return 1
   }
 
@@ -1045,14 +1052,17 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
     Object.assign(status, partial, { updated_at: nowSec() })
     return writeDaemonStatus(status)
   }
-  void updateStatus({})
+  await updateStatus({})
 
+  let advertiseDesktopAfterReconnect = () => {}
   const relay = new RelayTransport({
     url,
     sessionToken: token,
     sessionHeader: useSessionHeader,
     broker: brokerRoute,
     autoReconnect: true,
+    onReconnect: () => advertiseDesktopAfterReconnect(),
+    attachTui: !args.flags['no-voice'],
     ...desktopRelayIdentity()
   })
 
@@ -1060,13 +1070,13 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // should log. These install before `start()` so we don't race the
   // connect-completes-before-listener-attached window.
   relay.on('reconnecting', (info: unknown) => {
-    const { attempt, delayMs } =
+    const { attempt, delayMs, reason } =
       info && typeof info === 'object'
-        ? (info as { attempt?: number; delayMs?: number })
+        ? (info as { attempt?: number; delayMs?: number; reason?: string })
         : {}
-    log.warn({ event: 'reconnecting', attempt: attempt ?? null, delay_ms: delayMs ?? null })
+    log.warn({ event: 'reconnecting', attempt: attempt ?? null, delay_ms: delayMs ?? null, reason: reason ?? null })
     const retryAt = nowSec() + Math.ceil((delayMs ?? 0) / 1000)
-    updateStatus({ state: 'reconnecting', last_event: 'reconnecting', reconnect_attempt: attempt ?? null, retry_at: retryAt, last_error: 'Relay connection interrupted' })
+    updateStatus({ state: 'reconnecting', last_event: 'reconnecting', reconnect_attempt: attempt ?? null, retry_at: retryAt, last_error: reason || 'Relay connection interrupted' })
     if ((attempt ?? 1) === 1) {
       void appendAudit({
         ts: Date.now(), kind: 'connection.state', tool: 'daemon.reconnecting', category: 'system', ok: false,
@@ -1105,8 +1115,8 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   const outcome = await relay.whenAuthResolved()
   if (!outcome.ok) {
     log.error({ event: 'auth_failed', reason: outcome.reason })
-    updateStatus({ state: 'stopped', last_event: 'auth_failed', last_error: outcome.reason, reconnect_attempt: null, retry_at: null })
-    void appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.auth_failed', category: 'system', ok: false, host_url: configuredUrl, summary: 'Relay authentication failed', error: outcome.reason })
+    await updateStatus({ state: 'stopped', last_event: 'auth_failed', last_error: outcome.reason, reconnect_attempt: null, retry_at: null })
+    await appendAudit({ ts: Date.now(), kind: 'connection.state', tool: 'daemon.auth_failed', category: 'system', ok: false, host_url: configuredUrl, summary: 'Relay authentication failed', error: outcome.reason })
     try {
       relay.kill()
     } catch {
@@ -1200,6 +1210,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
       })
     : null
   router?.attach(relay)
+  advertiseDesktopAfterReconnect = () => router?.advertise()
 
   log.info({
     event: toolsEnabled ? 'ready' : 'ready_locked',
@@ -1225,6 +1236,7 @@ export async function daemonCommand(args: ParsedArgs): Promise<number> {
   // non-fatal — the tool router is the daemon's primary job, voice is
   // a bonus.
   const noVoice = !!args.flags['no-voice']
+  if (noVoice) relay.drain()
   let voiceServer: VoiceServer | null = null
   let voiceSessionId: string | null = null
 

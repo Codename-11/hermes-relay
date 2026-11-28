@@ -95,7 +95,7 @@ jobs:
           # pyyaml). test_native_layout_imports imports the whole relay module
           # chain in a clean subprocess, so the minimal relay_server/requirements
           # set is not enough on its own.
-          pip install -e .
+          pip install -e '.[connector-portal]'
           pip install pytest responses
 
       - name: Run focused Plugin tests
@@ -115,6 +115,8 @@ jobs:
             plugin/tests/test_profile_voice_config.py \
             plugin/tests/test_voice_lab.py \
             plugin/tests/test_session_grants.py \
+            plugin/tests/test_connector_authorization.py \
+            plugin/tests/test_connector_portal.py \
             plugin/tests/test_native_layout_imports.py \
             plugin/tests/test_profile_discovery.py \
             plugin/tests/test_profiles_updated_broadcast.py \

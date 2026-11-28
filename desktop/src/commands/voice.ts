@@ -46,7 +46,7 @@ import { theme as makeTheme, type Theme } from '../lib/theme.js'
 import { printUsage, unknownSubcommand, type UsageSpec } from '../lib/usage.js'
 import { resolveFirstRunUrl } from '../relayUrlPrompt.js'
 import { SessionResumeDrain } from '../resumeDrain.js'
-import { deleteSession, getSession, listSessions, saveSession } from '../remoteSessions.js'
+import { getSession, listSessions, saveSession } from '../remoteSessions.js'
 import { RelayTransport } from '../transport/RelayTransport.js'
 import { openInBrowser, startVoiceServer } from '../voiceServer.js'
 
@@ -381,7 +381,8 @@ async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
       argCode,
       argToken,
       argPairQr,
-      nonInteractive
+      nonInteractive,
+      skipStoredSession: attempt > 0
     })
 
     const url = (creds.resolvedEndpoint?.relay.url ?? urlFlag)!.trim()
@@ -415,7 +416,7 @@ async function connectAndAuth(args: ParsedArgs): Promise<AuthedRelay> {
     }
 
     try { relay.kill() } catch { /* ignore */ }
-    if (creds.sessionToken) await deleteSession(url)
+    // A failed connection must not discard a saved pairing.
 
     if (attempt === 1 || nonInteractive) {
       throw new Error(`relay rejected credentials: ${outcome.ok ? 'no token issued' : outcome.reason}`)

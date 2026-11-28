@@ -360,6 +360,11 @@ export class DesktopToolRouter {
     this.heartbeatTimer.unref?.()
   }
 
+  /** Register this desktop on a freshly authenticated replacement socket. */
+  advertise(): void {
+    this.sendHeartbeat()
+  }
+
   /** Remove the channel listener and stop heartbeats. Idempotent. */
   detach(): void {
     if (!this.attached) {

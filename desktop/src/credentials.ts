@@ -78,6 +78,8 @@ export interface ResolveOptions {
   argPairQr?: string
   /** Refuse to prompt even if stdin is a TTY — used by scripting callers. */
   nonInteractive?: boolean
+  /** Retry pairing without removing the previously saved session. */
+  skipStoredSession?: boolean
 }
 
 export async function resolveCredentials(
@@ -108,7 +110,7 @@ export async function resolveCredentials(
     return { pairingCode: code.toUpperCase() }
   }
 
-  const stored = await getSession(url)
+  const stored = opts.skipStoredSession ? null : await getSession(url)
   if (stored) {
     maybeWarnExpiry(url, stored.ttlExpiresAt)
     return { sessionToken: stored.token }

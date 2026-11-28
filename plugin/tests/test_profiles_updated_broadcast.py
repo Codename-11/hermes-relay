@@ -26,6 +26,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from aiohttp import web
 from aiohttp.test_utils import AioHTTPTestCase
 
+from plugin.relay.auth import SessionManager
 from plugin.relay.config import RelayConfig
 from plugin.relay.server import (
     _broadcast_profiles_updated,
@@ -48,16 +49,31 @@ def _make_ws(closed: bool = False, send_side_effect: Exception | None = None):
     return ws
 
 
+def _make_authenticated_server() -> MagicMock:
+    server = MagicMock()
+    server.sessions = SessionManager()
+    server._clients = {}
+    return server
+
+
+def _add_authenticated_client(server: MagicMock, ws: MagicMock, *, desktop_only: bool = False) -> None:
+    session = server.sessions.create_session(
+        'Desktop' if desktop_only else 'Phone',
+        f'device-{len(server._clients)}',
+        desktop_only=desktop_only,
+    )
+    server._clients[ws] = session.token
+
+
 class BroadcastEnvelopeShapeTests(unittest.IsolatedAsyncioTestCase):
     """Direct test of _broadcast_profiles_updated — mock WebSocket
     clients, assert envelope shape. Server is a MagicMock (no real
     aiohttp app), so no teardown concerns."""
 
     async def test_envelope_shape_matches_spec(self) -> None:
-        server = MagicMock()
-        server._clients = {}
+        server = _make_authenticated_server()
         ws = _make_ws()
-        server._clients[ws] = "session-token"
+        _add_authenticated_client(server, ws)
 
         profiles = [
             {"name": "default", "model": "x"},
@@ -75,25 +91,23 @@ class BroadcastEnvelopeShapeTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(envelope["payload"]["profiles"], profiles)
 
     async def test_broadcasts_to_every_client(self) -> None:
-        server = MagicMock()
-        server._clients = {}
+        server = _make_authenticated_server()
 
         clients = [_make_ws() for _ in range(3)]
         for ws in clients:
-            server._clients[ws] = "tok"
+            _add_authenticated_client(server, ws)
 
         await _broadcast_profiles_updated(server, [{"name": "p"}])
         for ws in clients:
             self.assertEqual(ws.send_str.call_count, 1)
 
     async def test_closed_clients_skipped(self) -> None:
-        server = MagicMock()
-        server._clients = {}
+        server = _make_authenticated_server()
 
         ws_closed = _make_ws(closed=True)
         ws_open = _make_ws()
-        server._clients[ws_closed] = "tok1"
-        server._clients[ws_open] = "tok2"
+        _add_authenticated_client(server, ws_closed)
+        _add_authenticated_client(server, ws_open)
 
         await _broadcast_profiles_updated(server, [{"name": "p"}])
 
@@ -103,16 +117,26 @@ class BroadcastEnvelopeShapeTests(unittest.IsolatedAsyncioTestCase):
     async def test_send_failure_does_not_block_others(self) -> None:
         """One client blowing up during send must not prevent the rest
         from receiving the envelope."""
-        server = MagicMock()
-        server._clients = {}
+        server = _make_authenticated_server()
 
         ws_bad = _make_ws(send_side_effect=ConnectionResetError())
         ws_good = _make_ws()
-        server._clients[ws_bad] = "tok1"
-        server._clients[ws_good] = "tok2"
+        _add_authenticated_client(server, ws_bad)
+        _add_authenticated_client(server, ws_good)
 
         await _broadcast_profiles_updated(server, [{"name": "p"}])
         self.assertEqual(ws_good.send_str.call_count, 1)
+
+    async def test_desktop_only_client_does_not_receive_private_profiles(self) -> None:
+        server = _make_authenticated_server()
+        phone_ws, desktop_ws = _make_ws(), _make_ws()
+        _add_authenticated_client(server, phone_ws)
+        _add_authenticated_client(server, desktop_ws, desktop_only=True)
+
+        await _broadcast_profiles_updated(server, [{"name": "private", "system_message": "private prompt"}])
+
+        phone_ws.send_str.assert_awaited_once()
+        desktop_ws.send_str.assert_not_awaited()
 
 
 class NotifyProfilesChangedTests(unittest.IsolatedAsyncioTestCase):

@@ -4,6 +4,45 @@ Open items that don't fit a formal Phase plan but shouldn't be lost. Items move 
 
 For shipped work, see `DEVLOG.md`. For architectural decisions, see `docs/decisions.md`.
 
+## Desktop connectivity and management follow-ups
+
+- Preserve unknown Windows process-probe results in CLI daemon diagnostics.
+  The two-second PowerShell probe can time out on slow systems while the exact
+  daemon PID and executable are still alive; `daemon status --json` then reports
+  `alive: false`. Distinguish unknown from confirmed absence and cover slow probe
+  startup. The connector watchdog checks its own status PID and executable
+  directly in PowerShell to avoid this extra subprocess on its healthy path.
+
+- Restore native child stdout/stderr capture for detached Windows background jobs.
+  Native Windows checks show that PowerShell scripts and Node programs can execute
+  and return their real exit code while both logs remain empty, although cmd
+  builtins produce logs. Disabling detachment restores PowerShell logs while
+  the parent is alive, but did not preserve completion after parent exit or
+  termination. Keep the background survival contract and verify both lifecycle
+  and output on Windows before changing process ownership.
+
+- Classify Hermes Reach broker setup failures: `openBrokerRelaySocket` errors
+  currently terminate reconnect even for host-match timeouts or temporary
+  broker outages. Keep rejected credentials, protocol violations, and pinned
+  TLS failures terminal; add broker-specific recovery fixtures before changing
+  this policy. Direct Relay startup recovery does not certify broker recovery.
+- Certify direct Relay heartbeat recovery under a physical network blackhole.
+  The desktop transport now requires its own nonce-matched pong within 15 seconds
+  after each 20-second idle heartbeat; deterministic socket fixtures verify
+  reconnect and tool readvertisement. A real network outage remains separate
+  device evidence.
+- Verify headless connector installation and process recovery on supported Windows
+  versions, including rollback after server-side device credential replacement.
+  Keep desktop-only, permanent authorizations independently revocable; never
+  embed credentials in the public installer template.
+- Add localized desktop management strings and a language selection policy.
+  The current tray UI has English literals and no translation catalog.
+- Restore a usable desktop window drag region with explicit Tauri permissions
+  and native Windows interaction coverage; the current UI intentionally has
+  no drag region. Keep interactive controls outside that region.
+
+---
+
 ## Optional Dashboard transport support for CLI+UI
 
 The normal CLI+UI computer-connector flow uses Relay pairing and local per-host
